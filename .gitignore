@@ -1,0 +1,43 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Application data
+data/
+logs/
+reports/
+backups/
+tmp/
+
+# Telegram sessions
+*.session
+*.session-journal
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docker overrides
+compose.override.yaml
+
+# Local Spec Kit state
+.specify/cache/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
