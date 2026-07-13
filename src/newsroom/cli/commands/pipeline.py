@@ -1,7 +1,6 @@
 """Unified pipeline command - runs complete collection→digest flow."""
 
 import argparse
-import asyncio
 
 from newsroom.cli.commands.collect import collect_command
 from newsroom.cli.commands.digest import preview_command
