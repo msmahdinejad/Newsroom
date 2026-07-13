@@ -106,6 +106,18 @@ class Clusterer:
             for word in words
             if len(word) > 3 and word not in stopwords
         }
+        
+        # ponytail: preserve version numbers as compound keywords
+        # "python 3.13" -> adds "python-3.13" to help cluster related releases
+        for i, word in enumerate(words[:-1]):
+            cleaned = word.strip(".,!?;:()[]{}\"'")
+            next_cleaned = words[i + 1].strip(".,!?;:()[]{}\"'")
+            
+            if cleaned not in stopwords and len(cleaned) > 2:
+                # Check if next word looks like version
+                if next_cleaned and len(next_cleaned) > 0 and next_cleaned[0].isdigit():
+                    compound = f"{cleaned}-{next_cleaned}"
+                    keywords.add(compound)
 
         return keywords
 
