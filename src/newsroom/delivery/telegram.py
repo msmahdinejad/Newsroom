@@ -1,9 +1,10 @@
 """Telegram delivery via Hermes Gateway."""
 
+from sqlalchemy.orm import Session
+
 from newsroom.logging import get_logger
 from newsroom.storage.database import engine
 from newsroom.storage.models import Digest
-from sqlalchemy.orm import Session
 
 logger = get_logger(__name__)
 
