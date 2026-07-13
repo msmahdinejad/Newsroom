@@ -3,7 +3,6 @@
 import pytest
 
 from newsroom.processing.dedupe import Deduplicator
-from newsroom.storage.database import get_db
 from newsroom.storage.models import NormalizedItem, RawItem, Source
 
 
