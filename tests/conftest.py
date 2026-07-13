@@ -1,11 +1,10 @@
 """Test configuration and fixtures."""
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from newsroom.config import settings
-from newsroom.storage.models import Base
 
 
 @pytest.fixture(scope="session")
@@ -24,4 +23,7 @@ def db_session(test_db_engine):
     session = session_factory()
     yield session
     session.rollback()
+    # ponytail: delete all test data to avoid IntegrityErrors between tests
+    session.execute(text("TRUNCATE sources, raw_items, normalized_items, stories, digests CASCADE"))
+    session.commit()
     session.close()

@@ -3,7 +3,7 @@
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, pool
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from newsroom.config import settings
 
