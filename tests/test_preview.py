@@ -3,7 +3,7 @@
 import pytest
 
 from newsroom.digest.preview import PreviewGenerator
-from newsroom.storage.models import Digest, NormalizedItem, RawItem, Source, Story
+from newsroom.storage.models import Digest, Source, Story
 
 
 @pytest.fixture

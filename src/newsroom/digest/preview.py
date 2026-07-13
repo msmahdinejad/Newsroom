@@ -118,7 +118,7 @@ class PreviewGenerator:
             if len(source_urls) > 1:
                 lines.append(f"منابع: {len(source_urls)} منبع")
 
-            for i, url in enumerate(source_urls[:5], 1):  # Max 5 sources
+            for url in source_urls[:5]:  # Max 5 sources
                 lines.append(f"🔗 {url}")
 
             if len(source_urls) > 5:
