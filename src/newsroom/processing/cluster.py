@@ -151,11 +151,8 @@ class Clusterer:
         item_ids = [item.id for item in items]
 
         # Determine priority (highest from items)
-        priority = "low"
-        for item in items:
-            # Items don't have priority field yet, use default
-            priority = "medium"
-            break
+        # ponytail: items don't have priority field yet, use default
+        priority = "medium" if items else "low"
 
         return Story(
             headline=headline,
