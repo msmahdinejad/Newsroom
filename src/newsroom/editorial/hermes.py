@@ -38,7 +38,8 @@ class HermesEditorial:
                 return self._empty_digest()
 
             # Build context for Hermes
-            context = self._build_context(stories)
+            # ponytail: Will use for delegation when Hermes integration ready
+            # context = self._build_context(stories)
 
             # ponytail: delegate to Hermes with editorial skill
             # For now, return deterministic preview until Hermes integration ready
@@ -155,7 +156,7 @@ def create_digest(story_ids: list[int] | None = None) -> Digest:
             # Fetch recent undigested stories
             result = session.execute(
                 text("""
-                    SELECT id FROM stories 
+                    SELECT id FROM stories
                     WHERE created_at > NOW() - INTERVAL '24 hours'
                     ORDER BY priority DESC, created_at DESC
                     LIMIT 20
