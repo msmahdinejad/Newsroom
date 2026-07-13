@@ -1,17 +1,12 @@
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Split-Path -Parent $PSScriptRoot
-
 Write-Host "Running database migrations..." -ForegroundColor Cyan
+uv run alembic upgrade head
 
-Push-Location $RepoRoot
-try {
-    uv run alembic upgrade head
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "Migration failed"
-        exit 1
-    }
-    Write-Host "[OK] Migrations applied" -ForegroundColor Green
-} finally {
-    Pop-Location
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "✓ Migrations applied" -ForegroundColor Green
+    exit 0
+} else {
+    Write-Host "✗ Migration failed" -ForegroundColor Red
+    exit 1
 }

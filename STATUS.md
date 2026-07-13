@@ -1,32 +1,26 @@
 # Project Status
 
-**Current Phase**: Planning Complete  
+**Current Phase**: Implementation - M1 Foundation  
 **Last Updated**: 2026-07-13  
-**Overall Status**: 🟡 Planning  
+**Overall Status**: 🟢 Active Implementation  
 
-## Milestones
+## Milestones (Simplified)
 
 | Milestone | Status | Started | Completed | Notes |
 |-----------|--------|---------|-----------|-------|
-| M1: Foundation | ⬜ Not Started | - | - | Database and structure |
-| M2: RSS Collection | ⬜ Not Started | - | - | Blocked by M1 |
-| M3: GitHub Releases | ⬜ Not Started | - | - | Blocked by M2 |
-| M4: Normalization | ⬜ Not Started | - | - | Blocked by M2 |
-| M5: Deduplication | ⬜ Not Started | - | - | Blocked by M4 |
-| M6: Event Clustering | ⬜ Not Started | - | - | Blocked by M5 |
-| M7: Persian Digests | ⬜ Not Started | - | - | Blocked by M6 |
-| M8: End-to-End | ⬜ Not Started | - | - | Blocked by M7 |
-| M9: Developer Experience | ⬜ Not Started | - | - | Blocked by M8 |
-| M10: Testing | ⬜ Not Started | - | - | Blocked by M9 |
-| M11: Documentation | ⬜ Not Started | - | - | Blocked by M10 |
+| M1: Local Foundation | 🟡 In Progress | 2026-07-13 | - | Python, PostgreSQL, scripts, health |
+| M2: First Complete Pipeline | ⬜ Not Started | - | - | RSS/GitHub → processing → Persian preview |
+| M3: Hermes Editorial & Telegram | ⬜ Not Started | - | - | Hermes synthesis, Bot delivery |
+| M4: Expanded Sources (Future) | ⬜ Deferred | - | - | Not in current scope |
 
 ## Task Progress
 
-**Completed**: 0 / 112 tasks (0%)  
-**In Progress**: 0 tasks  
+**Completed**: 0 / 29 tasks (0%)  
+**In Progress**: M1 (12 tasks)  
 **Blocked**: 0 tasks  
 
-See TASKS.md for detailed task list.
+See TASKS_SIMPLIFIED.md for active task list.
+Old detailed tasks archived in TASKS.md.
 
 ## Recent Changes
 
