@@ -206,7 +206,7 @@ def test_empty_url_not_matched(db_session, sample_source, deduplicator):
     db_session.add_all([item1, item2])
     db_session.commit()
 
-    stats = deduplicator.deduplicate_batch([item1.id, item2.id])
+    deduplicator.deduplicate_batch([item1.id, item2.id])
 
     db_session.refresh(item1)
     db_session.refresh(item2)

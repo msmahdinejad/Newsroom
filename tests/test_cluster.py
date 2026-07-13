@@ -1,6 +1,5 @@
 """Test story clustering."""
 
-import json
 
 import pytest
 
