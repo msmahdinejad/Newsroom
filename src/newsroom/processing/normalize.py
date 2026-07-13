@@ -93,6 +93,10 @@ class Normalizer:
         try:
             parsed = urlparse(url)
 
+            # Check if URL has valid scheme and domain
+            if not parsed.scheme or not parsed.netloc:
+                return url  # Invalid URL, return as-is
+
             # Lowercase domain
             domain = parsed.netloc.lower()
 

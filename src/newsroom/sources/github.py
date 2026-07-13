@@ -19,6 +19,8 @@ class GitHubCollector(SourceCollector):
             timeout=httpx.Timeout(
                 connect=settings.collection_timeout_connect,
                 read=settings.collection_timeout_read,
+                write=None,
+                pool=None,
             ),
             follow_redirects=True,
             headers={
