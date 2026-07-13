@@ -3,12 +3,12 @@
 from datetime import datetime
 from typing import Any
 
-from newsroom.config import settings
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
 from newsroom.logging import get_logger
 from newsroom.storage.database import engine
 from newsroom.storage.models import Digest, Story
-from sqlalchemy import text
-from sqlalchemy.orm import Session
 
 logger = get_logger(__name__)
 
