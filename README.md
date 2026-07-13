@@ -14,15 +14,30 @@ Local-first automated newsroom for Persian technology and AI updates.
 ### Setup
 
 ```powershell
-# Clone repository
-git clone <repo-url> newsroom
-cd newsroom
+# Install dependencies
+uv sync --extra dev
 
-# Run setup (installs dependencies, starts database, runs migrations)
-.\scripts\setup.ps1
+# Start PostgreSQL (fresh install)
+docker compose up -d
+
+# Wait for database ready (~10 seconds)
+Start-Sleep 10
+
+# Run migrations
+uv run alembic upgrade head
 
 # Verify system health
-.\scripts\health.ps1
+uv run newsroom health
+```
+
+**Known Issue**: If you see password authentication errors, the Docker volume has stale credentials. Fix:
+
+```powershell
+docker compose down
+docker volume rm newsroom_postgres_data
+docker compose up -d
+Start-Sleep 10
+uv run alembic upgrade head
 ```
 
 ### Basic Usage
@@ -226,5 +241,8 @@ See `CONSTITUTION.md` for project principles.
 
 ## Status
 
-Current phase: Planning Complete  
-See STATUS.md for detailed progress.
+**Phase**: M1 Foundation Complete (verification blocked by Docker volume issue)  
+**Commit**: `17dd65f` - feat: M1 foundation  
+**Next**: User must reset Docker volume, then verify M1, then proceed to M2
+
+See `M1_COMPLETE.md` for details and fix instructions.

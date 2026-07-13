@@ -54,11 +54,9 @@ None yet (no code written).
 
 ## Next Steps
 
-1. Review planning documents with team/stakeholder
-2. Set up development environment (Windows + Docker)
-3. Begin M1: Foundation (T001-T013)
-4. Create initial git commit with planning docs
-5. Start daily standup/status updates
+1. **User must manually reset Docker volume** (see M1_COMPLETE.md for commands)
+2. After reset: verify M1 (migrations, health, tests)
+3. Begin M2: First Complete Pipeline (RSS/GitHub → Persian preview)
 
 ## Dependencies
 
