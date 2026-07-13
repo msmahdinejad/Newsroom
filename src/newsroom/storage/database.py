@@ -1,14 +1,13 @@
 """Database connection and session management."""
 
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from newsroom.config import settings
 from newsroom.storage.models import Base
-
 
 # Create engine
 engine = create_engine(str(settings.database_url), pool_pre_ping=True, echo=False)

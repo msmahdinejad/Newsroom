@@ -3,10 +3,10 @@
 import argparse
 import sys
 
-from newsroom.logging import setup_logging, get_logger
-from newsroom.storage.database import engine
 from sqlalchemy import text
 
+from newsroom.logging import get_logger, setup_logging
+from newsroom.storage.database import engine
 
 logger = get_logger(__name__)
 
@@ -26,7 +26,7 @@ def health_check() -> int:
         # Check tables exist
         from newsroom.storage.models import Base
         with engine.connect() as conn:
-            for table in Base.metadata.tables.keys():
+            for table in Base.metadata.tables:
                 conn.execute(text(f"SELECT 1 FROM {table} LIMIT 1"))
         logger.info("Database tables: OK")
 
