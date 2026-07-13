@@ -6,6 +6,6 @@ uv run newsroom health
 if ($LASTEXITCODE -eq 0) {
     exit 0
 } else {
-    Write-Host "✗ Health check failed" -ForegroundColor Red
+    Write-Host "[ERROR] Health check failed" -ForegroundColor Red
     exit 1
 }
