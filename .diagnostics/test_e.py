@@ -1,0 +1,15 @@
+import os, time, faulthandler, sys
+faulthandler.enable()
+sys.stdout.reconfigure(line_buffering=True)
+start = time.monotonic()
+print(f"[{time.monotonic()-start:.3f}s] PID {os.getpid()}", flush=True)
+from sqlalchemy import create_engine, pool, text
+print(f"[{time.monotonic()-start:.3f}s] Creating engine", flush=True)
+engine = create_engine('postgresql+psycopg://newsroom:newsroom_dev@127.0.0.1:55432/newsroom', poolclass=pool.NullPool)
+print(f"[{time.monotonic()-start:.3f}s] Connecting", flush=True)
+conn = engine.connect()
+print(f"[{time.monotonic()-start:.3f}s] Querying", flush=True)
+result = conn.execute(text('SELECT 1'))
+print(f"[{time.monotonic()-start:.3f}s] Result: {result.scalar()}", flush=True)
+conn.close()
+print(f"[{time.monotonic()-start:.3f}s] OK", flush=True)

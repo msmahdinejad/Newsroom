@@ -4,15 +4,15 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from newsroom.config import settings
 from newsroom.storage.models import Base
 
 
 @pytest.fixture(scope="session")
 def test_db_engine():
     """Create test database engine."""
-    # ponytail: uses main DB, separate test DB when needed
-    engine = create_engine("postgresql+psycopg://newsroom:newsroom_dev@localhost:5432/newsroom")
-    Base.metadata.create_all(engine)
+    # Tables pre-created via SQL, skip DDL
+    engine = create_engine(str(settings.database_url))
     yield engine
     engine.dispose()
 

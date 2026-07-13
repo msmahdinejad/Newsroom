@@ -1,30 +1,26 @@
 """Database connection and session management."""
 
-from collections.abc import Generator
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, pool
 from sqlalchemy.orm import Session, sessionmaker
 
 from newsroom.config import settings
-from newsroom.storage.models import Base
 
-# Create engine
-engine = create_engine(str(settings.database_url), pool_pre_ping=True, echo=False)
+# ponytail: NullPool avoids connection pooling hangs on Windows
+engine = create_engine(
+    str(settings.database_url),
+    poolclass=pool.NullPool,
+    echo=False,
+)
 
-# Session factory
-SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
-
-
-def init_db() -> None:
-    """Create all tables (for testing, use Alembic in production)."""
-    Base.metadata.create_all(bind=engine)
+session_factory = sessionmaker(bind=engine)
 
 
 @contextmanager
-def get_db() -> Generator[Session, None, None]:
-    """Get database session context manager."""
-    session = SessionLocal()
+def get_db():
+    """Get database session."""
+    session = session_factory()
     try:
         yield session
         session.commit()
