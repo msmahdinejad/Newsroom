@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Tech Feed</title>
+    <link>https://example.com</link>
+    <description>Sample RSS feed for testing</description>
+    <item>
+      <title>New Python Release 3.13</title>
+      <link>https://example.com/python-3.13</link>
+      <description>Python 3.13 released with improved performance</description>
+      <pubDate>Mon, 13 Jul 2026 10:00:00 GMT</pubDate>
+      <guid>https://example.com/python-3.13</guid>
+    </item>
+    <item>
+      <title>PyTorch 2.5 Announcement</title>
+      <link>https://example.com/pytorch-2.5</link>
+      <description>PyTorch 2.5 introduces new distributed training features</description>
+      <pubDate>Sun, 12 Jul 2026 15:30:00 GMT</pubDate>
+      <guid>https://example.com/pytorch-2.5</guid>
+    </item>
+    <item>
+      <title>OpenAI GPT-5 Preview</title>
+      <link>https://example.com/gpt-5-preview</link>
+      <description>Early preview of GPT-5 capabilities announced</description>
+      <pubDate>Sat, 11 Jul 2026 08:00:00 GMT</pubDate>
+      <guid>https://example.com/gpt-5-preview</guid>
+    </item>
+  </channel>
+</rss>

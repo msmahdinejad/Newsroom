@@ -20,8 +20,8 @@ def test_db_engine():
 @pytest.fixture
 def db_session(test_db_engine):
     """Provide a clean database session per test."""
-    Session = sessionmaker(bind=test_db_engine)
-    session = Session()
+    session_factory = sessionmaker(bind=test_db_engine)
+    session = session_factory()
     yield session
     session.rollback()
     session.close()

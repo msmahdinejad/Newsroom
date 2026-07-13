@@ -1,0 +1,22 @@
+[
+  {
+    "name": "v2.5.0",
+    "tag_name": "v2.5.0",
+    "html_url": "https://github.com/pytorch/pytorch/releases/tag/v2.5.0",
+    "body": "## What's New\n\n- Improved distributed training\n- CUDA 12.4 support\n- Performance optimizations",
+    "published_at": "2026-07-12T14:00:00Z",
+    "author": {
+      "login": "pytorch-bot"
+    }
+  },
+  {
+    "name": "v2.4.1",
+    "tag_name": "v2.4.1",
+    "html_url": "https://github.com/pytorch/pytorch/releases/tag/v2.4.1",
+    "body": "## Bug Fixes\n\n- Fixed memory leak in DataLoader\n- Corrected gradient computation edge case",
+    "published_at": "2026-07-01T10:30:00Z",
+    "author": {
+      "login": "pytorch-bot"
+    }
+  }
+]
