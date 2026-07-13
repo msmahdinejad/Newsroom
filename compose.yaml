@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: newsroom
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-newsroom_dev}
     ports:
-      - "127.0.0.1:${NEWSROOM_POSTGRES_HOST_PORT:-5432}:5432"
+      - "127.0.0.1:${NEWSROOM_POSTGRES_HOST_PORT:-55432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -15,6 +15,19 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  app:
+    build: .
+    container_name: newsroom-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
+    volumes:
+      - ./src:/app/src
+      - ./migrations:/app/migrations
+    command: uv run newsroom health
 
 volumes:
   postgres_data:

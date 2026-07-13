@@ -13,10 +13,9 @@ COPY pyproject.toml README.md ./
 RUN uv sync --frozen
 
 COPY src/ ./src/
-COPY migrations/ ./migrations/
 COPY alembic.ini ./
 
 ENV PYTHONPATH=/app
-EXPOSE 8000
+ENV DATABASE_URL=postgresql+psycopg://newsroom:newsroom_dev@postgres:5432/newsroom
 
 CMD ["uv", "run", "newsroom", "health"]
