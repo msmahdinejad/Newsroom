@@ -100,6 +100,8 @@ class GitHubCollector(SourceCollector):
             logger.info(f"Collected {len(items)} releases from {source_url}")
             return items
 
+        except CollectionError:
+            raise  # Re-raise CollectionError as-is
         except httpx.HTTPError as e:
             raise CollectionError(
                 f"HTTP error: {e}",
