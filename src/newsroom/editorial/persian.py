@@ -4,14 +4,12 @@ Three layers: A (important briefing), B (topic sections), C (ریزخبرها).
 Evidence-constrained: only uses data from evidence packets, not raw source text.
 """
 
-import json
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
 from newsroom.logging import get_logger
-from newsroom.storage.models import Evidence, Report, Story, StoryItem
+from newsroom.storage.models import Evidence, Report, Story
 
 logger = get_logger(__name__)
 
@@ -86,7 +84,7 @@ class PersianEditorial:
         report_mode: str,
     ) -> str:
         """Render the 3-layer Persian report."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         header = self._format_header(now, report_mode)
 
         # Layer A: Important briefing (top 3 by importance)
@@ -196,7 +194,7 @@ class PersianEditorial:
 ⏰ {now.strftime("%H:%M UTC")}"""
 
     def _empty_report(self, report_mode: str) -> str:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return f"""📰 گزارش خبری هوش مصنوعی و فناوری
 تاریخ: {now.strftime("%Y-%m-%d")}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━

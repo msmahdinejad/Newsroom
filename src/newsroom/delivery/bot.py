@@ -5,19 +5,15 @@ Uses inline keyboard for Persian menu. Access control via allowlist.
 """
 
 import asyncio
-import hashlib
 import json
 import os
-import time
 from typing import Any
 
 import httpx
-from sqlalchemy import text
-from sqlalchemy.orm import Session
 
 from newsroom.config import settings
 from newsroom.logging import get_logger, setup_logging
-from newsroom.storage.database import engine, get_db
+from newsroom.storage.database import get_db
 from newsroom.storage.models import Delivery, Report
 
 logger = get_logger(__name__)

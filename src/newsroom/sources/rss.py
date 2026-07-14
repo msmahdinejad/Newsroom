@@ -1,6 +1,6 @@
 """RSS and Atom feed collector."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import feedparser
@@ -93,7 +93,7 @@ class RSSCollector(SourceCollector):
         for field in ("published_parsed", "updated_parsed"):
             ts = getattr(entry, field, None)
             if ts:
-                return datetime(*ts[:6], tzinfo=timezone.utc).isoformat()
+                return datetime(*ts[:6], tzinfo=UTC).isoformat()
         return None
 
     def _extract_content(self, entry: Any) -> str:

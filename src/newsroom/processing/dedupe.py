@@ -1,7 +1,6 @@
 """Deduplication — exact (hash + URL) and near-duplicate (token similarity)."""
 
 import hashlib
-from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -75,11 +74,12 @@ class Deduplicator:
 
     def _find_near_duplicate(self, db: Session, item: NormalizedItem) -> NormalizedItem | None:
         """Token-based near-duplicate detection within time window."""
-        from datetime import datetime, timedelta
+        from datetime import UTC, datetime, timedelta
+
         from newsroom.config import settings
 
         # Only check items within the time window
-        cutoff = datetime.utcnow() - timedelta(hours=settings.dedup_time_window_hours)
+        cutoff = datetime.now(UTC) - timedelta(hours=settings.dedup_time_window_hours)
         candidates = db.query(NormalizedItem).filter(
             NormalizedItem.id < item.id,
             NormalizedItem.is_duplicate == False,  # noqa: E712

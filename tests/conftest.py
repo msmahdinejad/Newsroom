@@ -1,29 +1,35 @@
-"""Test configuration and fixtures."""
+"""Test configuration and fixtures — DB-free.
+
+V2 tests run without a running database. Where a function needs a DB
+session, tests supply a mock session (MagicMock) so SQLAlchemy queries
+return canned results. This keeps tests fast, deterministic, and runnable
+in any environment.
+"""
+
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
 
-from newsroom.config import settings
-
-
-@pytest.fixture(scope="session")
-def test_db_engine():
-    """Create test database engine."""
-    # Tables pre-created via SQL, skip DDL
-    engine = create_engine(str(settings.database_url))
-    yield engine
-    engine.dispose()
+# Ensure src/ is importable when running tests from the repo root.
+_SRC = Path(__file__).resolve().parents[1] / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 
 
 @pytest.fixture
-def db_session(test_db_engine):
-    """Provide a clean database session per test."""
-    session_factory = sessionmaker(bind=test_db_engine)
-    session = session_factory()
-    yield session
-    session.rollback()
-    # ponytail: delete all test data to avoid IntegrityErrors between tests
-    session.execute(text("TRUNCATE sources, raw_items, normalized_items, stories, digests CASCADE"))
-    session.commit()
-    session.close()
+def mock_db():
+    """A MagicMock session. Configure .query(...).filter(...).all() per test."""
+    session = MagicMock()
+    # Default: queries return empty lists / None
+    q = MagicMock()
+    q.filter.return_value = q
+    q.all.return_value = []
+    q.first.return_value = None
+    q.filter_by.return_value = q
+    q.order_by.return_value = q
+    q.limit.return_value = q
+    q.join.return_value = q
+    session.query.return_value = q
+    return session

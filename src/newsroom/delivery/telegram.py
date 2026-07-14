@@ -6,7 +6,7 @@ and idempotency. Stores delivery state in the deliveries table.
 
 import hashlib
 import time
-from typing import Any
+from datetime import UTC
 
 import httpx
 from sqlalchemy.orm import Session
@@ -118,8 +118,8 @@ class TelegramDelivery:
                 return delivery.id if delivery.status == "partial" else None
 
         if delivery.status == "delivered":
-            from datetime import datetime, timezone
-            delivery.delivered_at = datetime.now(timezone.utc)
+            from datetime import datetime
+            delivery.delivered_at = datetime.now(UTC)
             db.commit()
             logger.info(f"Report {report_id} delivered in {len(chunks)} chunks")
 

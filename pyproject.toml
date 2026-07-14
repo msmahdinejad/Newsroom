@@ -25,6 +25,9 @@ dev = [
     "mypy>=1.8.0",
     "pytest-httpx>=0.36.2",
 ]
+telegram = [
+    "telethon>=1.36.0",
+]
 
 [project.scripts]
 newsroom = "newsroom.cli.main:main"

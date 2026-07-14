@@ -5,11 +5,10 @@ and Persian/Arabic character normalization.
 """
 
 import hashlib
-import json
 import re
 from datetime import datetime
 from typing import Any
-from urllib.parse import urlparse, parse_qsl, urlencode
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 from newsroom.logging import get_logger
 

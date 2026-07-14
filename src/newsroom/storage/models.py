@@ -4,7 +4,7 @@ All timestamps are timezone-aware UTC. JSON fields use JSONB for query efficienc
 No raw secrets stored — only references to external secret storage.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     Boolean,
@@ -22,7 +22,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 def utcnow() -> datetime:
     """Timezone-aware UTC now — replaces deprecated datetime.utcnow."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Base(DeclarativeBase):
@@ -137,7 +137,7 @@ class NormalizedItem(Base):
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     raw_item: Mapped["RawItem"] = relationship(back_populates="normalized_item")
-    duplicate_of: Mapped["NormalizedItem | None"] = relationship(remote_side=[id], foreign_keys=[duplicate_of_id])
+    duplicate_of: Mapped["NormalizedItem | None"] = relationship(remote_side=[id], foreign_keys=[duplicate_of_id])  # noqa: A003
     story_links: Mapped[list["StoryItem"]] = relationship(back_populates="item")
 
 

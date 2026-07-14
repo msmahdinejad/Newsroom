@@ -1,12 +1,9 @@
 """Collection CLI command — V2."""
 
 import argparse
-import asyncio
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from newsroom.logging import get_logger, setup_logging
-from newsroom.sources.base import classify_retry
 from newsroom.sources.github import GitHubCollector
 from newsroom.sources.rss import RSSCollector
 from newsroom.storage.database import get_db
@@ -37,7 +34,7 @@ async def collect_command(args: argparse.Namespace) -> int:
             for source in sources:
                 run = CollectionRun(
                     source_id=source.id,
-                    started_at=datetime.now(timezone.utc),
+                    started_at=datetime.now(UTC),
                     status="running",
                 )
                 db.add(run)
@@ -75,24 +72,24 @@ async def collect_command(args: argparse.Namespace) -> int:
                         db.add(raw)
                         total_collected += 1
 
-                    source.last_success_at = datetime.now(timezone.utc)
+                    source.last_success_at = datetime.now(UTC)
                     source.consecutive_failures = 0
                     source.health_status = "healthy"
                     run.status = "ok"
                     run.items_collected = len(items)
-                    run.finished_at = datetime.now(timezone.utc)
+                    run.finished_at = datetime.now(UTC)
 
                 except Exception as e:
                     logger.error(f"Failed: {source.name}: {e}")
                     failed_sources.append(source.name)
-                    source.last_error_at = datetime.now(timezone.utc)
+                    source.last_error_at = datetime.now(UTC)
                     source.last_error = str(e)[:1000]
                     source.consecutive_failures += 1
                     if source.consecutive_failures >= 3:
                         source.health_status = "degraded"
                     run.status = "error"
                     run.error = str(e)[:500]
-                    run.finished_at = datetime.now(timezone.utc)
+                    run.finished_at = datetime.now(UTC)
 
             await rss.close()
             await gh.close()

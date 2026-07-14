@@ -34,7 +34,7 @@ class SourceCollector(ABC):
         """Quick reachability check. Override for source-specific logic."""
         return self.validate_url(source.url)
 
-    async def close(self) -> None:
+    async def close(self) -> None:  # noqa: B027
         """Clean up resources (HTTP clients, sessions)."""
         pass
 

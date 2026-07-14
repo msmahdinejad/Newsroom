@@ -1,34 +1,33 @@
 $ErrorActionPreference = "Stop"
-
+# Restore PostgreSQL database from backup file
 param(
     [Parameter(Mandatory=$true)]
     [string]$File
 )
 
-$RepoRoot = Split-Path -Parent $PSScriptRoot
-Set-Location $RepoRoot
+$repoDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$backupFile = Join-Path $repoDir "backups" $File
 
-# Resolve relative paths
-if (-not [System.IO.Path]::IsPathRooted($File)) {
-    $File = Join-Path (Get-Location) $File
-}
-
-if (-not (Test-Path $File)) {
-    Write-Host "[ERROR] Backup file not found: $File"
+if (-not (Test-Path $backupFile)) {
+    Write-Error "[ERROR] Backup file not found: $backupFile"
     exit 1
 }
 
-Write-Host "=== Newsroom: Database restore ==="
-Write-Host "Restoring from: $File"
-Write-Host "This will REPLACE all data in the newsroom database."
-$response = Read-Host "Type 'yes' to continue"
-if ($response -ne "yes") {
-    Write-Host "Restore cancelled."
+Write-Host "[RESTORE] Restoring from: $File"
+Write-Host "[RESTORE] Dropping and recreating database..."
+
+# Drop and recreate to ensure clean restore
+docker exec newsroom-postgres psql -U newsroom -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "[ERROR] Schema reset failed"
     exit 1
 }
 
-Get-Content -Path $File -Raw | docker compose exec -T postgres psql -U newsroom -d newsroom
-if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] Restore failed"; exit 1 }
+Write-Host "[RESTORE] Loading backup data..."
+Get-Content $backupFile | docker exec -i newsroom-postgres psql -U newsroom newsroom
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "[ERROR] Restore failed"
+    exit 1
+}
 
-Write-Host "[OK] Restore complete"
-exit 0
+Write-Host "[OK] Database restored from $File"

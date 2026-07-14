@@ -5,7 +5,6 @@ The LLM only sees: story ID, source names, source types, canonical links,
 timestamps, extracted facts, contradiction notes, confidence, excerpts.
 """
 
-import json
 from typing import Any
 
 from sqlalchemy.orm import Session

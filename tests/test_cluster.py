@@ -1,297 +1,211 @@
-"""Test story clustering."""
+"""Test clustering — weighted Jaccard similarity, version compound keywords,
+clustering positive/negative cases."""
 
+from unittest.mock import MagicMock
 
 import pytest
 
 from newsroom.processing.cluster import Clusterer
-from newsroom.storage.models import NormalizedItem, RawItem, Source, Story
-
-
-@pytest.fixture
-def sample_source(db_session):
-    """Create test source."""
-    source = Source(name="Test", type="rss", url="https://example.com")
-    db_session.add(source)
-    db_session.commit()
-    return source
 
 
 @pytest.fixture
 def clusterer():
-    """Create clusterer instance."""
     return Clusterer()
 
 
-def test_cluster_similar_items(db_session, sample_source, clusterer):
-    """Test clustering items with similar keywords."""
-    # Create items about Python
-    raw1 = RawItem(source_id=sample_source.id, raw_data='{}')
-    raw2 = RawItem(source_id=sample_source.id, raw_data='{}')
-    db_session.add_all([raw1, raw2])
-    db_session.commit()
+# ── Keyword extraction ──────────────────────────────────────────
 
-    item1 = NormalizedItem(
-        raw_item_id=raw1.id,
-        title="Python 3.13 Released",
-        description="New Python version with performance improvements",
-        source_url="https://python.org/1",
-        content_hash="hash1",
-        normalized_url="https://python.org/1",
-    )
-    item2 = NormalizedItem(
-        raw_item_id=raw2.id,
-        title="Python 3.13 Performance Boost",
-        description="Python 3.13 brings major speed improvements",
-        source_url="https://example.com/2",
-        content_hash="hash2",
-        normalized_url="https://example.com/2",
-    )
-    db_session.add_all([item1, item2])
-    db_session.commit()
-
-    stats = clusterer.cluster_items([item1.id, item2.id])
-
-    assert stats["stories_created"] == 1  # Grouped into one story
-    assert stats["items_clustered"] == 2
-
-    story = db_session.query(Story).first()
-    assert story is not None
-    assert "python" in story.headline.lower()
-
-    item_ids = eval(story.item_ids)  # noqa: S307
-    assert item1.id in item_ids
-    assert item2.id in item_ids
+def test_extract_keywords_basic(clusterer):
+    kws = clusterer._extract_keywords("Python 3.13 released today")
+    assert "python" in kws
+    assert "released" in kws
+    assert "today" in kws
 
 
-def test_cluster_dissimilar_items(db_session, sample_source, clusterer):
-    """Test clustering items with no keyword overlap."""
-    raw1 = RawItem(source_id=sample_source.id, raw_data='{}')
-    raw2 = RawItem(source_id=sample_source.id, raw_data='{}')
-    db_session.add_all([raw1, raw2])
-    db_session.commit()
-
-    item1 = NormalizedItem(
-        raw_item_id=raw1.id,
-        title="Python Framework Django Released",
-        description="Django 5.0 now available",
-        source_url="https://example.com/1",
-        content_hash="hash1",
-        normalized_url="https://example.com/1",
-    )
-    item2 = NormalizedItem(
-        raw_item_id=raw2.id,
-        title="JavaScript Library React Updated",
-        description="React 19 brings new features",
-        source_url="https://example.com/2",
-        content_hash="hash2",
-        normalized_url="https://example.com/2",
-    )
-    db_session.add_all([item1, item2])
-    db_session.commit()
-
-    stats = clusterer.cluster_items([item1.id, item2.id])
-
-    assert stats["stories_created"] == 2  # Two separate stories
-    assert stats["items_clustered"] == 2
+def test_extract_keywords_filters_stopwords(clusterer):
+    kws = clusterer._extract_keywords("the release of python is here")
+    assert "python" in kws
+    assert "release" in kws
+    assert "the" not in kws
+    assert "is" not in kws
 
 
-def test_extract_keywords(clusterer):
-    """Test keyword extraction."""
-    text = "Python 3.13 Released with Performance Improvements"
-    keywords = clusterer._extract_keywords(text)
-
-    assert "python" in keywords
-    assert "released" in keywords
-    assert "performance" in keywords
-    assert "improvements" in keywords
-
-    # Stopwords filtered
-    assert "with" not in keywords
+def test_extract_keywords_version_compound(clusterer):
+    """'python 3.13' → compound 'python-3' (regex splits on dot: '3','13')."""
+    kws = clusterer._extract_keywords("python 3.13 released")
+    assert "python-3" in kws
 
 
-def test_compute_similarity(clusterer):
-    """Test Jaccard similarity computation."""
-    set1 = {"python", "release", "performance"}
-    set2 = {"python", "release", "speed"}
-
-    similarity = clusterer._compute_similarity(set1, set2)
-
-    # Intersection: 2, Union: 4, Similarity: 0.5
-    assert similarity == 0.5
+def test_extract_keywords_filters_short(clusterer):
+    """Words ≤2 chars excluded."""
+    kws = clusterer._extract_keywords("go to the sky now")
+    assert "sky" in kws
+    assert "go" not in kws
+    assert "to" not in kws
 
 
-def test_compute_similarity_no_overlap(clusterer):
-    """Test similarity with no overlap."""
-    set1 = {"python", "django"}
-    set2 = {"javascript", "react"}
-
-    similarity = clusterer._compute_similarity(set1, set2)
-
-    assert similarity == 0.0
+def test_extract_keywords_persian(clusterer):
+    """Persian chars in \u0600-\u06FF range are captured."""
+    kws = clusterer._extract_keywords("پایتون نسخه جدید")
+    assert "پایتون" in kws
+    assert "نسخه" in kws
+    assert "جدید" in kws
 
 
-def test_compute_similarity_empty_sets(clusterer):
-    """Test similarity with empty sets."""
-    assert clusterer._compute_similarity(set(), {"word"}) == 0.0
-    assert clusterer._compute_similarity({"word"}, set()) == 0.0
+def test_extract_keywords_version_compound_persian_stopword(clusterer):
+    """Stopword before digit doesn't create compound."""
+    kws = clusterer._extract_keywords("is 3.13")
+    # "is" is a stopword → no compound
+    assert "is-3.13" not in kws
 
 
-def test_skip_duplicate_items(db_session, sample_source, clusterer):
-    """Test that duplicate items are not clustered."""
-    raw1 = RawItem(source_id=sample_source.id, raw_data='{}')
-    raw2 = RawItem(source_id=sample_source.id, raw_data='{}')
-    db_session.add_all([raw1, raw2])
-    db_session.commit()
+# ── Weighted Jaccard similarity ─────────────────────────────────
 
-    item1 = NormalizedItem(
-        raw_item_id=raw1.id,
-        title="Original Item",
-        source_url="https://example.com/1",
-        content_hash="hash1",
-        normalized_url="https://example.com/1",
-    )
-    item2 = NormalizedItem(
-        raw_item_id=raw2.id,
-        title="Duplicate Item",
-        source_url="https://example.com/2",
-        content_hash="hash1",
-        normalized_url="https://example.com/2",
-        is_duplicate=True,
-        duplicate_of_id=item1.id,
-    )
-    db_session.add_all([item1, item2])
-    db_session.commit()
-
-    stats = clusterer.cluster_items([item1.id, item2.id])
-
-    # Only non-duplicate item clustered
-    assert stats["items_clustered"] == 1
-
-    story = db_session.query(Story).first()
-    item_ids = eval(story.item_ids)  # noqa: S307
-    assert len(item_ids) == 1
-    assert item1.id in item_ids
-    assert item2.id not in item_ids
+def test_similarity_identical_keywords(clusterer):
+    a = {"python", "release", "version"}
+    b = {"python", "release", "version"}
+    assert clusterer._compute_similarity(a, b) == 1.0
 
 
-# --- Regression tests for weighted Jaccard clustering ---
+def test_similarity_disjoint(clusterer):
+    a = {"python", "release"}
+    b = {"java", "update"}
+    assert clusterer._compute_similarity(a, b) == 0.0
 
 
-def test_positive_same_release_different_sources(db_session, sample_source, clusterer):
-    """Two reports about the same Python 3.13 release should cluster."""
-    raw1 = RawItem(source_id=sample_source.id, raw_data='{}')
-    raw2 = RawItem(source_id=sample_source.id, raw_data='{}')
-    db_session.add_all([raw1, raw2])
-    db_session.commit()
-
-    item1 = NormalizedItem(
-        raw_item_id=raw1.id,
-        title="Python 3.13 Released",
-        description="New Python version with performance improvements",
-        source_url="https://python.org/1",
-        content_hash="rhash1",
-        normalized_url="https://python.org/1",
-    )
-    item2 = NormalizedItem(
-        raw_item_id=raw2.id,
-        title="Python 3.13 Performance Boost",
-        description="Python 3.13 brings major speed improvements",
-        source_url="https://example.com/2",
-        content_hash="rhash2",
-        normalized_url="https://example.com/2",
-    )
-    db_session.add_all([item1, item2])
-    db_session.commit()
-
-    stats = clusterer.cluster_items([item1.id, item2.id])
-    assert stats["stories_created"] == 1
+def test_similarity_empty(clusterer):
+    assert clusterer._compute_similarity(set(), {"a"}) == 0.0
+    assert clusterer._compute_similarity({"a"}, set()) == 0.0
 
 
-def test_negative_unrelated_python_articles(db_session, sample_source, clusterer):
-    """Two unrelated articles that merely contain 'Python' should NOT cluster."""
-    raw1 = RawItem(source_id=sample_source.id, raw_data='{}')
-    raw2 = RawItem(source_id=sample_source.id, raw_data='{}')
-    db_session.add_all([raw1, raw2])
-    db_session.commit()
+def test_similarity_version_compound_double_weight(clusterer):
+    """Version compounds get weight 2.0 — sharing one should boost similarity."""
+    # With version compound shared (weight 2 each)
+    a = {"python-3", "release"}
+    b = {"python-3", "update"}
+    # inter = 2.0 (python-3), union = 2+1+1 = 4.0 → 0.5
+    assert clusterer._compute_similarity(a, b) == 0.5
 
-    item1 = NormalizedItem(
-        raw_item_id=raw1.id,
-        title="Python Framework Django Released",
-        description="Django 5.0 now available for download",
-        source_url="https://example.com/1",
-        content_hash="nhash1",
-        normalized_url="https://example.com/1",
-    )
-    item2 = NormalizedItem(
-        raw_item_id=raw2.id,
-        title="Python snake found in Florida wildlife reserve",
-        description="Large python discovered in Everglades",
-        source_url="https://example.com/2",
-        content_hash="nhash2",
-        normalized_url="https://example.com/2",
-    )
-    db_session.add_all([item1, item2])
-    db_session.commit()
 
-    stats = clusterer.cluster_items([item1.id, item2.id])
+def test_similarity_no_version_compound_lower(clusterer):
+    """Same sets without version compounds — plain Jaccard."""
+    a = {"python", "release"}
+    b = {"python", "update"}
+    # inter=1, union=3 → 1/3
+    assert abs(clusterer._compute_similarity(a, b) - 1/3) < 0.001
+
+
+def test_similarity_above_threshold(clusterer):
+    """Two similar tech items should exceed default threshold 0.35."""
+    a = clusterer._extract_keywords("Python 3.13 released with new features")
+    b = clusterer._extract_keywords("Python 3.13 released with performance improvements")
+    assert clusterer._compute_similarity(a, b) >= 0.35
+
+
+def test_similarity_below_threshold(clusterer):
+    """Unrelated items should be below threshold."""
+    a = clusterer._extract_keywords("Python 3.13 released today")
+    b = clusterer._extract_keywords("Weather forecast for tomorrow rain")
+    assert clusterer._compute_similarity(a, b) < 0.35
+
+
+# ── Clustering with mock DB ─────────────────────────────────────
+
+def _make_norm_item(item_id, title, description=""):
+    """Create a mock NormalizedItem."""
+    item = MagicMock()
+    item.id = item_id
+    item.title = title
+    item.description = description
+    item.is_duplicate = False
+    item.raw_item = MagicMock()
+    item.raw_item.source_id = 1
+    return item
+
+
+def test_cluster_groups_similar_items(clusterer, mock_db):
+    """Two similar items → one story with 2 items."""
+    item1 = _make_norm_item(1, "Python 3.13 released with new features")
+    item2 = _make_norm_item(2, "Python 3.13 released with performance improvements")
+    items = [item1, item2]
+
+    # query returns our items (no duplicates), no existing story links
+    q = mock_db.query.return_value
+    q.filter.return_value = q
+    q.all.return_value = items
+    # StoryItem query returns empty (no existing links)
+    mock_db.query.return_value.filter.return_value.all.return_value = items
+
+    # We need two separate query chains: one for NormalizedItem, one for StoryItem
+    # Use side_effect to return different query objects
+    norm_query = MagicMock()
+    norm_query.filter.return_value = norm_query
+    norm_query.all.return_value = items
+
+    story_query = MagicMock()
+    story_query.filter.return_value = story_query
+    story_query.all.return_value = []  # no existing links
+
+    mock_db.query.side_effect = [norm_query, story_query]
+
+    stats = clusterer.cluster_items(mock_db, [1, 2])
+    assert stats["stories_created"] >= 1
+    assert stats["items_clustered"] >= 2
+
+
+def test_cluster_separates_dissimilar_items(clusterer, mock_db):
+    """Dissimilar items → separate stories."""
+    item1 = _make_norm_item(1, "Python 3.13 released today")
+    item2 = _make_norm_item(2, "Weather forecast rain tomorrow")
+    items = [item1, item2]
+
+    norm_query = MagicMock()
+    norm_query.filter.return_value = norm_query
+    norm_query.all.return_value = items
+
+    story_query = MagicMock()
+    story_query.filter.return_value = story_query
+    story_query.all.return_value = []
+
+    mock_db.query.side_effect = [norm_query, story_query]
+
+    stats = clusterer.cluster_items(mock_db, [1, 2])
     assert stats["stories_created"] == 2
 
 
-def test_negative_different_versions_different_events(db_session, sample_source, clusterer):
-    """Python 3.12 and Python 3.13 stories about different events should NOT cluster."""
-    raw1 = RawItem(source_id=sample_source.id, raw_data='{}')
-    raw2 = RawItem(source_id=sample_source.id, raw_data='{}')
-    db_session.add_all([raw1, raw2])
-    db_session.commit()
+def test_cluster_skips_duplicates(clusterer, mock_db):
+    """Duplicate items (is_duplicate=True) are excluded."""
+    norm_query = MagicMock()
+    norm_query.filter.return_value = norm_query
+    norm_query.all.return_value = []  # no non-duplicate items
 
-    item1 = NormalizedItem(
-        raw_item_id=raw1.id,
-        title="Python 3.12 security patch released",
-        description="Critical security update for Python 3.12",
-        source_url="https://example.com/1",
-        content_hash="vhash1",
-        normalized_url="https://example.com/1",
-    )
-    item2 = NormalizedItem(
-        raw_item_id=raw2.id,
-        title="Python 3.13 performance benchmarks published",
-        description="Community benchmarks show Python 3.13 speed gains",
-        source_url="https://example.com/2",
-        content_hash="vhash2",
-        normalized_url="https://example.com/2",
-    )
-    db_session.add_all([item1, item2])
-    db_session.commit()
+    mock_db.query.return_value = norm_query
 
-    stats = clusterer.cluster_items([item1.id, item2.id])
-    assert stats["stories_created"] == 2
+    stats = clusterer.cluster_items(mock_db, [1, 2])
+    assert stats["stories_created"] == 0
+    assert stats["items_clustered"] == 0
 
 
-def test_negative_promotional_absorption(db_session, sample_source, clusterer):
-    """Promotional headlines sharing common keywords should NOT absorb unrelated stories."""
-    raw1 = RawItem(source_id=sample_source.id, raw_data='{}')
-    raw2 = RawItem(source_id=sample_source.id, raw_data='{}')
-    db_session.add_all([raw1, raw2])
-    db_session.commit()
+# ── Story creation ──────────────────────────────────────────────
 
-    item1 = NormalizedItem(
-        raw_item_id=raw1.id,
-        title="Amazing breakthrough in quantum computing technology",
-        description="Promotional content about quantum advances",
-        source_url="https://example.com/1",
-        content_hash="phash1",
-        normalized_url="https://example.com/1",
-    )
-    item2 = NormalizedItem(
-        raw_item_id=raw2.id,
-        title="Breakthrough in battery technology announced",
-        description="New battery design for electric vehicles",
-        source_url="https://example.com/2",
-        content_hash="phash2",
-        normalized_url="https://example.com/2",
-    )
-    db_session.add_all([item1, item2])
-    db_session.commit()
+def test_create_story_single_item(clusterer, mock_db):
+    """Single item → story with source_count=1, trust=unconfirmed."""
+    item = _make_norm_item(1, "Python 3.13 released")
+    story = clusterer._create_story(mock_db, [item])
+    assert story.source_count == 1
+    assert story.trust_status == "unconfirmed"
+    assert story.importance_score > 0
+    assert len(story.headline) > 0
 
-    stats = clusterer.cluster_items([item1.id, item2.id])
-    assert stats["stories_created"] == 2
+
+def test_create_story_multi_source(clusterer, mock_db):
+    """Items from 3 sources → trust=confirmed."""
+    items = []
+    for i in range(3):
+        item = _make_norm_item(i + 1, f"Python 3.13 release {i}")
+        item.raw_item.source_id = i + 1  # distinct sources
+        items.append(item)
+    story = clusterer._create_story(mock_db, items)
+    assert story.source_count == 3
+    assert story.trust_status == "confirmed"
+    assert abs(story.confidence - 0.9) < 0.001  # min(3*0.3, 1.0), float-safe

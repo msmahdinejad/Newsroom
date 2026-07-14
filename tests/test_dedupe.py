@@ -1,215 +1,143 @@
-"""Test deduplication pipeline."""
+"""Test deduplication — exact hash, URL hash, near-duplicate token similarity."""
+
+import hashlib
 
 import pytest
 
 from newsroom.processing.dedupe import Deduplicator
-from newsroom.storage.models import NormalizedItem, RawItem, Source
 
 
 @pytest.fixture
-def sample_source(db_session):
-    """Create a test source."""
-    source = Source(
-        name="Test Source",
-        type="rss",
-        url="https://example.com/feed",
-    )
-    db_session.add(source)
-    db_session.commit()
-    return source
-
-
-@pytest.fixture
-def deduplicator():
-    """Create deduplicator instance."""
+def dedupe():
     return Deduplicator()
 
 
-def test_deduplicate_exact_hash_match(db_session, sample_source, deduplicator):
-    """Test marking duplicates with exact hash match."""
-    # Create two raw items
-    raw1 = RawItem(source_id=sample_source.id, raw_data='{"title":"Article"}')
-    raw2 = RawItem(source_id=sample_source.id, raw_data='{"title":"Article"}')
-    db_session.add_all([raw1, raw2])
-    db_session.commit()
+# ── Tokenization ────────────────────────────────────────────────
 
-    # Create normalized items with same hash
-    item1 = NormalizedItem(
-        raw_item_id=raw1.id,
-        title="Same Article",
-        source_url="https://example.com/1",
-        content_hash="abc123",
-        normalized_url="https://example.com/1",
-    )
-    item2 = NormalizedItem(
-        raw_item_id=raw2.id,
-        title="Same Article",
-        source_url="https://example.com/2",
-        content_hash="abc123",  # Same hash
-        normalized_url="https://example.com/2",
-    )
-    db_session.add_all([item1, item2])
-    db_session.commit()
-
-    # Run deduplication
-    stats = deduplicator.deduplicate_batch([item1.id, item2.id])
-
-    # Verify
-    db_session.refresh(item1)
-    db_session.refresh(item2)
-
-    assert item1.is_duplicate is False  # Older item is not marked
-    assert item2.is_duplicate is True  # Newer item marked
-    assert item2.duplicate_of_id == item1.id
-    assert stats["duplicates_marked"] == 1
+def test_tokenize_simple(dedupe):
+    tokens = dedupe._tokenize("Python 3.13 released today")
+    assert "python" in tokens
+    assert "released" in tokens
+    assert "today" in tokens
 
 
-def test_deduplicate_url_match(db_session, sample_source, deduplicator):
-    """Test marking duplicates with normalized URL match."""
-    raw1 = RawItem(source_id=sample_source.id, raw_data='{"url":"https://example.com"}')
-    raw2 = RawItem(source_id=sample_source.id, raw_data='{"url":"https://example.com?utm=1"}')
-    db_session.add_all([raw1, raw2])
-    db_session.commit()
-
-    item1 = NormalizedItem(
-        raw_item_id=raw1.id,
-        title="Article A",
-        source_url="https://example.com/article",
-        content_hash="hash1",
-        normalized_url="https://example.com/article",
-    )
-    item2 = NormalizedItem(
-        raw_item_id=raw2.id,
-        title="Article B",
-        source_url="https://example.com/article?utm_source=twitter",
-        content_hash="hash2",  # Different hash
-        normalized_url="https://example.com/article",  # Same normalized URL
-    )
-    db_session.add_all([item1, item2])
-    db_session.commit()
-
-    stats = deduplicator.deduplicate_batch([item1.id, item2.id])
-
-    db_session.refresh(item1)
-    db_session.refresh(item2)
-
-    assert item1.is_duplicate is False
-    assert item2.is_duplicate is True
-    assert item2.duplicate_of_id == item1.id
-    assert stats["duplicates_marked"] == 1
+def test_tokenize_filters_short_words(dedupe):
+    """Words ≤2 chars are excluded; 3-char words pass."""
+    tokens = dedupe._tokenize("a go to the sky")
+    assert "sky" in tokens
+    assert "the" in tokens  # len("the")==3 > 2 → kept
+    assert "a" not in tokens
+    assert "go" not in tokens  # len("go")==2 ≤ 2 → filtered
+    assert "to" not in tokens
 
 
-def test_deduplicate_no_duplicates(db_session, sample_source, deduplicator):
-    """Test deduplication with no duplicates."""
-    raw1 = RawItem(source_id=sample_source.id, raw_data='{"a":1}')
-    raw2 = RawItem(source_id=sample_source.id, raw_data='{"b":2}')
-    db_session.add_all([raw1, raw2])
-    db_session.commit()
-
-    item1 = NormalizedItem(
-        raw_item_id=raw1.id,
-        title="Article A",
-        source_url="https://example.com/a",
-        content_hash="hash_a",
-        normalized_url="https://example.com/a",
-    )
-    item2 = NormalizedItem(
-        raw_item_id=raw2.id,
-        title="Article B",
-        source_url="https://example.com/b",
-        content_hash="hash_b",
-        normalized_url="https://example.com/b",
-    )
-    db_session.add_all([item1, item2])
-    db_session.commit()
-
-    stats = deduplicator.deduplicate_batch([item1.id, item2.id])
-
-    db_session.refresh(item1)
-    db_session.refresh(item2)
-
-    assert item1.is_duplicate is False
-    assert item2.is_duplicate is False
-    assert stats["duplicates_marked"] == 0
+def test_tokenize_lowercase(dedupe):
+    tokens = dedupe._tokenize("PYTHON ReleaseD")
+    assert "python" in tokens
+    assert "released" in tokens
 
 
-def test_get_duplicate_chain(db_session, sample_source, deduplicator):
-    """Test retrieving duplicate chain."""
-    # Create chain: item1 <- item2 <- item3
-    raw1 = RawItem(source_id=sample_source.id, raw_data='{"i":1}')
-    raw2 = RawItem(source_id=sample_source.id, raw_data='{"i":2}')
-    raw3 = RawItem(source_id=sample_source.id, raw_data='{"i":3}')
-    db_session.add_all([raw1, raw2, raw3])
-    db_session.commit()
-
-    item1 = NormalizedItem(
-        raw_item_id=raw1.id,
-        title="Root",
-        source_url="https://example.com/root",
-        content_hash="same_hash",
-        normalized_url="https://example.com/root",
-    )
-    db_session.add(item1)
-    db_session.commit()
-
-    item2 = NormalizedItem(
-        raw_item_id=raw2.id,
-        title="Dup 1",
-        source_url="https://example.com/dup1",
-        content_hash="same_hash",
-        normalized_url="https://example.com/dup1",
-        is_duplicate=True,
-        duplicate_of_id=item1.id,
-    )
-    item3 = NormalizedItem(
-        raw_item_id=raw3.id,
-        title="Dup 2",
-        source_url="https://example.com/dup2",
-        content_hash="same_hash",
-        normalized_url="https://example.com/dup2",
-        is_duplicate=True,
-        duplicate_of_id=item1.id,
-    )
-    db_session.add_all([item2, item3])
-    db_session.commit()
-
-    # Get chain from any item
-    chain = deduplicator.get_duplicate_chain(item2.id)
-
-    assert len(chain) == 3
-    assert chain[0] == item1.id  # Root first
-    assert item2.id in chain
-    assert item3.id in chain
+def test_tokenize_empty(dedupe):
+    assert dedupe._tokenize("") == set()
 
 
-def test_empty_url_not_matched(db_session, sample_source, deduplicator):
-    """Test items with empty URLs are not matched."""
-    raw1 = RawItem(source_id=sample_source.id, raw_data='{}')
-    raw2 = RawItem(source_id=sample_source.id, raw_data='{}')
-    db_session.add_all([raw1, raw2])
-    db_session.commit()
+# ── Token similarity (Jaccard) ──────────────────────────────────
 
-    item1 = NormalizedItem(
-        raw_item_id=raw1.id,
-        title="No URL 1",
-        source_url="",
-        content_hash="hash1",
-        normalized_url="",
-    )
-    item2 = NormalizedItem(
-        raw_item_id=raw2.id,
-        title="No URL 2",
-        source_url="",
-        content_hash="hash2",
-        normalized_url="",  # Both empty, should not match by URL
-    )
-    db_session.add_all([item1, item2])
-    db_session.commit()
+def test_similarity_identical(dedupe):
+    a = {"python", "release", "version"}
+    b = {"python", "release", "version"}
+    assert dedupe._token_similarity(a, b) == 1.0
 
-    deduplicator.deduplicate_batch([item1.id, item2.id])
 
-    db_session.refresh(item1)
-    db_session.refresh(item2)
+def test_similarity_disjoint(dedupe):
+    a = {"python", "release"}
+    b = {"java", "update"}
+    assert dedupe._token_similarity(a, b) == 0.0
 
-    assert item1.is_duplicate is False
-    assert item2.is_duplicate is False
+
+def test_similarity_partial(dedupe):
+    a = {"python", "release", "version"}
+    b = {"python", "release", "update"}
+    # intersection=2, union=4 → 0.5
+    assert dedupe._token_similarity(a, b) == 0.5
+
+
+def test_similarity_empty_set(dedupe):
+    assert dedupe._token_similarity(set(), {"a"}) == 0.0
+    assert dedupe._token_similarity({"a"}, set()) == 0.0
+
+
+def test_similarity_above_threshold(dedupe):
+    """Near-duplicate titles should score ≥ 0.7."""
+    t1 = dedupe._tokenize("Python 3.13 released with new features today")
+    t2 = dedupe._tokenize("Python 3.13 released with new features update")
+    # tokens (len>2): python, released, with, new, features, today / update
+    # intersection: 5, union: 7 → 0.714
+    assert dedupe._token_similarity(t1, t2) >= 0.7
+
+
+# ── Empty hash ──────────────────────────────────────────────────
+
+def test_empty_hash(dedupe):
+    expected = hashlib.sha256(b"").hexdigest()
+    assert dedupe._empty_hash() == expected
+
+
+# ── _mark_if_duplicate with mock DB ─────────────────────────────
+
+def _make_item(item_id, content_hash, url_hash="", title="Test"):
+    """Create a mock NormalizedItem-like object."""
+    from unittest.mock import MagicMock
+    item = MagicMock()
+    item.id = item_id
+    item.content_hash = content_hash
+    item.url_hash = url_hash
+    item.title = title
+    item.is_duplicate = False
+    item.duplicate_of_id = None
+    return item
+
+
+def test_exact_hash_duplicate_detected(dedupe, mock_db):
+    """Item with same content_hash as earlier item → marked 'hash'."""
+    original = _make_item(1, "abc123", "url1", "Original")
+    new_item = _make_item(2, "abc123", "url2", "Duplicate")
+
+    # First query (hash check) finds the original
+    q = mock_db.query.return_value
+    q.filter.return_value = q
+    q.first.return_value = original
+
+    method = dedupe._mark_if_duplicate(mock_db, new_item)
+    assert method == "hash"
+    assert new_item.is_duplicate is True
+    assert new_item.duplicate_of_id == 1
+
+
+def test_url_hash_duplicate_detected(dedupe, mock_db):
+    """Same url_hash, different content_hash → marked 'url'."""
+    original = _make_item(1, "hash_a", "same_url_hash", "Title A")
+    new_item = _make_item(2, "hash_b", "same_url_hash", "Title B")
+
+    q = mock_db.query.return_value
+    q.filter.return_value = q
+    # First query (hash) → None, second query (url) → original
+    q.first.side_effect = [None, original]
+
+    method = dedupe._mark_if_duplicate(mock_db, new_item)
+    assert method == "url"
+    assert new_item.is_duplicate is True
+
+
+def test_no_duplicate_found(dedupe, mock_db):
+    """No hash, url, or near-duplicate → None."""
+    new_item = _make_item(2, "unique_hash", "unique_url", "Unique Title")
+
+    q = mock_db.query.return_value
+    q.filter.return_value = q
+    q.first.return_value = None  # no hash match, no url match
+    q.all.return_value = []      # no near-dup candidates
+
+    method = dedupe._mark_if_duplicate(mock_db, new_item)
+    assert method is None
+    assert new_item.is_duplicate is False

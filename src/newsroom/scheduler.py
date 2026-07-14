@@ -9,14 +9,11 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.jobstores.memory import MemoryJobStore
 
-from newsroom.config import settings
 from newsroom.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
@@ -31,7 +28,7 @@ async def run_scheduled_pipeline(job_label: str) -> None:
     from newsroom.storage.database import get_db
     from newsroom.storage.models import JobRun
 
-    job_id = f"scheduled_{job_label}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    job_id = f"scheduled_{job_label}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
     job_run = JobRun(
         job_type="scheduled",
         job_id=job_id,
@@ -82,11 +79,11 @@ async def run_scheduled_pipeline(job_label: str) -> None:
             if jr:
                 jr.status = status
                 jr.stage = "complete"
-                jr.finished_at = datetime.now(timezone.utc)
+                jr.finished_at = datetime.now(UTC)
                 jr.report_id = report_id
                 jr.error_detail = error_detail
                 jr.stages_log = [
-                    {"name": "pipeline", "status": status, "ts": datetime.now(timezone.utc).isoformat()}
+                    {"name": "pipeline", "status": status, "ts": datetime.now(UTC).isoformat()}
                 ]
 
         logger.info(f"Job {job_label} finished: {status}")
@@ -97,7 +94,7 @@ async def run_scheduled_pipeline(job_label: str) -> None:
             if jr:
                 jr.status = "error"
                 jr.error_detail = "Pipeline timeout (300s)"
-                jr.finished_at = datetime.now(timezone.utc)
+                jr.finished_at = datetime.now(UTC)
     except Exception as e:
         logger.error(f"Job {job_label} failed: {e}")
         with get_db() as db:
@@ -105,7 +102,7 @@ async def run_scheduled_pipeline(job_label: str) -> None:
             if jr:
                 jr.status = "error"
                 jr.error_detail = str(e)[:500]
-                jr.finished_at = datetime.now(timezone.utc)
+                jr.finished_at = datetime.now(UTC)
 
 
 def create_scheduler() -> AsyncIOScheduler:

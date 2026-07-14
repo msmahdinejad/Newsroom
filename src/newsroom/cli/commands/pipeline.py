@@ -1,7 +1,6 @@
 """Pipeline CLI command — V2."""
 
 import argparse
-import asyncio
 
 from newsroom.logging import get_logger, setup_logging
 
