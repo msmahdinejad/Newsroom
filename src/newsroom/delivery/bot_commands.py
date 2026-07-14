@@ -4,6 +4,7 @@ These handlers process commands from the configured allowlist.
 Only news-report functionality - no technical/engineering commands.
 """
 
+import contextlib
 import json
 import os
 import subprocess
@@ -44,10 +45,8 @@ def acquire_lock():
 
 def release_lock():
     """Release the pipeline lock."""
-    try:
+    with contextlib.suppress(OSError):
         os.remove(LOCK_FILE)
-    except OSError:
-        pass
 
 
 def check_cooldown():
