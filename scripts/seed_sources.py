@@ -7,9 +7,10 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, "src")
 
+from sqlalchemy.orm import Session
+
 from newsroom.storage.database import engine
 from newsroom.storage.models import Source
-from sqlalchemy.orm import Session
 
 DEFAULT_SOURCES = [
     # RSS feeds (8)
@@ -40,8 +41,8 @@ def seed():
                     name=name, type=stype, url=url,
                     language=lang, priority=priority,
                     enabled=True, consecutive_failures=0,
-                    created_at=datetime.now(UTC),
-                    updated_at=datetime.now(UTC),
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
                 )
                 session.add(src)
         session.commit()
