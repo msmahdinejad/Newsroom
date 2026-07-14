@@ -16,40 +16,105 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
 
-  app:
+  migrate:
     build: .
-    container_name: newsroom-app
+    container_name: newsroom-migrate
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
-    volumes:
-      - ./src:/app/src
-    command: sh -c "uv run python -c \"from newsroom.storage.database import engine; from newsroom.storage.models import Base; Base.metadata.create_all(engine)\" && tail -f /dev/null"
-    healthcheck:
-      test: ["CMD", "uv", "run", "newsroom", "health"]
-      interval: 10s
-      timeout: 10s
-      retries: 5
-      start_period: 10s
-    restart: unless-stopped
+    command: uv run alembic upgrade head
+    restart: "no"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
 
-  worker:
+  collector:
     build: .
-    container_name: newsroom-worker
+    container_name: newsroom-collector
     depends_on:
       postgres:
         condition: service_healthy
-      app:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
-    volumes:
-      - ./src:/app/src
-    command: uv run newsroom pipeline run
+    command: uv run python -m newsroom.cli.main collect
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  report-worker:
+    build: .
+    container_name: newsroom-report-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
+    command: uv run python -m newsroom.cli.main process all
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  scheduler:
+    build: .
+    container_name: newsroom-scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_AUTHORIZED_USERS: ${TELEGRAM_AUTHORIZED_USERS:-}
+    command: uv run python -m newsroom.scheduler
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  telegram-bot:
+    build: .
+    container_name: newsroom-telegram-bot
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_AUTHORIZED_USERS: ${TELEGRAM_AUTHORIZED_USERS:-}
+    command: uv run python -m newsroom.delivery.bot
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
 
 volumes:
   postgres_data:

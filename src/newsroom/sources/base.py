@@ -3,35 +3,39 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
+from newsroom.storage.models import Source
+
 
 class SourceCollector(ABC):
-    """Abstract base for all source collectors."""
+    """Abstract base for all source collectors.
+
+    Every adapter implements: health_check, collect (incremental via cursor),
+    parse, and retry classification.
+    """
 
     @abstractmethod
-    async def collect(self, source_url: str) -> list[dict[str, Any]]:
-        """Collect items from source.
+    async def collect(self, source: Source) -> list[dict[str, Any]]:
+        """Collect items from source incrementally.
 
         Args:
-            source_url: The source URL or identifier
+            source: Source model with url, config, cursor state
 
         Returns:
-            List of raw items (dicts to be stored as JSON)
-
-        Raises:
-            CollectionError: On fetch/parse failures
+            List of raw item dicts (stored as JSONB)
         """
         pass
 
     @abstractmethod
     def validate_url(self, source_url: str) -> bool:
-        """Check if URL is valid for this collector type.
+        """Check if URL is valid for this collector type."""
+        pass
 
-        Args:
-            source_url: URL to validate
+    async def health_check(self, source: Source) -> bool:
+        """Quick reachability check. Override for source-specific logic."""
+        return self.validate_url(source.url)
 
-        Returns:
-            True if valid for this collector type
-        """
+    async def close(self) -> None:
+        """Clean up resources (HTTP clients, sessions)."""
         pass
 
 
@@ -42,3 +46,13 @@ class CollectionError(Exception):
         super().__init__(message)
         self.source_url = source_url
         self.recoverable = recoverable
+
+
+def classify_retry(error: Exception) -> str:
+    """Classify an error for retry logic.
+
+    Returns: retry/skip/fatal
+    """
+    if isinstance(error, CollectionError):
+        return "retry" if error.recoverable else "skip"
+    return "skip"

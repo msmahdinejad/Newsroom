@@ -1,72 +1,44 @@
-"""Unified pipeline command - runs complete collection→digest flow."""
+"""Pipeline CLI command — V2."""
 
 import argparse
+import asyncio
 
-from newsroom.cli.commands.collect import collect_command
-from newsroom.cli.commands.digest import preview_command
-from newsroom.cli.commands.process import cluster_command, dedupe_command, normalize_command
 from newsroom.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
 
 
 async def pipeline_run_command(args: argparse.Namespace) -> int:
-    """Run complete pipeline: collect → normalize → dedupe → cluster → digest.
-
-    Args:
-        args: Parsed arguments
-
-    Returns:
-        Exit code
-    """
+    """Run complete pipeline: collect → normalize → dedupe → cluster → evidence → report."""
     setup_logging()
     logger.info("Starting complete pipeline")
 
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print("🚀 Running Complete Pipeline")
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("=" * 40)
+    print("Pipeline: collect → report")
+    print("=" * 40)
 
-    # Phase 1: Collection
-    print("\n📥 Phase 1: Collection")
-    collect_args = argparse.Namespace(source_type=None)
-    result = await collect_command(collect_args)
-    if result != 0:
-        print("✗ Pipeline failed at collection phase")
-        return result
+    # Run via the canonical pipeline script
+    import os
+    import subprocess
+    import sys
 
-    # Phase 2: Normalization
-    print("\n⚙️  Phase 2: Normalization")
-    normalize_args = argparse.Namespace(limit=1000)
-    result = normalize_command(normalize_args)
-    if result != 0:
-        print("✗ Pipeline failed at normalization phase")
-        return result
+    project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
+    script = os.path.join(project_dir, "scripts", "run_pipeline.py")
 
-    # Phase 3: Deduplication
-    print("\n🔍 Phase 3: Deduplication")
-    dedupe_args = argparse.Namespace(limit=1000)
-    result = dedupe_command(dedupe_args)
-    if result != 0:
-        print("✗ Pipeline failed at deduplication phase")
-        return result
+    result = subprocess.run(
+        [sys.executable, script],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        cwd=project_dir,
+    )
 
-    # Phase 4: Clustering
-    print("\n📊 Phase 4: Story Clustering")
-    cluster_args = argparse.Namespace(limit=1000)
-    result = cluster_command(cluster_args)
-    if result != 0:
-        print("✗ Pipeline failed at clustering phase")
-        return result
+    # Print stage output
+    for line in result.stdout.strip().split("\n"):
+        if line.strip():
+            print(line)
 
-    # Phase 5: Digest Generation
-    print("\n📰 Phase 5: Digest Generation")
-    preview_args = argparse.Namespace(limit=50, save=True)
-    result = preview_command(preview_args)
-    if result != 0:
-        print("✗ Pipeline failed at digest phase")
-        return result
+    if result.returncode != 0 and result.stderr:
+        print(f"STDERR: {result.stderr[:500]}")
 
-    print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print("✓ Pipeline Complete")
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    return 0
+    return result.returncode

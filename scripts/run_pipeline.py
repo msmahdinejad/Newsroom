@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""Newsroom pipeline runner - canonical scheduled execution path.
+"""Newsroom pipeline runner — canonical scheduled execution path.
 
-This script is used by cron jobs and manual triggers.
-It runs the full pipeline: collect -> normalize -> dedupe -> cluster -> digest -> deliver.
+Runs: collect → normalize → dedupe → cluster → evidence → report → deliver.
 All output is structured JSON for observability.
 """
 
 import json
 import os
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
-# Ensure project is importable
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
-def run_pipeline():
+def run_pipeline() -> dict:
     """Run the full newsroom pipeline."""
     result = {
         "job_id": os.environ.get("NEWSROOM_JOB_ID", "manual"),
-        "start_time": datetime.now(UTC).isoformat(),
+        "report_mode": os.environ.get("NEWSROOM_REPORT_MODE", "scheduled"),
+        "schedule_label": os.environ.get("NEWSROOM_SCHEDULE_LABEL", ""),
+        "start_time": datetime.now(timezone.utc).isoformat(),
         "stages": [],
         "status": "running",
         "report_id": None,
@@ -27,27 +27,28 @@ def run_pipeline():
         "error": None,
     }
 
-    def stage(name, status, detail=""):
-        result["stages"].append({"name": name, "status": status, "detail": detail})
+    def stage(name: str, status: str, detail: str = "") -> None:
+        entry = {"name": name, "status": status, "detail": detail}
+        result["stages"].append(entry)
         print(json.dumps({"stage": name, "status": status, "detail": detail}, ensure_ascii=False))
         sys.stdout.flush()
 
     try:
-        # Stage 1: Verify database
+        # Stage 1: Database check
         stage("database", "starting")
         from sqlalchemy import text as sa_text
+        from sqlalchemy.orm import Session
 
         from newsroom.storage.database import engine
         with engine.connect() as conn:
             conn.execute(sa_text("SELECT 1"))
         stage("database", "ok")
 
-        # Stage 2: Collect from enabled sources
+        # Stage 2: Collect
         stage("collect", "starting")
         import asyncio
 
-        from sqlalchemy.orm import Session
-
+        from newsroom.sources.github import GitHubCollector
         from newsroom.sources.rss import RSSCollector
         from newsroom.storage.models import RawItem, Source
 
@@ -56,47 +57,55 @@ def run_pipeline():
         stage("collect", "sources_found", f"{len(sources)} sources")
 
         rss = RSSCollector()
+        gh = GitHubCollector()
         total_collected = 0
 
         async def collect_all():
-            """Collect from all sources in a single event loop."""
             nonlocal total_collected
             for source in sources:
                 try:
                     if source.type == "rss":
-                        items = await rss.collect(source.url)
+                        items = await rss.collect(source)
                     elif source.type == "github_releases":
-                        from newsroom.sources.github import GitHubCollector
-                        gh_local = GitHubCollector()
-                        items = await gh_local.collect(source.url)
-                        await gh_local.close()
+                        items = await gh.collect(source)
                     else:
                         continue
 
-                    for item in items[:5]:
+                    for item in items[:10]:
+                        import hashlib
                         item_url = item.get("link") or item.get("html_url") or ""
-                        if item_url:
-                            existing = session.query(RawItem).filter(
-                                RawItem.source_id == source.id,
-                                RawItem.raw_data.like(f"%{item_url}%")
-                            ).first()
-                            if existing:
-                                continue
+                        raw_hash = hashlib.sha256(
+                            (item_url + item.get("title", "")).encode()
+                        ).hexdigest()
+
+                        existing = session.query(RawItem).filter(
+                            RawItem.source_id == source.id,
+                            RawItem.content_hash == raw_hash,
+                        ).first()
+                        if existing:
+                            continue
 
                         raw = RawItem(
                             source_id=source.id,
-                            raw_data=json.dumps(item, default=str, ensure_ascii=False),
+                            raw_data=item,
+                            content_hash=raw_hash,
                         )
                         session.add(raw)
                         total_collected += 1
 
-                    source.last_success_at = datetime.now(UTC)
+                    source.last_success_at = datetime.now(timezone.utc)
                     source.consecutive_failures = 0
+                    source.health_status = "healthy"
                 except Exception as e:
-                    source.last_error_at = datetime.now(UTC)
+                    source.last_error_at = datetime.now(timezone.utc)
                     source.last_error = str(e)[:500]
                     source.consecutive_failures += 1
+                    if source.consecutive_failures >= 3:
+                        source.health_status = "degraded"
                     stage("collect", "source_error", f"{source.name}: {str(e)[:100]}")
+
+            await rss.close()
+            await gh.close()
 
         asyncio.run(collect_all())
 
@@ -105,109 +114,127 @@ def run_pipeline():
 
         # Stage 3: Normalize
         stage("normalize", "starting")
+        from newsroom.processing.normalize import Normalizer
         from newsroom.storage.models import NormalizedItem
 
+        normalizer = Normalizer()
         raw_items = session.query(RawItem).filter(
-            ~RawItem.id.in_(
-                session.query(NormalizedItem.raw_item_id)
-            )
+            ~RawItem.id.in_(session.query(NormalizedItem.raw_item_id))
         ).all()
 
         normalized_count = 0
         for raw in raw_items:
             try:
-                data = json.loads(raw.raw_data)
-                # RSS items have title/link, GitHub releases have name/html_url
-                title = data.get("title") or data.get("name") or "Untitled"
-                url = data.get("link") or data.get("html_url") or data.get("url") or ""
-                desc = data.get("description") or data.get("body") or data.get("summary") or ""
+                norm_data = normalizer.normalize(raw.raw_data)
                 norm = NormalizedItem(
                     raw_item_id=raw.id,
-                    title=title[:500],
-                    description=desc[:1000],
-                    source_url=url,
-                    content_hash=str(hash(title + url)),
-                    normalized_url=url,
+                    title=norm_data["title"][:500],
+                    description=norm_data.get("description", "")[:2000],
+                    source_url=norm_data["source_url"],
+                    canonical_url=norm_data.get("canonical_url", ""),
+                    published_at=norm_data.get("published_at"),
+                    language=norm_data.get("language"),
+                    content_hash=norm_data["content_hash"],
+                    url_hash=norm_data.get("url_hash", ""),
                 )
                 session.add(norm)
                 normalized_count += 1
-            except Exception:
-                pass
+            except Exception as e:
+                stage("normalize", "item_error", f"raw {raw.id}: {str(e)[:80]}")
 
         session.commit()
         stage("normalize", "ok", f"{normalized_count} items normalized")
 
-        # Stage 4: Cluster
-        stage("cluster", "starting")
-        from newsroom.processing.cluster import Clusterer
-        clusterer = Clusterer()
+        # Stage 4: Deduplicate
+        stage("dedupe", "starting")
+        from newsroom.processing.dedupe import Deduplicator
 
-        non_dup_items = session.query(NormalizedItem).filter(
+        deduper = Deduplicator()
+        non_dup = session.query(NormalizedItem).filter(
             NormalizedItem.is_duplicate == False  # noqa: E712
         ).all()
-        item_ids = [i.id for i in non_dup_items]
-
-        if item_ids:
-            stats = clusterer.cluster_items(item_ids)
-            stage("cluster", "ok", f"{stats['stories_created']} stories")
+        if non_dup:
+            dedup_stats = deduper.deduplicate_batch(session, [i.id for i in non_dup])
+            session.commit()
+            stage("dedupe", "ok", f"{dedup_stats}")
         else:
-            stage("cluster", "ok", "0 stories (no items)")
+            stage("dedupe", "ok", "no items")
 
-        # Stage 5: Generate digest
-        stage("digest", "starting")
-        from newsroom.storage.models import Digest, Story
+        # Stage 5: Cluster
+        stage("cluster", "starting")
+        from newsroom.processing.cluster import Clusterer
 
-        stories = session.query(Story).order_by(Story.created_at.desc()).limit(20).all()
-        story_ids = [s.id for s in stories]
+        clusterer = Clusterer()
+        non_dup = session.query(NormalizedItem).filter(
+            NormalizedItem.is_duplicate == False  # noqa: E712
+        ).all()
+        if non_dup:
+            cluster_stats = clusterer.cluster_items(session, [i.id for i in non_dup])
+            session.commit()
+            stage("cluster", "ok", f"{cluster_stats}")
+        else:
+            stage("cluster", "ok", "no items")
+
+        # Stage 6: Evidence
+        stage("evidence", "starting")
+        from newsroom.processing.evidence import EvidenceBuilder
+        from newsroom.storage.models import Story
+
+        evidence_builder = EvidenceBuilder()
+        stories = session.query(Story).order_by(Story.created_at.desc()).limit(30).all()
+        if stories:
+            ev_stats = evidence_builder.build_for_stories(session, [s.id for s in stories])
+            session.commit()
+            stage("evidence", "ok", f"{ev_stats}")
+        else:
+            stage("evidence", "skipped", "no stories")
+
+        # Stage 7: Report generation
+        stage("report", "starting")
+        story_ids = [s.id for s in stories] if stories else []
+        report_mode = result["report_mode"]
 
         if not story_ids:
-            stage("digest", "skipped", "no stories")
+            stage("report", "skipped", "no stories")
             result["status"] = "ok_empty"
-            result["finish_time"] = datetime.now(UTC).isoformat()
+            result["finish_time"] = datetime.now(timezone.utc).isoformat()
             session.close()
             print(json.dumps(result, ensure_ascii=False))
-            return
+            return result
 
-        from newsroom.digest.preview import PreviewGenerator
-        gen = PreviewGenerator()
-        digest_id = gen.create_digest(story_ids)
-        result["report_id"] = digest_id
-        stage("digest", "ok", f"digest {digest_id}")
+        from newsroom.editorial.persian import PersianEditorial
 
-        # Stage 6: Deliver via Hermes CLI
+        editorial = PersianEditorial()
+        report_id = editorial.generate_report(session, story_ids, report_mode=report_mode)
+        session.commit()
+        result["report_id"] = report_id
+        stage("report", "ok", f"report {report_id}")
+
+        # Stage 8: Deliver
         stage("deliver", "starting")
-        import subprocess
+        from newsroom.config import settings as cfg
+        from newsroom.delivery.telegram import TelegramDelivery
 
-        digest = session.query(Digest).filter_by(id=digest_id).first()
-        content = digest.content_fa if digest else ""
-
-        if content and len(content) > 10:
-            # Use hermes send CLI
-            proc = subprocess.run(
-                ["hermes", "send", "--to", "telegram", content],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if proc.returncode == 0:
-                digest.delivered = True
-                digest.delivered_at = datetime.now(UTC)
-                session.commit()
-                result["delivery_id"] = digest_id
-                stage("deliver", "ok", f"delivered digest {digest_id}")
+        td = TelegramDelivery()
+        if td.configured:
+            delivery_id = asyncio.run(td.deliver_report(session, report_id))
+            asyncio.run(td.close())
+            if delivery_id:
+                result["delivery_id"] = delivery_id
+                stage("deliver", "ok", f"delivery {delivery_id}")
             else:
-                stage("deliver", "error", proc.stderr[:200])
+                stage("deliver", "failed", "delivery returned None")
         else:
-            stage("deliver", "skipped", "empty content")
+            stage("deliver", "skipped", "Telegram not configured")
 
         result["status"] = "ok"
-        result["finish_time"] = datetime.now(UTC).isoformat()
+        result["finish_time"] = datetime.now(timezone.utc).isoformat()
         session.close()
 
     except Exception as e:
         result["status"] = "error"
         result["error"] = str(e)[:500]
-        result["finish_time"] = datetime.now(UTC).isoformat()
+        result["finish_time"] = datetime.now(timezone.utc).isoformat()
         stage("pipeline", "error", str(e)[:200])
 
     print(json.dumps(result, ensure_ascii=False))

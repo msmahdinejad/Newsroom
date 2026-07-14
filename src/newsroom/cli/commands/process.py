@@ -1,149 +1,136 @@
-"""CLI commands for processing pipeline."""
+"""Processing pipeline CLI commands — V2."""
 
 import argparse
 
 from newsroom.logging import get_logger, setup_logging
-from newsroom.processing.cluster import Clusterer
-from newsroom.processing.dedupe import Deduplicator
-from newsroom.processing.normalize import Normalizer
 from newsroom.storage.database import get_db
 from newsroom.storage.models import NormalizedItem, RawItem
 
 logger = get_logger(__name__)
 
 
-def normalize_command(args: argparse.Namespace) -> int:
-    """Normalize raw items.
-
-    Args:
-        args: Parsed arguments
-
-    Returns:
-        Exit code
-    """
+def process_command(args: argparse.Namespace) -> int:
+    """Run processing pipeline stages."""
     setup_logging()
+
+    if args.process_command == "all":
+        return _run_all()
+    elif args.process_command == "normalize":
+        return _normalize()
+    elif args.process_command == "dedupe":
+        return _dedupe()
+    elif args.process_command == "cluster":
+        return _cluster()
+    else:
+        print("Unknown process command")
+        return 1
+
+
+def _run_all() -> int:
+    """Run normalize → dedupe → cluster → evidence."""
+    rc = _normalize()
+    if rc != 0:
+        return rc
+    rc = _dedupe()
+    if rc != 0:
+        return rc
+    rc = _cluster()
+    return rc
+
+
+def _normalize() -> int:
+    """Normalize raw items."""
     logger.info("Starting normalization")
-
     try:
-        normalizer = Normalizer()
+        from newsroom.processing.normalize import Normalizer
 
+        normalizer = Normalizer()
         with get_db() as db:
-            # Get unprocessed raw items
-            raw_items = db.query(RawItem).outerjoin(
-                NormalizedItem, RawItem.id == NormalizedItem.raw_item_id
-            ).filter(NormalizedItem.id == None).limit(args.limit).all()  # noqa: E711
+            raw_items = (
+                db.query(RawItem)
+                .outerjoin(NormalizedItem, RawItem.id == NormalizedItem.raw_item_id)
+                .filter(NormalizedItem.id == None)  # noqa: E711
+                .limit(500)
+                .all()
+            )
 
             if not raw_items:
                 print("No raw items to normalize")
                 return 0
 
-            logger.info(f"Normalizing {len(raw_items)} items")
-
+            count = 0
             for raw in raw_items:
                 try:
-                    # Parse raw data
-                    import ast
-                    raw_data = ast.literal_eval(raw.raw_data)
-
-                    normalized_data = normalizer.normalize(raw_data)
-
-                    normalized_item = NormalizedItem(
+                    norm_data = normalizer.normalize(raw.raw_data)
+                    norm = NormalizedItem(
                         raw_item_id=raw.id,
-                        title=normalized_data["title"],
-                        description=normalized_data.get("description"),
-                        source_url=normalized_data["source_url"],
-                        published_at=normalized_data.get("published_at"),
-                        content_hash=normalized_data["content_hash"],
-                        normalized_url=normalized_data["normalized_url"],
+                        title=norm_data["title"][:500],
+                        description=norm_data.get("description", "")[:2000],
+                        source_url=norm_data["source_url"],
+                        canonical_url=norm_data.get("canonical_url", ""),
+                        published_at=norm_data.get("published_at"),
+                        language=norm_data.get("language"),
+                        content_hash=norm_data["content_hash"],
+                        url_hash=norm_data.get("url_hash", ""),
                     )
-                    db.add(normalized_item)
-
+                    db.add(norm)
+                    count += 1
                 except Exception as e:
-                    logger.error(f"Failed to normalize raw_item {raw.id}: {e}")
-                    continue
+                    logger.error(f"Normalize raw {raw.id}: {e}")
 
-            db.commit()
-            print(f"✓ Normalized {len(raw_items)} items")
+            print(f"OK: Normalized {count} items")
             return 0
-
     except Exception as e:
         logger.error(f"Normalization failed: {e}")
-        print(f"✗ Normalization failed: {e}")
+        print(f"FAIL: {e}")
         return 1
 
 
-def dedupe_command(args: argparse.Namespace) -> int:
-    """Deduplicate normalized items.
-
-    Args:
-        args: Parsed arguments
-
-    Returns:
-        Exit code
-    """
-    setup_logging()
+def _dedupe() -> int:
+    """Deduplicate normalized items."""
     logger.info("Starting deduplication")
-
     try:
-        deduplicator = Deduplicator()
+        from newsroom.processing.dedupe import Deduplicator
 
+        deduper = Deduplicator()
         with get_db() as db:
-            # Get non-duplicate items
             items = db.query(NormalizedItem).filter(
                 NormalizedItem.is_duplicate == False  # noqa: E712
-            ).limit(args.limit).all()
+            ).all()
 
             if not items:
                 print("No items to deduplicate")
                 return 0
 
-            item_ids = [item.id for item in items]
-            stats = deduplicator.deduplicate_batch(item_ids)
-
-            print(f"✓ Checked {len(items)} items")
-            print(f"  Marked {stats['duplicates_marked']} duplicates")
+            stats = deduper.deduplicate_batch(db, [i.id for i in items])
+            print(f"OK: Checked {len(items)}, marked {stats['duplicates_marked']} duplicates")
             return 0
-
     except Exception as e:
-        logger.error(f"Deduplication failed: {e}")
-        print(f"✗ Deduplication failed: {e}")
+        logger.error(f"Dedup failed: {e}")
+        print(f"FAIL: {e}")
         return 1
 
 
-def cluster_command(args: argparse.Namespace) -> int:
-    """Cluster normalized items into stories.
-
-    Args:
-        args: Parsed arguments
-
-    Returns:
-        Exit code
-    """
-    setup_logging()
+def _cluster() -> int:
+    """Cluster normalized items into stories."""
     logger.info("Starting clustering")
-
     try:
-        clusterer = Clusterer()
+        from newsroom.processing.cluster import Clusterer
 
+        clusterer = Clusterer()
         with get_db() as db:
-            # Get non-duplicate items not yet in a story
-            # ponytail: no story membership tracking yet, cluster all
             items = db.query(NormalizedItem).filter(
                 NormalizedItem.is_duplicate == False  # noqa: E712
-            ).limit(args.limit).all()
+            ).all()
 
             if not items:
                 print("No items to cluster")
                 return 0
 
-            item_ids = [item.id for item in items]
-            stats = clusterer.cluster_items(item_ids)
-
-            print(f"✓ Clustered {stats['items_clustered']} items")
-            print(f"  Created {stats['stories_created']} stories")
+            stats = clusterer.cluster_items(db, [i.id for i in items])
+            print(f"OK: Clustered {stats['items_clustered']} items into {stats['stories_created']} stories")
             return 0
-
     except Exception as e:
         logger.error(f"Clustering failed: {e}")
-        print(f"✗ Clustering failed: {e}")
+        print(f"FAIL: {e}")
         return 1

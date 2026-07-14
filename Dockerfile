@@ -9,11 +9,23 @@ RUN pip install --no-cache-dir uv
 WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-install-project
 
 COPY src/ ./src/
 COPY alembic.ini ./
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen
 
 ENV PYTHONPATH=/app
-CMD ["uv", "run", "newsroom", "health"]
+ENV PYTHONUNBUFFERED=1
+
+# Non-root user with writable cache dir
+RUN useradd -r -s /bin/false -m newsroom && \
+    mkdir -p /home/newsroom/.cache/uv && \
+    chown -R newsroom:newsroom /app /home/newsroom
+ENV UV_CACHE_DIR=/tmp/uv-cache
+USER newsroom
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=15s \
+    CMD uv run python -c "from newsroom.storage.database import db_health; exit(0 if db_health() else 1)"
+
+CMD ["uv", "run", "python", "-c", "from newsroom.storage.database import db_health; exit(0 if db_health() else 1)"]

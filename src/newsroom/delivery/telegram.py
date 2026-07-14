@@ -1,123 +1,193 @@
-"""Telegram delivery via Hermes Gateway."""
+"""Telegram delivery via Bot API — real implementation.
 
+Handles chunking (4096 char limit), partial delivery recovery,
+and idempotency. Stores delivery state in the deliveries table.
+"""
+
+import hashlib
+import time
+from typing import Any
+
+import httpx
 from sqlalchemy.orm import Session
 
+from newsroom.config import settings
 from newsroom.logging import get_logger
-from newsroom.storage.database import engine
-from newsroom.storage.models import Digest
+from newsroom.storage.models import Delivery, Report
 
 logger = get_logger(__name__)
 
+TG_API = "https://api.telegram.org/bot{token}"
+MAX_MSG_LEN = 4096
+
 
 class TelegramDelivery:
-    """Deliver digests via Hermes Telegram Gateway."""
+    """Deliver reports via Telegram Bot API."""
 
-    def __init__(self):
-        """Initialize Telegram delivery."""
-        # ponytail: Use Hermes Gateway, not direct Bot API
-        # Gateway configured via: hermes gateway setup telegram
-        pass
+    def __init__(self) -> None:
+        self.token = settings.telegram_bot_token
+        self.chat_id = settings.telegram_chat_id
+        self.client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=15, read=30, write=15, pool=30),
+        )
 
-    def deliver_digest(self, digest_id: int) -> bool:
-        """Deliver digest via Telegram.
+    @property
+    def configured(self) -> bool:
+        return bool(self.token and self.chat_id)
 
-        Args:
-            digest_id: Digest ID to deliver
+    def _api_url(self, method: str) -> str:
+        return f"{TG_API.format(token=self.token)}/{method}"
 
-        Returns:
-            True if delivered successfully
+    async def deliver_report(
+        self,
+        db: Session,
+        report_id: int,
+        chat_id: str | None = None,
+    ) -> int | None:
+        """Deliver a report, handling chunking and partial recovery.
+
+        Returns delivery ID on success, None on failure.
         """
-        session = Session(engine)
-        try:
-            digest = session.query(Digest).filter_by(id=digest_id).first()
-            if not digest:
-                logger.error(f"Digest {digest_id} not found")
-                return False
+        report = db.query(Report).filter_by(id=report_id).first()
+        if not report:
+            logger.error(f"Report {report_id} not found")
+            return None
 
-            if digest.delivered:
-                logger.info(f"Digest {digest_id} already delivered")
-                return True
+        target_chat = chat_id or self.chat_id
+        if not self.configured or not target_chat:
+            logger.warning("Telegram not configured — delivery skipped")
+            return None
 
-            # Split into Telegram-safe chunks (4096 char limit)
-            chunks = self._split_message(digest.content_fa)
+        # Check for existing delivery (idempotency)
+        existing = db.query(Delivery).filter_by(
+            report_id=report_id,
+            chat_id=self._hash_chat(target_chat),
+        ).first()
 
-            # ponytail: Hermes send_message tool handles delivery
-            # For now, log until Hermes integration ready
-            logger.info(f"Would deliver digest {digest_id} in {len(chunks)} chunks")
-            for i, chunk in enumerate(chunks):
-                logger.debug(f"Chunk {i+1}/{len(chunks)}: {len(chunk)} chars")
+        if existing and existing.status == "delivered":
+            logger.info(f"Report {report_id} already delivered")
+            return existing.id
 
-            # Mark as delivered
-            digest.delivered = True
-            session.commit()
-            logger.info(f"Digest {digest_id} marked as delivered")
+        chunks = self._split_message(report.content_fa)
 
-            return True
+        # Create or update delivery record
+        if existing:
+            delivery = existing
+            # Resume from delivered_chunks
+        else:
+            delivery = Delivery(
+                report_id=report_id,
+                chat_id=self._hash_chat(target_chat),
+                total_chunks=len(chunks),
+                delivered_chunks=0,
+                message_ids=[],
+                status="pending",
+            )
+            db.add(delivery)
+            db.flush()
 
-        except Exception as e:
-            logger.error(f"Failed to deliver digest {digest_id}: {e}")
-            session.rollback()
-            return False
-        finally:
-            session.close()
+        message_ids: list[int] = list(delivery.message_ids or [])
+        start_idx = delivery.delivered_chunks
 
-    def _split_message(self, text: str, max_length: int = 4096) -> list[str]:
-        """Split message into Telegram-safe chunks.
+        for i in range(start_idx, len(chunks)):
+            chunk = chunks[i]
+            try:
+                msg_id = await self._send_message(target_chat, chunk)
+                message_ids.append(msg_id)
+                delivery.delivered_chunks = i + 1
+                delivery.message_ids = message_ids
+                delivery.status = "partial" if i < len(chunks) - 1 else "delivered"
+                db.commit()
 
-        Args:
-            text: Message text
-            max_length: Maximum chunk size (Telegram limit: 4096)
+                # Rate limit: ~25 msg/sec, but be conservative
+                if i < len(chunks) - 1:
+                    time.sleep(0.5)
 
-        Returns:
-            List of message chunks
-        """
+            except httpx.HTTPStatusError as e:
+                delivery.error = f"Chunk {i+1}/{len(chunks)}: {e.response.status_code}"
+                delivery.status = "failed" if i == 0 else "partial"
+                db.commit()
+                logger.error(f"Delivery chunk {i+1} failed: {e}")
+                return delivery.id if delivery.status == "partial" else None
+
+            except Exception as e:
+                delivery.error = str(e)[:500]
+                delivery.status = "failed" if i == 0 else "partial"
+                db.commit()
+                logger.error(f"Delivery chunk {i+1} error: {e}")
+                return delivery.id if delivery.status == "partial" else None
+
+        if delivery.status == "delivered":
+            from datetime import datetime, timezone
+            delivery.delivered_at = datetime.now(timezone.utc)
+            db.commit()
+            logger.info(f"Report {report_id} delivered in {len(chunks)} chunks")
+
+        return delivery.id
+
+    async def _send_message(self, chat_id: str, text: str) -> int:
+        """Send a single message. Returns Telegram message_id."""
+        response = await self.client.post(
+            self._api_url("sendMessage"),
+            json={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data.get("ok"):
+            raise RuntimeError(f"Telegram API error: {data.get('description', 'unknown')}")
+        return data["result"]["message_id"]
+
+    def _hash_chat(self, chat_id: str) -> str:
+        """Hash chat ID for safe storage."""
+        return hashlib.sha256(chat_id.encode()).hexdigest()[:16]
+
+    def _split_message(self, text: str, max_length: int = MAX_MSG_LEN) -> list[str]:
+        """Split message into Telegram-safe chunks, preserving semantic units."""
         if len(text) <= max_length:
             return [text]
 
-        chunks = []
-        lines = text.split('\n')
-        current_chunk = []
-        current_length = 0
+        chunks: list[str] = []
+        lines = text.split("\n")
+        current: list[str] = []
+        current_len = 0
 
         for line in lines:
-            line_length = len(line) + 1  # +1 for newline
+            line_len = len(line) + 1
+            if current_len + line_len > max_length and current:
+                chunks.append("\n".join(current))
+                current = []
+                current_len = 0
 
-            if current_length + line_length > max_length:
-                # Save current chunk
-                if current_chunk:
-                    chunks.append('\n'.join(current_chunk))
-                    current_chunk = []
-                    current_length = 0
-
-                # Handle very long single lines
-                if line_length > max_length:
-                    # Split long line into words
-                    words = line.split()
-                    temp_line = []
-                    temp_length = 0
-
-                    for word in words:
-                        word_length = len(word) + 1
-                        if temp_length + word_length > max_length:
-                            chunks.append(' '.join(temp_line))
-                            temp_line = [word]
-                            temp_length = word_length
-                        else:
-                            temp_line.append(word)
-                            temp_length += word_length
-
-                    if temp_line:
-                        current_chunk = [' '.join(temp_line)]
-                        current_length = sum(len(w) + 1 for w in temp_line)
-                else:
-                    current_chunk.append(line)
-                    current_length = line_length
+            if line_len > max_length:
+                # Split very long lines by words
+                words = line.split(" ")
+                temp: list[str] = []
+                temp_len = 0
+                for word in words:
+                    word_len = len(word) + 1
+                    if temp_len + word_len > max_length and temp:
+                        chunks.append(" ".join(temp))
+                        temp = [word]
+                        temp_len = word_len
+                    else:
+                        temp.append(word)
+                        temp_len += word_len
+                if temp:
+                    current = temp
+                    current_len = sum(len(w) + 1 for w in temp)
             else:
-                current_chunk.append(line)
-                current_length += line_length
+                current.append(line)
+                current_len += line_len
 
-        # Add final chunk
-        if current_chunk:
-            chunks.append('\n'.join(current_chunk))
+        if current:
+            chunks.append("\n".join(current))
 
         return chunks
+
+    async def close(self) -> None:
+        await self.client.aclose()
