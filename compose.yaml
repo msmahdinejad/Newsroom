@@ -27,7 +27,7 @@ services:
       DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
     volumes:
       - ./src:/app/src
-    command: uv run newsroom health
+    command: sh -c "uv run python -c \"from newsroom.storage.database import engine; from newsroom.storage.models import Base; Base.metadata.create_all(engine)\" && tail -f /dev/null"
     healthcheck:
       test: ["CMD", "uv", "run", "newsroom", "health"]
       interval: 10s

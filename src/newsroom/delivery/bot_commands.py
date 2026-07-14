@@ -9,7 +9,6 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
 
 # Project paths
 PROJECT_DIR = r"[REDACTED]\OneDrive\Desktop\newsroom"
@@ -115,9 +114,10 @@ def run_pipeline_and_deliver():
 
 def get_latest_digest():
     """Get the latest delivered digest content."""
+    from sqlalchemy.orm import Session
+
     from newsroom.storage.database import engine
     from newsroom.storage.models import Digest
-    from sqlalchemy.orm import Session
 
     session = Session(engine)
     try:
