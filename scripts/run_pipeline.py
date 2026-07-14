@@ -66,8 +66,8 @@ def run_pipeline():
                     if source.type == "rss":
                         items = await rss.collect(source.url)
                     elif source.type == "github_releases":
-                        from newsroom.sources.github import GitHubCollector as GC
-                        gh_local = GC()
+                        from newsroom.sources.github import GitHubCollector
+                        gh_local = GitHubCollector()
                         items = await gh_local.collect(source.url)
                         await gh_local.close()
                     else:

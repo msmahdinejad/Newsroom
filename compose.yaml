@@ -15,6 +15,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   app:
     build: .
@@ -26,8 +27,29 @@ services:
       DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
     volumes:
       - ./src:/app/src
-      - ./migrations:/app/migrations
     command: uv run newsroom health
+    healthcheck:
+      test: ["CMD", "uv", "run", "newsroom", "health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  worker:
+    build: .
+    container_name: newsroom-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
+    volumes:
+      - ./src:/app/src
+    command: uv run newsroom pipeline run
+    restart: unless-stopped
 
 volumes:
   postgres_data:

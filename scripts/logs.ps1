@@ -1,16 +1,10 @@
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$logFile = Join-Path $RepoRoot "logs\newsroom.log"
+Set-Location $RepoRoot
 
-if (-not (Test-Path $logFile)) {
-    Write-Host "Log file not found: $logFile" -ForegroundColor Yellow
-    Write-Host "Logs will be created when pipeline runs." -ForegroundColor Gray
-    exit 0
-}
+Write-Host "=== Newsroom: Container logs (last 50 lines) ==="
+docker compose logs --tail 50
+if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] Failed to fetch logs"; exit 1 }
 
-Write-Host "Showing logs from: $logFile" -ForegroundColor Cyan
-Write-Host "Press Ctrl+C to stop" -ForegroundColor Gray
-Write-Host ""
-
-Get-Content $logFile -Tail 50 -Wait
+exit 0
