@@ -3,7 +3,7 @@
 Run this after any database reset to populate the source registry.
 """
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 sys.path.insert(0, "src")
 
@@ -41,8 +41,8 @@ def seed():
                     name=name, type=stype, url=url,
                     language=lang, priority=priority,
                     enabled=True, consecutive_failures=0,
-                    created_at=datetime.now(timezone.utc),
-                    updated_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
                 )
                 session.add(src)
         session.commit()
