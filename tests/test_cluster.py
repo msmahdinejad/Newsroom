@@ -172,3 +172,126 @@ def test_skip_duplicate_items(db_session, sample_source, clusterer):
     assert len(item_ids) == 1
     assert item1.id in item_ids
     assert item2.id not in item_ids
+
+
+# --- Regression tests for weighted Jaccard clustering ---
+
+
+def test_positive_same_release_different_sources(db_session, sample_source, clusterer):
+    """Two reports about the same Python 3.13 release should cluster."""
+    raw1 = RawItem(source_id=sample_source.id, raw_data='{}')
+    raw2 = RawItem(source_id=sample_source.id, raw_data='{}')
+    db_session.add_all([raw1, raw2])
+    db_session.commit()
+
+    item1 = NormalizedItem(
+        raw_item_id=raw1.id,
+        title="Python 3.13 Released",
+        description="New Python version with performance improvements",
+        source_url="https://python.org/1",
+        content_hash="rhash1",
+        normalized_url="https://python.org/1",
+    )
+    item2 = NormalizedItem(
+        raw_item_id=raw2.id,
+        title="Python 3.13 Performance Boost",
+        description="Python 3.13 brings major speed improvements",
+        source_url="https://example.com/2",
+        content_hash="rhash2",
+        normalized_url="https://example.com/2",
+    )
+    db_session.add_all([item1, item2])
+    db_session.commit()
+
+    stats = clusterer.cluster_items([item1.id, item2.id])
+    assert stats["stories_created"] == 1
+
+
+def test_negative_unrelated_python_articles(db_session, sample_source, clusterer):
+    """Two unrelated articles that merely contain 'Python' should NOT cluster."""
+    raw1 = RawItem(source_id=sample_source.id, raw_data='{}')
+    raw2 = RawItem(source_id=sample_source.id, raw_data='{}')
+    db_session.add_all([raw1, raw2])
+    db_session.commit()
+
+    item1 = NormalizedItem(
+        raw_item_id=raw1.id,
+        title="Python Framework Django Released",
+        description="Django 5.0 now available for download",
+        source_url="https://example.com/1",
+        content_hash="nhash1",
+        normalized_url="https://example.com/1",
+    )
+    item2 = NormalizedItem(
+        raw_item_id=raw2.id,
+        title="Python snake found in Florida wildlife reserve",
+        description="Large python discovered in Everglades",
+        source_url="https://example.com/2",
+        content_hash="nhash2",
+        normalized_url="https://example.com/2",
+    )
+    db_session.add_all([item1, item2])
+    db_session.commit()
+
+    stats = clusterer.cluster_items([item1.id, item2.id])
+    assert stats["stories_created"] == 2
+
+
+def test_negative_different_versions_different_events(db_session, sample_source, clusterer):
+    """Python 3.12 and Python 3.13 stories about different events should NOT cluster."""
+    raw1 = RawItem(source_id=sample_source.id, raw_data='{}')
+    raw2 = RawItem(source_id=sample_source.id, raw_data='{}')
+    db_session.add_all([raw1, raw2])
+    db_session.commit()
+
+    item1 = NormalizedItem(
+        raw_item_id=raw1.id,
+        title="Python 3.12 security patch released",
+        description="Critical security update for Python 3.12",
+        source_url="https://example.com/1",
+        content_hash="vhash1",
+        normalized_url="https://example.com/1",
+    )
+    item2 = NormalizedItem(
+        raw_item_id=raw2.id,
+        title="Python 3.13 performance benchmarks published",
+        description="Community benchmarks show Python 3.13 speed gains",
+        source_url="https://example.com/2",
+        content_hash="vhash2",
+        normalized_url="https://example.com/2",
+    )
+    db_session.add_all([item1, item2])
+    db_session.commit()
+
+    stats = clusterer.cluster_items([item1.id, item2.id])
+    assert stats["stories_created"] == 2
+
+
+def test_negative_promotional_absorption(db_session, sample_source, clusterer):
+    """Promotional headlines sharing common keywords should NOT absorb unrelated stories."""
+    raw1 = RawItem(source_id=sample_source.id, raw_data='{}')
+    raw2 = RawItem(source_id=sample_source.id, raw_data='{}')
+    db_session.add_all([raw1, raw2])
+    db_session.commit()
+
+    item1 = NormalizedItem(
+        raw_item_id=raw1.id,
+        title="Amazing breakthrough in quantum computing technology",
+        description="Promotional content about quantum advances",
+        source_url="https://example.com/1",
+        content_hash="phash1",
+        normalized_url="https://example.com/1",
+    )
+    item2 = NormalizedItem(
+        raw_item_id=raw2.id,
+        title="Breakthrough in battery technology announced",
+        description="New battery design for electric vehicles",
+        source_url="https://example.com/2",
+        content_hash="phash2",
+        normalized_url="https://example.com/2",
+    )
+    db_session.add_all([item1, item2])
+    db_session.commit()
+
+    stats = clusterer.cluster_items([item1.id, item2.id])
+    assert stats["stories_created"] == 2

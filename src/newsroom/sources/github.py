@@ -42,15 +42,25 @@ class GitHubCollector(SourceCollector):
             CollectionError: On fetch/parse failures
         """
         try:
-            # Parse owner/repo format
-            if "/" not in source_url:
+            # Parse owner/repo from URL or owner/repo format
+            if source_url.startswith("https://github.com/"):
+                # Full URL: https://github.com/owner/repo
+                parts = source_url.replace("https://github.com/", "").rstrip("/").split("/", 1)
+                if len(parts) < 2:
+                    raise CollectionError(
+                        f"Invalid GitHub URL: {source_url}",
+                        source_url,
+                        recoverable=False,
+                    )
+                owner, repo = parts[0], parts[1]
+            elif "/" in source_url:
+                owner, repo = source_url.split("/", 1)
+            else:
                 raise CollectionError(
-                    f"Invalid GitHub repo format: {source_url} (expected owner/repo)",
+                    f"Invalid GitHub repo format: {source_url}",
                     source_url,
                     recoverable=False,
                 )
-
-            owner, repo = source_url.split("/", 1)
             api_url = f"https://api.github.com/repos/{owner}/{repo}/releases"
 
             logger.info(f"Fetching GitHub releases: {source_url}")

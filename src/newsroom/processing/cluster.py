@@ -106,23 +106,24 @@ class Clusterer:
             for word in words
             if len(word) > 3 and word not in stopwords
         }
-        
+
         # ponytail: preserve version numbers as compound keywords
         # "python 3.13" -> adds "python-3.13" to help cluster related releases
         for i, word in enumerate(words[:-1]):
             cleaned = word.strip(".,!?;:()[]{}\"'")
             next_cleaned = words[i + 1].strip(".,!?;:()[]{}\"'")
-            
-            if cleaned not in stopwords and len(cleaned) > 2:
-                # Check if next word looks like version
-                if next_cleaned and len(next_cleaned) > 0 and next_cleaned[0].isdigit():
+
+            if cleaned not in stopwords and len(cleaned) > 2 and next_cleaned and next_cleaned[0].isdigit():
                     compound = f"{cleaned}-{next_cleaned}"
                     keywords.add(compound)
 
         return keywords
 
     def _compute_similarity(self, keywords1: set[str], keywords2: set[str]) -> float:
-        """Compute Jaccard similarity between keyword sets.
+        """Compute weighted Jaccard similarity between keyword sets.
+
+        Compound keywords (containing version numbers like python-3.13) get
+        double weight because they represent strong topical signals.
 
         Args:
             keywords1: First keyword set
@@ -134,10 +135,18 @@ class Clusterer:
         if not keywords1 or not keywords2:
             return 0.0
 
-        intersection = len(keywords1 & keywords2)
-        union = len(keywords1 | keywords2)
+        def weight(kw: str) -> float:
+            """Higher weight for version compounds."""
+            return 2.0 if "-" in kw and any(c.isdigit() for c in kw) else 1.0
 
-        return intersection / union if union > 0 else 0.0
+        intersection = keywords1 & keywords2
+        union = keywords1 | keywords2
+
+        # Weighted Jaccard
+        inter_weight = sum(weight(kw) for kw in intersection)
+        union_weight = sum(weight(kw) for kw in union)
+
+        return inter_weight / union_weight if union_weight > 0 else 0.0
 
     def _create_story(self, db, items: list[NormalizedItem]) -> Story:
         """Create story from clustered items.
