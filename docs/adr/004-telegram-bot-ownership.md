@@ -24,7 +24,7 @@ remain a terminal control plane.
 
 ### Bot Identity Verification
 - On startup, the bot calls `getMe` to verify the token is valid
-- Bot username logged with redacted token: `@username (1234...4567)`
+- Bot username logged with redacted token: `@username token=[REDACTED]`
 - If identity query fails, bot enters degraded mode with `["identity_query_failed"]`
 
 ### Access Control

@@ -122,7 +122,7 @@ services:
       DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-      TELEGRAM_AUTHORIZED_USERS: ${TELEGRAM_AUTHORIZED_USERS:-}
+      TELEGRAM_AUTHORIZED_USER_IDS: ${TELEGRAM_AUTHORIZED_USER_IDS:-}
       TELEGRAM_BOT_ENABLED: ${TELEGRAM_BOT_ENABLED:-false}
       TELEGRAM_INGESTOR_ENABLED: ${TELEGRAM_INGESTOR_ENABLED:-false}
     command: uv run python -m newsroom.scheduler
@@ -151,7 +151,7 @@ services:
       DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-      TELEGRAM_AUTHORIZED_USERS: ${TELEGRAM_AUTHORIZED_USERS:-}
+      TELEGRAM_AUTHORIZED_USER_IDS: ${TELEGRAM_AUTHORIZED_USER_IDS:-}
       TELEGRAM_BOT_ENABLED: ${TELEGRAM_BOT_ENABLED:-false}
     command: uv run python -m newsroom.delivery.bot
     restart: unless-stopped

@@ -23,7 +23,7 @@ def is_authorized(user_id: int | None) -> bool:
 
 ### Config Parsing (config.py)
 
-- `telegram_authorized_users`: comma-separated numeric IDs
+- `telegram_authorized_user_ids`: comma-separated numeric IDs
 - `authorized_user_ids()`: parses to `set[int]`, skips malformed entries
 - Empty string → empty set → deny all
 - Malformed entries ("abc", "xyz") skipped, not treated as wildcards

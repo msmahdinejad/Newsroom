@@ -18,12 +18,16 @@ def test_no_hardcoded_token_in_source():
         assert matches == [], f"Potential token in {py}: {matches}"
 
 
-def test_redact_token_no_leak():
-    token = "1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234"
+def test_redact_token_no_fragment():
+    token = "1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz12"
     redacted = redact_token(token)
-    assert "ABCDEFGHIJKLMNOPQRSTUVWXYZ" not in redacted
-    assert "abcdefghijklmnopqrstuvwxyz" not in redacted
-    assert "1234567890:" not in redacted
+    assert redacted == "[REDACTED]"
+    assert "1234" not in redacted
+    assert "4567" not in redacted
+    assert "..." not in redacted
+    assert token not in redacted
+    assert redact_token(None) == "[REDACTED]"
+    assert redact_token("") == "[REDACTED]"
 
 
 def test_env_example_has_empty_token():
@@ -35,13 +39,13 @@ def test_env_example_has_empty_token():
     raise AssertionError("TELEGRAM_BOT_TOKEN not found in .env.example")
 
 
-def test_env_example_has_empty_authorized_users():
+def test_env_example_has_empty_authorized_user_ids():
     env_example = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
     for line in env_example.splitlines():
-        if "TELEGRAM_AUTHORIZED_USERS=" in line:
-            assert line.strip() == "TELEGRAM_AUTHORIZED_USERS="
+        if "TELEGRAM_AUTHORIZED_USER_IDS=" in line:
+            assert line.strip() == "TELEGRAM_AUTHORIZED_USER_IDS="
             return
-    raise AssertionError("TELEGRAM_AUTHORIZED_USERS not found in .env.example")
+    raise AssertionError("TELEGRAM_AUTHORIZED_USER_IDS not found in .env.example")
 
 
 def test_env_in_gitignore():

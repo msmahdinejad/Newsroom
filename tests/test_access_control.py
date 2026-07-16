@@ -85,7 +85,7 @@ def test_config_parsing_numeric_ids():
     """Settings.authorized_user_ids() parses comma-separated numeric IDs."""
     from newsroom.config import Settings
 
-    s = Settings(telegram_authorized_users="123,456,789")
+    s = Settings(telegram_authorized_user_ids="123,456,789")
     ids = s.authorized_user_ids()
     assert ids == {123, 456, 789}
 
@@ -93,14 +93,14 @@ def test_config_parsing_numeric_ids():
 def test_config_parsing_empty_string():
     from newsroom.config import Settings
 
-    s = Settings(telegram_authorized_users="")
+    s = Settings(telegram_authorized_user_ids="")
     assert s.authorized_user_ids() == set()
 
 
 def test_config_parsing_malformed_entries_skipped():
     from newsroom.config import Settings
 
-    s = Settings(telegram_authorized_users="123,abc,456,xyz,789")
+    s = Settings(telegram_authorized_user_ids="123,abc,456,xyz,789")
     ids = s.authorized_user_ids()
     assert ids == {123, 456, 789}
 
@@ -108,7 +108,7 @@ def test_config_parsing_malformed_entries_skipped():
 def test_config_parsing_whitespace_trimmed():
     from newsroom.config import Settings
 
-    s = Settings(telegram_authorized_users="  123  ,  456  ")
+    s = Settings(telegram_authorized_user_ids="  123  ,  456  ")
     ids = s.authorized_user_ids()
     assert ids == {123, 456}
 
@@ -116,6 +116,6 @@ def test_config_parsing_whitespace_trimmed():
 def test_config_parsing_duplicates_deduped():
     from newsroom.config import Settings
 
-    s = Settings(telegram_authorized_users="123,123,456")
+    s = Settings(telegram_authorized_user_ids="123,123,456")
     ids = s.authorized_user_ids()
     assert ids == {123, 456}

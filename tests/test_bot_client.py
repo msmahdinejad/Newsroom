@@ -14,19 +14,23 @@ from newsroom.delivery.client import (
 def test_redact_token_long():
     token = "1234567890:ABCdefGHIjklMNOpqrsTUVwxyz1234567"
     redacted = redact_token(token)
-    assert redacted == "1234...4567"
+    assert redacted == "[REDACTED]"
+    assert "1234" not in redacted
+    assert "4567" not in redacted
     assert "ABCdef" not in redacted
 
 
 def test_redact_token_short():
-    assert redact_token("short") == "[redacted]"
-    assert redact_token("") == "[redacted]"
-    assert redact_token(None) == "[redacted]"
+    assert redact_token("short") == "[REDACTED]"
+    assert redact_token("") == "[REDACTED]"
+    assert redact_token(None) == "[REDACTED]"
 
 
 def test_redact_token_exact_12():
     token = "123456789012"
-    assert redact_token(token) == "1234...9012"
+    assert redact_token(token) == "[REDACTED]"
+    assert "1234" not in redact_token(token)
+    assert "9012" not in redact_token(token)
 
 
 def test_error_category_retryable():

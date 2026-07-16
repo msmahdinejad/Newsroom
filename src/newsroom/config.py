@@ -45,7 +45,7 @@ class Settings(BaseSettings):
 
     # Telegram output bot
     telegram_bot_token: str = ""  # env: TELEGRAM_BOT_TOKEN
-    telegram_authorized_users: str = ""  # comma-separated numeric IDs
+    telegram_authorized_user_ids: str = ""  # comma-separated numeric Telegram user IDs
     telegram_chat_id: str = ""  # default delivery chat
     # Feature flags — false = no network auth, stable idle, honest health
     telegram_bot_enabled: bool = False
@@ -79,7 +79,7 @@ class Settings(BaseSettings):
 
     def authorized_user_ids(self) -> set[int]:
         """Parse comma-separated numeric IDs into a set. Empty/malformed = empty set (deny all)."""
-        raw = self.telegram_authorized_users.strip()
+        raw = self.telegram_authorized_user_ids.strip()
         if not raw:
             return set()
         ids: set[int] = set()

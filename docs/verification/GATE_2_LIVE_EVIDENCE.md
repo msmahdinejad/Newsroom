@@ -8,8 +8,8 @@ All credential-independent implementation, deterministic tests, redaction, and h
 
 ## Prerequisites for Live Testing
 
-1. TELEGRAM_BOT_TOKEN — placed in .env (untracked)
-2. TELEGRAM_AUTHORIZED_USERS — numeric Telegram user ID(s)
+1. TELEGRAM_BOT_TOKEN — from BotFather
+2. TELEGRAM_AUTHORIZED_USER_IDS — numeric Telegram user ID(s)
 3. TELEGRAM_CHAT_ID — optional, inferred from authorized incoming message
 
 ## Planned Live Acceptance Tests

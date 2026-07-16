@@ -118,7 +118,7 @@ class TelegramBot:
             self._bot_info = me.get("result", {})
             logger.info(
                 f"Bot identity: @{self._bot_info.get('username', '?')} "
-                f"({redact_token(settings.telegram_bot_token)})"
+                f"id={self._bot_info.get('id', '?')} token={redact_token()}"
             )
         except Exception as e:
             logger.error(f"Bot identity query failed: {e}")

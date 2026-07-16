@@ -227,8 +227,6 @@ class TelegramBotClient:
         await self.client.aclose()
 
 
-def redact_token(token: str) -> str:
-    """Redact token for safe display: show only first 4 and last 4 chars."""
-    if not token or len(token) < 12:
-        return "[redacted]"
-    return f"{token[:4]}...{token[-4:]}"
+def redact_token(_token: str | None = None) -> str:
+    """Never show Token or Token fragments in logs, health, or evidence."""
+    return "[REDACTED]"

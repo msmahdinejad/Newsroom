@@ -45,7 +45,7 @@ Verified: `alembic_version` = `0003_gate2_telegram`
   invalid_formatting, duplicate_update, transient, unknown
 - Permanent errors (7 categories) are not retried
 - Transient errors retried with exponential backoff (capped at 30s)
-- Token never logged; `redact_token()` shows only first 4 and last 4 chars
+- Token never logged; `redact_token()` returns only `[REDACTED]` (no fragments)
 
 ### Command Handlers (delivery/bot.py)
 
