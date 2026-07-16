@@ -40,3 +40,10 @@ htmlcov/
 .DS_Store
 Thumbs.db
 backups/
+
+# Telegram MTProto sessions (Gate 3) — never commit, never bake into images
+data/sessions/
+*.session
+*.session-journal
+*.session-shm
+*.session-wal

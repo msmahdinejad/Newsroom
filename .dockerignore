@@ -12,3 +12,8 @@ __pycache__
 .pytest_cache
 .ruff_cache
 backups/
+data/sessions/
+*.session
+*.session-journal
+*.session-shm
+*.session-wal

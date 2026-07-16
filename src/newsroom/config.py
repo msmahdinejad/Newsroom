@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     telegram_api_id: str = ""
     telegram_api_hash: str = ""
     telegram_phone: str = ""
-    telegram_session_dir: str = "./data/sessions"
+    telegram_session_path: str = "./data/sessions/newsroom_ingestor.session"
 
     # Pipeline lock timeout (seconds) — advisory lock is session-held; timeout is soft doc
     pipeline_lock_timeout: int = 300
