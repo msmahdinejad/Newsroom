@@ -43,15 +43,20 @@ def _emit(obj: dict[str, Any]) -> None:
 
 async def _deliver(session: Session, report_id: int) -> int | None:
     from newsroom.config import settings
-    from newsroom.delivery.telegram import TelegramDelivery
+    from newsroom.delivery.telegram import SCHEDULED_CURSOR_KEY, TelegramDelivery
 
     if not settings.telegram_bot_enabled:
         return None
     td = TelegramDelivery()
     try:
-        if not td.configured:
+        if not td.client.token:
             return None
-        return await td.deliver_report(session, report_id)
+        # Scheduled runs advance the delivery cursor on confirmed delivery.
+        # Manual runs do not advance the scheduled cursor.
+        cursor_key = None
+        if os.environ.get("NEWSROOM_SCHEDULE_LABEL"):
+            cursor_key = SCHEDULED_CURSOR_KEY
+        return await td.deliver_report(session, report_id, cursor_key=cursor_key)
     finally:
         await td.close()
 

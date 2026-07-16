@@ -51,7 +51,15 @@ class Settings(BaseSettings):
     telegram_bot_enabled: bool = False
     telegram_ingestor_enabled: bool = False
 
-    # Telegram MTProto (source collector)
+    # Gate 2: delivery config
+    telegram_chunk_size: int = 3800  # safe below 4096 limit
+    telegram_parse_mode: str = "HTML"  # HTML for safe entity escaping
+    telegram_poll_timeout: int = 30  # long-poll seconds
+    telegram_max_retries: int = 3  # bounded retry for transient errors
+    telegram_retry_base_delay: float = 1.0  # base backoff seconds
+    telegram_test_chat_id: str = ""  # optional explicit test chat
+
+    # Telegram MTProto (source collector — Gate 3, not Gate 2)
     telegram_api_id: str = ""
     telegram_api_hash: str = ""
     telegram_phone: str = ""
@@ -69,8 +77,25 @@ class Settings(BaseSettings):
     def parse_bool(cls, v: object) -> bool:
         return _env_bool(v)
 
+    def authorized_user_ids(self) -> set[int]:
+        """Parse comma-separated numeric IDs into a set. Empty/malformed = empty set (deny all)."""
+        raw = self.telegram_authorized_users.strip()
+        if not raw:
+            return set()
+        ids: set[int] = set()
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                ids.add(int(part))
+            except ValueError:
+                # malformed entry — skip it (deny that ID)
+                continue
+        return ids
+
     def telegram_bot_ready(self) -> bool:
-        return bool(self.telegram_bot_enabled and self.telegram_bot_token and self.telegram_chat_id)
+        return bool(self.telegram_bot_enabled and self.telegram_bot_token)
 
     def telegram_ingestor_ready(self) -> bool:
         return bool(

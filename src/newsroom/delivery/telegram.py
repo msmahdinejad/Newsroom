@@ -1,193 +1,243 @@
-"""Telegram delivery via Bot API — real implementation.
+"""Telegram delivery via Bot API — resumable multi-chunk delivery with per-chunk state.
 
-Handles chunking (4096 char limit), partial delivery recovery,
-and idempotency. Stores delivery state in the deliveries table.
+Handles:
+- Semantic chunking (render module)
+- Per-chunk delivery records for partial recovery
+- Error classification with bounded retry
+- Cursor advancement only after confirmed complete delivery
+- Idempotency: already-delivered reports are not re-sent
+- Never stores the Bot Token
 """
 
-import hashlib
-import time
-from datetime import UTC
+from __future__ import annotations
 
-import httpx
+import hashlib
+from datetime import UTC, datetime
+
 from sqlalchemy.orm import Session
 
 from newsroom.config import settings
+from newsroom.delivery.client import ErrorCategory, TelegramAPIError, TelegramBotClient
+from newsroom.delivery.render import render_report_html
 from newsroom.logging import get_logger
-from newsroom.storage.models import Delivery, Report
+from newsroom.storage.models import Delivery, DeliveryChunk, Report, ReportCursor
 
 logger = get_logger(__name__)
 
-TG_API = "https://api.telegram.org/bot{token}"
-MAX_MSG_LEN = 4096
+SCHEDULED_CURSOR_KEY = "scheduled_delivery"
 
 
 class TelegramDelivery:
-    """Deliver reports via Telegram Bot API."""
+    """Deliver reports via Telegram Bot API with per-chunk recovery."""
 
-    def __init__(self) -> None:
-        self.token = settings.telegram_bot_token
-        self.chat_id = settings.telegram_chat_id
-        self.client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=15, read=30, write=15, pool=30),
-        )
+    def __init__(self, client: TelegramBotClient | None = None) -> None:
+        self.client = client or TelegramBotClient()
+        self.parse_mode = settings.telegram_parse_mode
 
-    @property
-    def configured(self) -> bool:
-        return bool(self.token and self.chat_id)
-
-    def _api_url(self, method: str) -> str:
-        return f"{TG_API.format(token=self.token)}/{method}"
+    def _hash_chat(self, chat_id: str) -> str:
+        """Hash chat ID for safe storage (never store raw chat ID as key)."""
+        return hashlib.sha256(chat_id.encode()).hexdigest()[:16]
 
     async def deliver_report(
         self,
         db: Session,
         report_id: int,
-        chat_id: str | None = None,
+        chat_id: str | int | None = None,
+        *,
+        cursor_key: str | None = None,
     ) -> int | None:
-        """Deliver a report, handling chunking and partial recovery.
+        """Deliver a report with per-chunk state and partial recovery.
 
-        Returns delivery ID on success, None on failure.
+        Returns delivery ID on success or partial, None on total failure.
         """
         report = db.query(Report).filter_by(id=report_id).first()
         if not report:
             logger.error(f"Report {report_id} not found")
             return None
 
-        target_chat = chat_id or self.chat_id
-        if not self.configured or not target_chat:
-            logger.warning("Telegram not configured — delivery skipped")
+        target_chat = str(chat_id) if chat_id else settings.telegram_chat_id
+        if not target_chat:
+            logger.warning("No chat ID for delivery")
             return None
 
-        # Check for existing delivery (idempotency)
+        chat_hash = self._hash_chat(target_chat)
+
+        # Idempotency: check for existing delivered delivery
         existing = db.query(Delivery).filter_by(
             report_id=report_id,
-            chat_id=self._hash_chat(target_chat),
+            chat_id=chat_hash,
         ).first()
 
         if existing and existing.status == "delivered":
-            logger.info(f"Report {report_id} already delivered")
+            logger.info(f"Report {report_id} already delivered (delivery {existing.id})")
             return existing.id
 
-        chunks = self._split_message(report.content_fa)
+        # Render chunks
+        chunks = render_report_html(report.content_fa)
 
-        # Create or update delivery record
+        # Create or reuse delivery record
         if existing:
             delivery = existing
-            # Resume from delivered_chunks
+            delivery.attempt_count += 1
+            delivery.retry_count = delivery.retry_count or 0
         else:
             delivery = Delivery(
                 report_id=report_id,
-                chat_id=self._hash_chat(target_chat),
+                chat_id=chat_hash,
+                chat_ref=f"chat_{chat_hash[:8]}",
                 total_chunks=len(chunks),
                 delivered_chunks=0,
                 message_ids=[],
                 status="pending",
+                attempt_count=1,
+                retry_count=0,
+                parse_mode=self.parse_mode,
             )
             db.add(delivery)
             db.flush()
 
+        # Create or sync per-chunk records
+        existing_chunks = {
+            dc.chunk_index: dc for dc in db.query(DeliveryChunk).filter_by(
+                delivery_id=delivery.id
+            ).all()
+        }
+
+        chunk_records: list[DeliveryChunk] = []
+        for i in range(len(chunks)):
+            if i in existing_chunks:
+                dc = existing_chunks[i]
+                # Update total in case it changed
+                dc.total_chunks = len(chunks)
+                chunk_records.append(dc)
+            else:
+                dc = DeliveryChunk(
+                    delivery_id=delivery.id,
+                    chunk_index=i,
+                    total_chunks=len(chunks),
+                    status="pending",
+                    attempt_count=0,
+                )
+                db.add(dc)
+                chunk_records.append(dc)
+        db.flush()
+
+        # Resume from first non-sent chunk
+        start_idx = 0
+        for dc in chunk_records:
+            if dc.status == "sent":
+                start_idx = dc.chunk_index + 1
+            else:
+                start_idx = dc.chunk_index
+                break
+
+        # Send chunks from start_idx
         message_ids: list[int] = list(delivery.message_ids or [])
-        start_idx = delivery.delivered_chunks
 
         for i in range(start_idx, len(chunks)):
-            chunk = chunks[i]
+            dc = chunk_records[i]
+            dc.attempt_count += 1
+            dc.status = "pending"
+            db.flush()
+
             try:
-                msg_id = await self._send_message(target_chat, chunk)
-                message_ids.append(msg_id)
+                response = await self.client.send_message(
+                    target_chat,
+                    chunks[i],
+                    parse_mode=self.parse_mode,
+                )
+                tg_msg_id = int(response["result"]["message_id"])
+                dc.telegram_message_id = tg_msg_id
+                dc.status = "sent"
+                dc.sent_at = datetime.now(UTC)
+                dc.error_category = None
+                dc.error_detail = None
+
+                # Update delivery-level state
+                if len(message_ids) <= i:
+                    message_ids.append(tg_msg_id)
+                else:
+                    message_ids[i] = tg_msg_id
+
                 delivery.delivered_chunks = i + 1
                 delivery.message_ids = message_ids
+                delivery.last_send_at = datetime.now(UTC)
                 delivery.status = "partial" if i < len(chunks) - 1 else "delivered"
+                delivery.error = None
+                delivery.error_category = None
                 db.commit()
 
-                # Rate limit: ~25 msg/sec, but be conservative
-                if i < len(chunks) - 1:
-                    time.sleep(0.5)
-
-            except httpx.HTTPStatusError as e:
-                delivery.error = f"Chunk {i+1}/{len(chunks)}: {e.response.status_code}"
+            except TelegramAPIError as e:
+                dc.status = "failed"
+                dc.error_category = e.category.value
+                dc.error_detail = e.detail[:500]
+                delivery.error = f"Chunk {i + 1}/{len(chunks)}: {e.category.value}"
+                delivery.error_category = e.category.value
                 delivery.status = "failed" if i == 0 else "partial"
                 db.commit()
-                logger.error(f"Delivery chunk {i+1} failed: {e}")
-                return delivery.id if delivery.status == "partial" else None
+                logger.error(f"Delivery chunk {i + 1} failed: {e.category.value} — {e.detail[:100]}")
+                if delivery.status == "failed":
+                    return None
+                # Partial: return delivery ID so caller knows partial state
+                return delivery.id
 
             except Exception as e:
-                delivery.error = str(e)[:500]
+                dc.status = "failed"
+                dc.error_category = ErrorCategory.UNKNOWN.value
+                dc.error_detail = str(e)[:500]
+                delivery.error = f"Chunk {i + 1}/{len(chunks)}: {str(e)[:200]}"
+                delivery.error_category = ErrorCategory.UNKNOWN.value
                 delivery.status = "failed" if i == 0 else "partial"
                 db.commit()
-                logger.error(f"Delivery chunk {i+1} error: {e}")
-                return delivery.id if delivery.status == "partial" else None
+                logger.error(f"Delivery chunk {i + 1} error: {e}")
+                if delivery.status == "failed":
+                    return None
+                return delivery.id
 
+        # All chunks sent successfully
         if delivery.status == "delivered":
-            from datetime import datetime
             delivery.delivered_at = datetime.now(UTC)
+            delivery.error = None
+            delivery.error_category = None
             db.commit()
-            logger.info(f"Report {report_id} delivered in {len(chunks)} chunks")
+
+            # Advance cursor only after confirmed complete delivery
+            if cursor_key:
+                self._advance_cursor(db, cursor_key, report_id, delivery.id)
+                db.commit()
+
+            logger.info(
+                f"Report {report_id} delivered in {len(chunks)} chunks (delivery {delivery.id})"
+            )
 
         return delivery.id
 
-    async def _send_message(self, chat_id: str, text: str) -> int:
-        """Send a single message. Returns Telegram message_id."""
-        response = await self.client.post(
-            self._api_url("sendMessage"),
-            json={
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            },
-        )
-        response.raise_for_status()
-        data = response.json()
-        if not data.get("ok"):
-            raise RuntimeError(f"Telegram API error: {data.get('description', 'unknown')}")
-        return int(data["result"]["message_id"])
-
-    def _hash_chat(self, chat_id: str) -> str:
-        """Hash chat ID for safe storage."""
-        return hashlib.sha256(chat_id.encode()).hexdigest()[:16]
-
-    def _split_message(self, text: str, max_length: int = MAX_MSG_LEN) -> list[str]:
-        """Split message into Telegram-safe chunks, preserving semantic units."""
-        if len(text) <= max_length:
-            return [text]
-
-        chunks: list[str] = []
-        lines = text.split("\n")
-        current: list[str] = []
-        current_len = 0
-
-        for line in lines:
-            line_len = len(line) + 1
-            if current_len + line_len > max_length and current:
-                chunks.append("\n".join(current))
-                current = []
-                current_len = 0
-
-            if line_len > max_length:
-                # Split very long lines by words
-                words = line.split(" ")
-                temp: list[str] = []
-                temp_len = 0
-                for word in words:
-                    word_len = len(word) + 1
-                    if temp_len + word_len > max_length and temp:
-                        chunks.append(" ".join(temp))
-                        temp = [word]
-                        temp_len = word_len
-                    else:
-                        temp.append(word)
-                        temp_len += word_len
-                if temp:
-                    current = temp
-                    current_len = sum(len(w) + 1 for w in temp)
-            else:
-                current.append(line)
-                current_len += line_len
-
-        if current:
-            chunks.append("\n".join(current))
-
-        return chunks
+    def _advance_cursor(
+        self,
+        db: Session,
+        cursor_key: str,
+        report_id: int,
+        delivery_id: int,
+    ) -> None:
+        """Advance delivery cursor only after confirmed complete delivery."""
+        cursor = db.query(ReportCursor).filter_by(cursor_key=cursor_key).first()
+        if cursor:
+            # Idempotency: don't advance to same report twice
+            if cursor.report_id == report_id and cursor.delivery_id == delivery_id:
+                logger.info(f"Cursor already at report {report_id} — no double-advance")
+                return
+            cursor.report_id = report_id
+            cursor.delivery_id = delivery_id
+            cursor.advanced_at = datetime.now(UTC)
+        else:
+            cursor = ReportCursor(
+                cursor_key=cursor_key,
+                report_id=report_id,
+                delivery_id=delivery_id,
+                advanced_at=datetime.now(UTC),
+            )
+            db.add(cursor)
+        logger.info(f"Cursor '{cursor_key}' advanced to report {report_id}")
 
     async def close(self) -> None:
-        await self.client.aclose()
+        await self.client.close()

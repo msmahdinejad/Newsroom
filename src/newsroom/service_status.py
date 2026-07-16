@@ -11,15 +11,53 @@ from newsroom.storage.database import db_health
 
 
 def telegram_bot_status() -> dict[str, Any]:
+    """Deep health for Telegram bot — more than process existence.
+
+    Disabled mode: healthy with explicit disabled status.
+    Enabled mode: checks DB, allowlist, polling, identity, last update/delivery.
+    """
     if not settings.telegram_bot_enabled:
-        return {"status": "disabled", "feature": "telegram_bot"}
+        return {"status": "disabled", "feature": "telegram_bot", "healthy": True}
+
     if not settings.telegram_bot_token:
         return {
             "status": "blocked_by_credentials",
             "feature": "telegram_bot",
             "missing": "TELEGRAM_BOT_TOKEN",
+            "healthy": True,  # Gate 1: blocked is a valid mode
         }
-    return {"status": "enabled", "feature": "telegram_bot"}
+
+    # Enabled — deep health
+    payload: dict[str, Any] = {"status": "enabled", "feature": "telegram_bot"}
+    payload["db_connected"] = db_health()
+    allowed = settings.authorized_user_ids()
+    payload["authorized_users_count"] = len(allowed)
+
+    degraded = []
+    if not payload["db_connected"]:
+        degraded.append("database")
+    if not allowed:
+        degraded.append("empty_allowlist")
+
+    # Read runtime status file if available (written by bot process)
+    try:
+        import json as _json
+
+        with open("/tmp/newsroom_bot_status.json", encoding="utf-8") as f:
+            runtime = _json.load(f)
+        payload["polling_alive"] = runtime.get("polling_alive", False)
+        payload["last_update"] = runtime.get("last_update")
+        payload["last_delivery"] = runtime.get("last_delivery")
+        payload["bot_username"] = runtime.get("bot_username")
+        if runtime.get("degraded"):
+            degraded.extend(runtime["degraded"])
+    except Exception:
+        payload["polling_alive"] = False
+
+    if degraded:
+        payload["degraded"] = degraded
+    payload["healthy"] = len(degraded) == 0
+    return payload
 
 
 def telegram_ingestor_status() -> dict[str, Any]:
@@ -59,8 +97,8 @@ def main(argv: list[str] | None = None) -> int:
     kind = argv[0] if argv else "db"
     if kind == "bot":
         payload = telegram_bot_status()
-        # disabled/blocked are healthy *modes* for Gate 1
-        ok = payload["status"] in ("disabled", "blocked_by_credentials", "enabled")
+        # disabled/blocked are healthy modes; enabled checks deep health
+        ok = payload.get("healthy", False)
     elif kind == "ingestor":
         payload = telegram_ingestor_status()
         ok = payload["status"] in ("disabled", "blocked_by_credentials", "enabled")

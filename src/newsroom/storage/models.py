@@ -7,6 +7,7 @@ No raw secrets stored — only references to external secret storage.
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -215,16 +216,25 @@ class Delivery(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     report_id: Mapped[int] = mapped_column(ForeignKey("reports.id"), nullable=False)
     chat_id: Mapped[str] = mapped_column(String(50), nullable=False)  # hash for safety
+    chat_ref: Mapped[str | None] = mapped_column(String(100), nullable=True)  # safe label, no token
     total_chunks: Mapped[int] = mapped_column(Integer, default=1)
     delivered_chunks: Mapped[int] = mapped_column(Integer, default=0)
     message_ids: Mapped[list] = mapped_column(JSONB, default=list)  # Telegram message IDs per chunk
     status: Mapped[str] = mapped_column(String(30), default="pending")  # pending/partial/delivered/failed
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    parse_mode: Mapped[str] = mapped_column(String(10), default="HTML", nullable=False)
+    last_send_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     report: Mapped["Report"] = relationship(back_populates="deliveries")
+    chunks: Mapped[list["DeliveryChunk"]] = relationship(
+        back_populates="delivery", cascade="all, delete-orphan", order_by="DeliveryChunk.chunk_index"
+    )
 
 
 # ── Jobs & operations ──────────────────────────────────────────────
@@ -267,3 +277,68 @@ class ProcessingError(Base):
     error_message: Mapped[str] = mapped_column(Text, nullable=False)
     recoverable: Mapped[bool] = mapped_column(Boolean, default=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# ── Gate 2: Telegram delivery state ────────────────────────────────
+
+class TelegramUpdate(Base):
+    """Idempotency record for processed Telegram updates."""
+    __tablename__ = "telegram_updates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    update_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True, index=True)
+    update_type: Mapped[str] = mapped_column(String(30), nullable=False)  # message/callback
+    user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    chat_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    command: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    result: Mapped[str | None] = mapped_column(String(50), nullable=True)  # ok/denied/error/busy
+
+
+class DeliveryChunk(Base):
+    """Per-chunk delivery state for partial recovery."""
+    __tablename__ = "delivery_chunks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    delivery_id: Mapped[int] = mapped_column(ForeignKey("deliveries.id"), nullable=False, index=True)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_chunks: Mapped[int] = mapped_column(Integer, nullable=False)
+    telegram_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending/sent/failed
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    delivery: Mapped["Delivery"] = relationship(back_populates="chunks")
+    __table_args__ = (UniqueConstraint("delivery_id", "chunk_index", name="uq_delivery_chunk_index"),)
+
+
+class ReportCursor(Base):
+    """Single-row cursor: last successfully delivered scheduled report."""
+    __tablename__ = "report_cursors"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cursor_key: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
+    report_id: Mapped[int | None] = mapped_column(ForeignKey("reports.id"), nullable=True)
+    delivery_id: Mapped[int | None] = mapped_column(ForeignKey("deliveries.id"), nullable=True)
+    advanced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class CommandRequest(Base):
+    """Persistent idempotency for command/callback-driven pipeline runs."""
+    __tablename__ = "command_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_key: Mapped[str] = mapped_column(String(200), nullable=False, unique=True, index=True)
+    command: Mapped[str] = mapped_column(String(100), nullable=False)
+    user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    chat_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    job_run_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    report_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    delivery_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
