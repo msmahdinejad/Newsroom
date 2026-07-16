@@ -82,7 +82,7 @@ def main() -> int:
         return report_command(args)
     elif args.command == "pipeline" and args.pipeline_command == "run":
         from newsroom.cli.commands.pipeline import pipeline_run_command
-        return asyncio.run(pipeline_run_command(args))
+        return pipeline_run_command(args)
     else:
         parser.print_help()
         return 1
