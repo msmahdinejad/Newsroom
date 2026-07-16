@@ -1,164 +1,129 @@
-"""Persistent scheduler — runs 3 daily Tehran-time report cycles.
+"""Persistent scheduler — APScheduler + SQLAlchemy job store, Asia/Tehran.
 
-Uses APScheduler with Asia/Tehran timezone. Stores job state in PostgreSQL
-so it survives restarts. Does NOT depend on conversation memory.
+Jobs re-registered idempotently on startup (replace_existing=True).
+Scheduled runs call the same newsroom.pipeline.runner path as manual CLI.
 """
+
+from __future__ import annotations
 
 import asyncio
 import json
 import os
-import subprocess
-import sys
 from datetime import UTC, datetime
 
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from newsroom.config import settings
 from newsroom.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
 
-PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+JOB_IDS = ("morning_news", "afternoon_news", "evening_news")
 
 
 async def run_scheduled_pipeline(job_label: str) -> None:
-    """Run the full pipeline and deliver. Called by scheduler."""
+    """Invoke authoritative pipeline runner in-process (same lock/path as CLI)."""
     logger.info(f"Scheduled job triggered: {job_label}")
-
-    from newsroom.storage.database import get_db
-    from newsroom.storage.models import JobRun
-
-    job_id = f"scheduled_{job_label}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
-    job_run = JobRun(
-        job_type="scheduled",
-        job_id=job_id,
-        trigger="scheduled",
-        stage="starting",
-        status="running",
-        stages_log=[],
+    os.environ["NEWSROOM_JOB_ID"] = (
+        f"scheduled_{job_label}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
     )
-    with get_db() as db:
-        db.add(job_run)
-        db.flush()
-        run_id = job_run.id
+    os.environ["NEWSROOM_SCHEDULE_LABEL"] = job_label
+    os.environ.setdefault("NEWSROOM_REPORT_MODE", "scheduled")
 
-    try:
-        env = {**os.environ, "NEWSROOM_JOB_ID": job_id, "NEWSROOM_SCHEDULE_LABEL": job_label}
-        result = subprocess.run(
-            [sys.executable, os.path.join(PROJECT_DIR, "scripts", "run_pipeline.py")],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            cwd=PROJECT_DIR,
-            env=env,
-        )
+    from newsroom.pipeline.runner import EXIT_BUSY, run_pipeline
 
-        # Parse result
-        status = "ok"
-        report_id = None
-        error_detail = None
-        for line in result.stdout.strip().split("\n"):
-            if line.strip().startswith("{") and '"status"' in line:
-                try:
-                    data = json.loads(line.strip())
-                    status = data.get("status", "error")
-                    report_id = data.get("report_id")
-                    if status == "ok_empty":
-                        status = "ok"
-                    if data.get("error"):
-                        error_detail = data["error"]
-                except json.JSONDecodeError:
-                    pass
-
-        if result.returncode != 0:
-            status = "error"
-            error_detail = result.stderr[:500]
-
-        with get_db() as db:
-            jr = db.query(JobRun).filter_by(id=run_id).first()
-            if jr:
-                jr.status = status
-                jr.stage = "complete"
-                jr.finished_at = datetime.now(UTC)
-                jr.report_id = report_id
-                jr.error_detail = error_detail
-                jr.stages_log = [
-                    {"name": "pipeline", "status": status, "ts": datetime.now(UTC).isoformat()}
-                ]
-
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, run_pipeline)
+    status = result.get("status")
+    if status == "busy" or result.get("exit_code") == EXIT_BUSY:
+        logger.warning(f"Job {job_label}: pipeline busy (lock held)")
+    else:
         logger.info(f"Job {job_label} finished: {status}")
-
-    except subprocess.TimeoutExpired:
-        with get_db() as db:
-            jr = db.query(JobRun).filter_by(id=run_id).first()
-            if jr:
-                jr.status = "error"
-                jr.error_detail = "Pipeline timeout (300s)"
-                jr.finished_at = datetime.now(UTC)
-    except Exception as e:
-        logger.error(f"Job {job_label} failed: {e}")
-        with get_db() as db:
-            jr = db.query(JobRun).filter_by(id=run_id).first()
-            if jr:
-                jr.status = "error"
-                jr.error_detail = str(e)[:500]
-                jr.finished_at = datetime.now(UTC)
 
 
 def create_scheduler() -> AsyncIOScheduler:
-    """Create and configure the scheduler with Tehran timezone jobs."""
-    scheduler = AsyncIOScheduler(timezone="Asia/Tehran")
-
-    # Morning: 09:00 Tehran
-    scheduler.add_job(
-        run_scheduled_pipeline,
-        CronTrigger(hour=9, minute=0, timezone="Asia/Tehran"),
-        id="morning_news",
-        name="Morning News Report (09:00 Tehran)",
-        misfire_grace_time=300,
-        max_instances=1,
-        kwargs={"job_label": "morning"},
+    """Create scheduler with PostgreSQL job store and three Tehran cron jobs."""
+    jobstores = {
+        "default": SQLAlchemyJobStore(url=str(settings.database_url)),
+    }
+    scheduler = AsyncIOScheduler(
+        timezone=settings.timezone or "Asia/Tehran",
+        jobstores=jobstores,
+        job_defaults={
+            "coalesce": True,
+            "max_instances": 1,
+            "misfire_grace_time": 300,
+        },
     )
 
-    # Afternoon: 15:00 Tehran
-    scheduler.add_job(
-        run_scheduled_pipeline,
-        CronTrigger(hour=15, minute=0, timezone="Asia/Tehran"),
-        id="afternoon_news",
-        name="Afternoon News Report (15:00 Tehran)",
-        misfire_grace_time=300,
-        max_instances=1,
-        kwargs={"job_label": "afternoon"},
-    )
-
-    # Evening: 21:00 Tehran
-    scheduler.add_job(
-        run_scheduled_pipeline,
-        CronTrigger(hour=21, minute=0, timezone="Asia/Tehran"),
-        id="evening_news",
-        name="Evening News Report (21:00 Tehran)",
-        misfire_grace_time=300,
-        max_instances=1,
-        kwargs={"job_label": "evening"},
-    )
-
+    tz = settings.timezone or "Asia/Tehran"
+    specs = [
+        ("morning_news", 9, 0, "morning", "Morning News Report (09:00 Tehran)"),
+        ("afternoon_news", 15, 0, "afternoon", "Afternoon News Report (15:00 Tehran)"),
+        ("evening_news", 21, 0, "evening", "Evening News Report (21:00 Tehran)"),
+    ]
+    for jid, hour, minute, label, name in specs:
+        scheduler.add_job(
+            run_scheduled_pipeline,
+            CronTrigger(hour=hour, minute=minute, timezone=tz),
+            id=jid,
+            name=name,
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=300,
+            kwargs={"job_label": label},
+        )
     return scheduler
 
 
-def main() -> None:
-    """Entry point for the scheduler service."""
+def registered_job_ids(scheduler: AsyncIOScheduler) -> list[str]:
+    return sorted(j.id for j in scheduler.get_jobs())
+
+
+def health_payload() -> dict:
+    """Readiness for Docker healthcheck: DB + expected job IDs in jobstore table."""
+    from sqlalchemy import create_engine, text
+
+    from newsroom.storage.database import db_health
+
+    if not db_health():
+        return {"status": "unhealthy", "reason": "database"}
+    try:
+        eng = create_engine(str(settings.database_url), pool_pre_ping=True)
+        with eng.connect() as conn:
+            rows = conn.execute(text("SELECT id FROM apscheduler_jobs")).fetchall()
+        eng.dispose()
+        ids = sorted(r[0] for r in rows)
+        missing = [j for j in JOB_IDS if j not in ids]
+        if missing:
+            return {"status": "starting", "jobs": ids, "missing": missing}
+        return {"status": "healthy", "jobs": ids}
+    except Exception as e:
+        return {"status": "unhealthy", "reason": str(e)[:200]}
+
+async def _async_main() -> None:
     setup_logging()
     logger.info("Starting Newsroom scheduler")
-
     scheduler = create_scheduler()
     scheduler.start()
-
+    logger.info(f"Jobs registered: {registered_job_ids(scheduler)}")
     try:
-        # Keep running
-        asyncio.get_event_loop().run_forever()
-    except (KeyboardInterrupt, SystemExit):
-        scheduler.shutdown()
+        with open("/tmp/newsroom_scheduler_ready", "w", encoding="utf-8") as f:
+            f.write(json.dumps({"jobs": registered_job_ids(scheduler)}))
+    except OSError:
+        pass
+    try:
+        await asyncio.Event().wait()
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        scheduler.shutdown(wait=False)
         logger.info("Scheduler stopped")
+
+
+def main() -> None:
+    asyncio.run(_async_main())
 
 
 if __name__ == "__main__":

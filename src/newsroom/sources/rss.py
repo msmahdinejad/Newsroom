@@ -93,13 +93,14 @@ class RSSCollector(SourceCollector):
         for field in ("published_parsed", "updated_parsed"):
             ts = getattr(entry, field, None)
             if ts:
-                return datetime(*ts[:6], tzinfo=UTC).isoformat()
+                dt = datetime(*ts[:6])
+                return dt.replace(tzinfo=UTC).isoformat()
         return None
 
     def _extract_content(self, entry: Any) -> str:
         if hasattr(entry, "content") and entry.content:
-            return entry.content[0].get("value", "")
-        return getattr(entry, "summary", "")
+            return str(entry.content[0].get("value", ""))
+        return str(getattr(entry, "summary", ""))
 
     async def close(self) -> None:
         await self.client.aclose()

@@ -59,7 +59,7 @@ class PersianEditorial:
             content = self._empty_report(report_mode)
         else:
             # Fetch evidence packets
-            evidence_map: dict[int, dict] = {}
+            evidence_map: dict[int, dict | None] = {}
             for story in stories:
                 ev = db.query(Evidence).filter_by(story_id=story.id).order_by(Evidence.id.desc()).first()
                 evidence_map[story.id] = ev.packet if ev else None

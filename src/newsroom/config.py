@@ -1,6 +1,15 @@
 """Configuration management using pydantic-settings."""
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _env_bool(v: object) -> bool:
+    if isinstance(v, bool):
+        return v
+    if v is None or v == "":
+        return False
+    return str(v).strip().lower() in {"1", "true", "yes", "on"}
 
 
 class Settings(BaseSettings):
@@ -38,6 +47,9 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""  # env: TELEGRAM_BOT_TOKEN
     telegram_authorized_users: str = ""  # comma-separated numeric IDs
     telegram_chat_id: str = ""  # default delivery chat
+    # Feature flags — false = no network auth, stable idle, honest health
+    telegram_bot_enabled: bool = False
+    telegram_ingestor_enabled: bool = False
 
     # Telegram MTProto (source collector)
     telegram_api_id: str = ""
@@ -45,12 +57,28 @@ class Settings(BaseSettings):
     telegram_phone: str = ""
     telegram_session_dir: str = "./data/sessions"
 
-    # Pipeline lock timeout (seconds)
+    # Pipeline lock timeout (seconds) — advisory lock is session-held; timeout is soft doc
     pipeline_lock_timeout: int = 300
 
     # Retention
     raw_retention_days: int = 30
     normalized_retention_days: int = 90
+
+    @field_validator("telegram_bot_enabled", "telegram_ingestor_enabled", mode="before")
+    @classmethod
+    def parse_bool(cls, v: object) -> bool:
+        return _env_bool(v)
+
+    def telegram_bot_ready(self) -> bool:
+        return bool(self.telegram_bot_enabled and self.telegram_bot_token and self.telegram_chat_id)
+
+    def telegram_ingestor_ready(self) -> bool:
+        return bool(
+            self.telegram_ingestor_enabled
+            and self.telegram_api_id
+            and self.telegram_api_hash
+            and self.telegram_phone
+        )
 
 
 settings = Settings()

@@ -140,7 +140,7 @@ class TelegramDelivery:
         data = response.json()
         if not data.get("ok"):
             raise RuntimeError(f"Telegram API error: {data.get('description', 'unknown')}")
-        return data["result"]["message_id"]
+        return int(data["result"]["message_id"])
 
     def _hash_chat(self, chat_id: str) -> str:
         """Hash chat ID for safe storage."""
