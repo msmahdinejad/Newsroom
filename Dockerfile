@@ -9,22 +9,22 @@ RUN pip install --no-cache-dir uv
 WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-install-project --extra dev
+RUN uv sync --frozen --no-install-project --extra dev --extra telegram
 
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY tests/ ./tests/
 COPY legacy/ ./legacy/
 COPY alembic.ini ./
-RUN uv sync --frozen --extra dev
+RUN uv sync --frozen --extra dev --extra telegram
 
 ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1
 
 # Non-root user with writable cache dir
 RUN useradd -r -s /bin/false -m newsroom && \
-    mkdir -p /home/newsroom/.cache/uv /tmp/uv-cache && \
-    chown -R newsroom:newsroom /app /home/newsroom /tmp/uv-cache
+    mkdir -p /home/newsroom/.cache/uv /tmp/uv-cache /data/sessions && \
+    chown -R newsroom:newsroom /app /home/newsroom /tmp/uv-cache /data/sessions
 ENV UV_CACHE_DIR=/tmp/uv-cache
 USER newsroom
 

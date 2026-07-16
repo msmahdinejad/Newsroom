@@ -61,8 +61,14 @@ def telegram_bot_status() -> dict[str, Any]:
 
 
 def telegram_ingestor_status() -> dict[str, Any]:
+    """Deep health for Telegram ingestor — more than process existence.
+
+    Disabled mode: healthy with explicit disabled status.
+    Enabled mode: checks DB, session, channel states, FloodWait, connection.
+    """
     if not settings.telegram_ingestor_enabled:
-        return {"status": "disabled", "feature": "telegram_ingestor"}
+        return {"status": "disabled", "feature": "telegram_ingestor", "healthy": True}
+
     missing = []
     if not settings.telegram_api_id:
         missing.append("TELEGRAM_API_ID")
@@ -75,8 +81,83 @@ def telegram_ingestor_status() -> dict[str, Any]:
             "status": "blocked_by_credentials",
             "feature": "telegram_ingestor",
             "missing": missing,
+            "healthy": True,  # blocked is a valid mode
         }
-    return {"status": "enabled", "feature": "telegram_ingestor"}
+
+    # Enabled — check session file exists
+    session_path = settings.telegram_session_path
+    session_exists = False
+    try:
+        import os
+        session_exists = os.path.exists(session_path)
+    except OSError:
+        pass
+
+    payload: dict[str, Any] = {
+        "status": "enabled",
+        "feature": "telegram_ingestor",
+        "session_exists": session_exists,
+        "session_path": "[PROTECTED]",  # never expose actual path in reports
+    }
+
+    # Read runtime status from ingestor process
+    try:
+        import json as _json
+        with open("/tmp/newsroom_ingestor_status.json", encoding="utf-8") as f:
+            runtime = _json.load(f)
+        payload["authenticated"] = runtime.get("authenticated", False)
+        payload["connection_status"] = runtime.get("connection_status", "disconnected")
+        payload["last_update"] = runtime.get("last_update")
+        payload["last_reconciliation"] = runtime.get("last_reconciliation")
+        payload["last_persisted_message"] = runtime.get("last_persisted_message")
+        payload["current_error_category"] = runtime.get("current_error_category")
+    except Exception:
+        payload["authenticated"] = False
+        payload["connection_status"] = "no_runtime_data"
+
+    # Query channel states from DB
+    try:
+        from newsroom.storage.database import db_health, session_factory
+        from newsroom.storage.models import TelegramChannel
+
+        if not db_health():
+            payload["degraded"] = ["database"]
+            payload["healthy"] = False
+            return payload
+
+        with session_factory() as db:
+            channels = db.query(TelegramChannel).all()
+            payload["channels_configured"] = len(channels)
+            payload["channels_enabled"] = sum(1 for c in channels if c.enabled)
+            payload["channels_healthy"] = sum(1 for c in channels if c.source_state == "healthy")
+            payload["channels_degraded"] = sum(1 for c in channels if c.source_state in ("degraded", "rate_limited"))
+            payload["channels_inaccessible"] = sum(1 for c in channels if c.source_state in ("inaccessible", "invalid"))
+
+            from datetime import UTC, datetime
+            now = datetime.now(UTC)
+            floodwait = [
+                c.public_username or str(c.telegram_channel_id)
+                for c in channels
+                if c.floodwait_until and c.floodwait_until > now
+            ]
+            if floodwait:
+                payload["floodwait_active"] = floodwait
+    except Exception:
+        payload["channels_configured"] = 0
+
+    degraded = []
+    if not payload.get("authenticated"):
+        degraded.append("authentication-required")
+    if not payload.get("session_exists"):
+        degraded.append("session_missing")
+    if payload.get("channels_inaccessible", 0) > 0:
+        degraded.append("inaccessible_channels")
+    if payload.get("floodwait_active"):
+        degraded.append("floodwait")
+    if degraded:
+        payload["degraded"] = degraded
+    payload["healthy"] = len(degraded) == 0
+    return payload
 
 
 def collector_status() -> dict[str, Any]:

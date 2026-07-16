@@ -100,6 +100,21 @@ def filter_new_items(
             out.append(it)
         return out
 
+    if source_type == "telegram":
+        # Telegram cursor uses telegram_channel.last_message_id (managed by collector)
+        # The cursor here is for the collection_cursors table — supplementary
+        last_msg = cursor.get("last_message_id")
+        if last_msg is None:
+            return items
+        out = []
+        for it in items:
+            mid = it.get("message_id", 0)
+            # Keep equal for overlap/idempotency — only drop strictly older
+            if mid and int(mid) < int(last_msg):
+                continue
+            out.append(it)
+        return out
+
     return items
 
 
@@ -138,6 +153,14 @@ def advance_cursor_from_items(
             max_id = max(ids)
             prev_id = int(cursor.get("last_release_id") or 0)
             next_c["last_release_id"] = str(max(max_id, prev_id))
+        return next_c
+
+    if source_type == "telegram":
+        msg_ids = [int(it["message_id"]) for it in persisted_items if it.get("message_id")]
+        if msg_ids:
+            max_mid = max(msg_ids)
+            prev_mid = int(cursor.get("last_message_id") or 0)
+            next_c["last_message_id"] = str(max(max_mid, prev_mid))
         return next_c
 
     return next_c

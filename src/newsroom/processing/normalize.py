@@ -87,7 +87,14 @@ class Normalizer:
         text = self._normalize_text(raw.get("text", raw.get("message", "")))
         channel = raw.get("channel_name", raw.get("source_name", ""))
         link = raw.get("link", "")
+
+        # Use first 120 chars of text as title, or fallback to channel name
         title = text[:120] if text else f"Telegram post from {channel}"
+
+        # Outbound links for richer normalization
+        outbound = raw.get("outbound_links", [])
+        if outbound and not link:
+            link = outbound[0]
 
         return {
             "title": title,

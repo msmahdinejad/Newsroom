@@ -180,7 +180,10 @@ services:
       TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
       TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
       TELEGRAM_PHONE: ${TELEGRAM_PHONE:-}
+      TELEGRAM_SESSION_PATH: /data/sessions/newsroom_ingestor.session
       TELEGRAM_INGESTOR_ENABLED: ${TELEGRAM_INGESTOR_ENABLED:-false}
+    volumes:
+      - telegram_sessions:/data/sessions
     command: uv run python -m newsroom.sources.telegram_ingestor_service
     restart: unless-stopped
     healthcheck:
@@ -197,3 +200,4 @@ services:
 
 volumes:
   postgres_data:
+  telegram_sessions:

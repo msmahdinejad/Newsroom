@@ -17,6 +17,7 @@ from newsroom.pipeline.cursors import (
 )
 from newsroom.sources.github import GitHubCollector
 from newsroom.sources.rss import RSSCollector
+from newsroom.sources.telegram_collector import TelegramMTProtoCollector
 from newsroom.storage.models import CollectionRun, RawItem, Source
 
 logger = get_logger(__name__)
@@ -25,6 +26,11 @@ logger = get_logger(__name__)
 def raw_content_hash(item: dict[str, Any]) -> str:
     item_url = item.get("link") or item.get("html_url") or ""
     title = item.get("title") or item.get("name") or ""
+    if item.get("type") == "telegram":
+        # Telegram identity is channel_id:message_id — use that for hash
+        channel_id = item.get("telegram_channel_id", 0)
+        msg_id = item.get("message_id", 0)
+        return hashlib.sha256(f"tg:{channel_id}:{msg_id}".encode()).hexdigest()
     return hashlib.sha256((item_url + title).encode()).hexdigest()
 
 
@@ -42,6 +48,7 @@ async def collect_sources(
 
     rss = RSSCollector()
     gh = GitHubCollector()
+    tg = TelegramMTProtoCollector()
     total_new = 0
     failed: list[str] = []
     per_source: list[dict[str, Any]] = []
@@ -61,6 +68,38 @@ async def collect_sources(
                     items = await rss.collect(source)
                 elif source.type == "github_releases":
                     items = await gh.collect(source)
+                elif source.type == "telegram":
+                    if not tg.configured:
+                        run.status = "ok"
+                        run.items_collected = 0
+                        run.finished_at = datetime.now(UTC)
+                        per_source.append({"source": source.name, "status": "skipped_mtproto_disabled"})
+                        continue
+                    items = await tg.collect(source)
+                    # Telegram uses its own persist with edit handling
+                    persist_stats = tg.persist_items(session, source, items)
+                    # Gap detection
+                    msg_ids = [it.get("message_id", 0) for it in items if it.get("message_id")]
+                    gaps = tg.detect_gaps(session, source.id, msg_ids)
+
+                    session.flush()
+                    source.last_success_at = datetime.now(UTC)
+                    source.consecutive_failures = 0
+                    source.health_status = "healthy"
+                    run.status = "ok"
+                    run.items_collected = persist_stats["new"]
+                    run.finished_at = datetime.now(UTC)
+                    total_new += persist_stats["new"]
+                    per_source.append({
+                        "source": source.name,
+                        "status": "ok",
+                        "new": persist_stats["new"],
+                        "updated": persist_stats["updated"],
+                        "skipped": persist_stats["skipped"],
+                        "gaps": len(gaps),
+                        "fetched": len(items),
+                    })
+                    continue
                 else:
                     run.status = "ok"
                     run.items_collected = 0
@@ -139,6 +178,7 @@ async def collect_sources(
     finally:
         await rss.close()
         await gh.close()
+        await tg.close()
 
     return {
         "sources": len(sources),

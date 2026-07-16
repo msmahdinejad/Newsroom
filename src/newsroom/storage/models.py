@@ -109,6 +109,11 @@ class RawItem(Base):
     raw_data: Mapped[dict] = mapped_column(JSONB, nullable=False)  # structured JSON, not str(dict)
     collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     content_hash: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)  # pre-normalization hash for raw dedup
+    # Gate 3: Telegram message identity for edit idempotency
+    telegram_channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    telegram_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    edit_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     source: Mapped["Source"] = relationship(back_populates="raw_items")
     normalized_item: Mapped["NormalizedItem | None"] = relationship(back_populates="raw_item", uselist=False)
@@ -342,3 +347,57 @@ class CommandRequest(Base):
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# ── Gate 3: Telegram MTProto ingestion state ──────────────────────
+
+class TelegramChannel(Base):
+    """Extended Telegram channel metadata tied to sources.
+
+    Stable numeric Telegram channel ID is the primary external identity.
+    Usernames are mutable — username updates don't create duplicate sources.
+    """
+    __tablename__ = "telegram_channels"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"), nullable=False, unique=True)
+    telegram_channel_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True, index=True)
+    access_hash: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    public_username: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    public_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    language: Mapped[str] = mapped_column(String(10), default="en")
+    category: Mapped[str] = mapped_column(String(100), default="general")
+    trust_class: Mapped[str] = mapped_column(String(30), default="unverified")
+    trust_score: Mapped[float] = mapped_column(Float, default=0.0)
+    collection_mode: Mapped[str] = mapped_column(String(30), default="history")
+    source_state: Mapped[str] = mapped_column(String(30), default="candidate")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    last_observed_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_collected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_reconciliation_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    current_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    floodwait_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    posting_frequency: Mapped[float] = mapped_column(Float, default=0.0)
+    duplicate_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    spam_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class TelegramMessageGap(Base):
+    """Detected message ID gaps for bounded reconciliation."""
+    __tablename__ = "telegram_message_gaps"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"), nullable=False, index=True)
+    gap_start_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    gap_end_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="open")  # open/resolved/partial
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    unresolved_count: Mapped[int] = mapped_column(Integer, default=0)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
