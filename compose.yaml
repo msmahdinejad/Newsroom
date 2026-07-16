@@ -48,8 +48,26 @@ services:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
-    command: uv run python -m newsroom.cli.main collect
+    command:
+      - uv
+      - run
+      - python
+      - -c
+      - |
+        import asyncio, time
+        from argparse import Namespace
+        from newsroom.cli.commands.collect import collect_command
+        asyncio.run(collect_command(Namespace(source_type=None)))
+        open('/tmp/newsroom_collector_done','w').write('ok')
+        while True:
+            time.sleep(3600)
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "uv run python -m newsroom.service_status collector"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
     logging:
       driver: json-file
       options:
@@ -66,8 +84,26 @@ services:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
-    command: uv run python -m newsroom.cli.main process all
+    command:
+      - uv
+      - run
+      - python
+      - -c
+      - |
+        import time
+        from argparse import Namespace
+        from newsroom.cli.commands.process import process_command
+        process_command(Namespace(process_command='all'))
+        open('/tmp/newsroom_report_worker_done','w').write('ok')
+        while True:
+            time.sleep(3600)
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "uv run python -m newsroom.service_status report_worker"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
     logging:
       driver: json-file
       options:
@@ -87,8 +123,16 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       TELEGRAM_AUTHORIZED_USERS: ${TELEGRAM_AUTHORIZED_USERS:-}
+      TELEGRAM_BOT_ENABLED: ${TELEGRAM_BOT_ENABLED:-false}
+      TELEGRAM_INGESTOR_ENABLED: ${TELEGRAM_INGESTOR_ENABLED:-false}
     command: uv run python -m newsroom.scheduler
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "uv run python -m newsroom.service_status scheduler"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     logging:
       driver: json-file
       options:
@@ -108,8 +152,43 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       TELEGRAM_AUTHORIZED_USERS: ${TELEGRAM_AUTHORIZED_USERS:-}
+      TELEGRAM_BOT_ENABLED: ${TELEGRAM_BOT_ENABLED:-false}
     command: uv run python -m newsroom.delivery.bot
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "uv run python -m newsroom.service_status bot"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  telegram-ingestor:
+    build: .
+    container_name: newsroom-telegram-ingestor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELEGRAM_PHONE: ${TELEGRAM_PHONE:-}
+      TELEGRAM_INGESTOR_ENABLED: ${TELEGRAM_INGESTOR_ENABLED:-false}
+    command: uv run python -m newsroom.sources.telegram_ingestor_service
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "uv run python -m newsroom.service_status ingestor"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     logging:
       driver: json-file
       options:

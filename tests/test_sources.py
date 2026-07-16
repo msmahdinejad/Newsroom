@@ -11,15 +11,14 @@ from newsroom.sources.base import CollectionError, classify_retry
 from newsroom.sources.github import GitHubCollector
 from newsroom.sources.rss import RSSCollector
 
-
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def _make_source(url="https://example.com/feed.xml", name="test", id=1, stype="rss"):
+def _make_source(url="https://example.com/feed.xml", name="test", sid=1, stype="rss"):
     src = MagicMock()
     src.url = url
     src.name = name
-    src.id = id
+    src.id = sid
     src.type = stype
     return src
 

@@ -3,10 +3,7 @@ chat ID hashing."""
 
 import hashlib
 
-import pytest
-
 from newsroom.delivery.telegram import MAX_MSG_LEN, TelegramDelivery
-
 
 # ── Chat ID hashing ─────────────────────────────────────────────
 

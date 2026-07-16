@@ -1,6 +1,6 @@
 """Test evidence packet construction from stories."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -37,7 +37,7 @@ def _make_item(item_id, title, description="", source_name="TestSource", source_
     item.description = description
     item.source_url = "https://example.com/article"
     item.canonical_url = "https://example.com/article"
-    item.published_at = datetime(2026, 7, 13, 10, 0, tzinfo=timezone.utc)
+    item.published_at = datetime(2026, 7, 13, 10, 0, tzinfo=UTC)
     item.language = "en"
     # raw_item → source chain
     item.raw_item = MagicMock()
@@ -171,11 +171,11 @@ def test_build_for_story_persists_evidence(builder, story, mock_db):
 
     # db.flush() should set an id on the Evidence
     def flush_side_effect():
-        for obj in mock_db.add.call_args_list:
+        for _obj in mock_db.add.call_args_list:
             pass  # Evidence object is added
     mock_db.flush.side_effect = flush_side_effect
 
-    result = builder.build_for_story(mock_db, story)
+    builder.build_for_story(mock_db, story)
     # Evidence was added
     assert mock_db.add.called
     assert mock_db.flush.called

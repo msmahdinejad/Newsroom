@@ -5,7 +5,10 @@ __pycache__
 *.pyc
 .git
 .gitignore
-tests/
 *.md
 !README.md
 .venv
+.mypy_cache
+.pytest_cache
+.ruff_cache
+backups/
