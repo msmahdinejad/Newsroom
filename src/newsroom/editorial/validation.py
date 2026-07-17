@@ -83,6 +83,13 @@ def parse_and_validate(
     # Step 3: Check for duplicate story IDs
     stories = output_dict.get("stories", [])
     story_ids = [s.get("story_id") for s in stories if isinstance(s, dict)]
+
+    # If evidence has stories but output has none, that's a schema failure
+    if not stories and evidence.stories:
+        result.valid = False
+        result.issues.append("no stories in output despite evidence having stories")
+        return (None, result)
+
     seen_ids: set[int] = set()
     for sid in story_ids:
         if sid is None:

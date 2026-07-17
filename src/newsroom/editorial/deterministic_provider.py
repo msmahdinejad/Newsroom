@@ -50,16 +50,16 @@ class DeterministicEditorialProvider(EditorialProvider):
 
         story_results: list[StoryEditorialResult] = []
         for story_pkt in evidence.stories:
-            # Map trust status to classification
+            # Map trust status to classification — contradictions take priority
             trust = story_pkt.trust_status
-            if trust == "official":
+            if story_pkt.contradictions:
+                classification = EditorialClassification.CONFLICTING
+            elif trust == "official":
                 classification = EditorialClassification.OFFICIAL
             elif story_pkt.source_count >= 2 and trust in ("confirmed", "likely"):
                 classification = EditorialClassification.CORROBORATED
             elif trust == "rumor":
                 classification = EditorialClassification.COMMUNITY
-            elif story_pkt.contradictions:
-                classification = EditorialClassification.CONFLICTING
             elif trust in ("confirmed", "likely"):
                 classification = EditorialClassification.SINGLE_REPUTABLE
             else:
