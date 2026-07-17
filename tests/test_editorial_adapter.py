@@ -825,6 +825,86 @@ class TestStructuredOutputEdgeCases:
         assert "reasoning" not in dumped["stories"][0]
 
 
+# ── Persian digit normalization in grounding ──────────────────────
+
+
+class TestPersianDigitGrounding:
+    def test_persian_digits_match_latin_evidence(self):
+        """Persian-Indic digits in claims should match Latin digits in evidence."""
+        from newsroom.editorial.grounding import _has_unsupported_numbers
+
+        # Build evidence that contains "3.13.1" in the headline and excerpt
+        evidence = EditorialEvidenceSet(
+            stories=[
+                EvidenceStoryPacket(
+                    story_id=1,
+                    headline="Python 3.13.1 released",
+                    facts=["Python 3.13.1 is a maintenance release"],
+                    confidence=0.95,
+                    importance_score=0.8,
+                    trust_status="official",
+                    source_count=1,
+                    item_count=1,
+                    sources=[
+                        EvidenceSourceItem(
+                            ref_id="ev-1-0",
+                            item_id=1,
+                            original_title="Python 3.13.1",
+                            excerpt="Python 3.13.1 is the first maintenance release",
+                            original_url="https://www.python.org/",
+                            release_version="3.13.1",
+                        )
+                    ],
+                )
+            ]
+        )
+        # Claim uses Persian digits ۳.۱۳.۱ but evidence uses Latin 3.13.1
+        claim = "پایتون ۳.۱۳.۱ منتشر شد"
+        assert not _has_unsupported_numbers(claim, evidence, 1)
+
+    def test_unsupported_persian_number_rejected(self):
+        """Persian digits not in evidence are still rejected."""
+        from newsroom.editorial.grounding import _has_unsupported_numbers
+
+        evidence = make_evidence()
+        # ۹۹.۹ is not in evidence
+        claim = "نسخه ۹۹.۹ منتشر شد"
+        assert _has_unsupported_numbers(claim, evidence, 1)
+
+    def test_arabic_indic_digits_match(self):
+        """Arabic-Indic digits (٠-٩) also normalize correctly."""
+        from newsroom.editorial.grounding import _has_unsupported_numbers
+
+        # Build evidence that contains "3.13.1"
+        evidence = EditorialEvidenceSet(
+            stories=[
+                EvidenceStoryPacket(
+                    story_id=1,
+                    headline="Python 3.13.1 released",
+                    facts=["Python 3.13.1 is a maintenance release"],
+                    confidence=0.95,
+                    importance_score=0.8,
+                    trust_status="official",
+                    source_count=1,
+                    item_count=1,
+                    sources=[
+                        EvidenceSourceItem(
+                            ref_id="ev-1-0",
+                            item_id=1,
+                            original_title="Python 3.13.1",
+                            excerpt="Python 3.13.1 is the first maintenance release",
+                            original_url="https://www.python.org/",
+                            release_version="3.13.1",
+                        )
+                    ],
+                )
+            ]
+        )
+        # Arabic-Indic ٣.١٣.١ should match Latin 3.13.1
+        claim = "النسخة ٣.١٣.١"
+        assert not _has_unsupported_numbers(claim, evidence, 1)
+
+
 # ── Cache key with report_mode (D-4) ──────────────────────────────
 
 

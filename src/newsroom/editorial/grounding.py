@@ -181,15 +181,26 @@ def _has_unsupported_numbers(
 
     This is a conservative heuristic — false positives are better than
     letting unsupported claims through.
+    Handles both Latin (0-9) and Persian-Indic (۰-۹) digit variants.
     """
     import re
 
-    # Extract all numbers from claim
-    numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", claim_text))
+    # Normalize Persian-Indic digits to Latin for comparison
+    persian_map = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+
+    def normalize_num(s: str) -> str:
+        return s.translate(persian_map)
+
+    def extract_numbers(text: str) -> set[str]:
+        raw = re.findall(r"\b\d+(?:\.\d+)?\b", text)
+        return {normalize_num(n) for n in raw}
+
+    # Extract all numbers from claim (normalized)
+    numbers = extract_numbers(claim_text)
     if not numbers:
         return False
 
-    # Collect all numbers from evidence for this story
+    # Collect all numbers from evidence for this story (normalized)
     evidence_numbers: set[str] = set()
     for story in evidence.stories:
         if story.story_id != story_id:
@@ -200,9 +211,9 @@ def _has_unsupported_numbers(
             texts.append(src.original_title)
             texts.append(src.excerpt)
             if src.release_version:
-                evidence_numbers.update(re.findall(r"\b\d+(?:\.\d+)?\b", src.release_version))
+                evidence_numbers.update(extract_numbers(src.release_version))
         for text in texts:
-            evidence_numbers.update(re.findall(r"\b\d+(?:\.\d+)?\b", text))
+            evidence_numbers.update(extract_numbers(text))
 
     # Check each number in claim against evidence
     for num in numbers:
