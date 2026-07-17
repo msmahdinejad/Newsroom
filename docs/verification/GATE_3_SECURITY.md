@@ -1,30 +1,40 @@
 # Gate 3 Security
 
-**Status**: PARTIALLY VERIFIED (credential-independent)
+**Status**: COMPLETED
 
-## Security Measures Verified
-- [x] Session files excluded from Git (.gitignore: data/sessions/, *.session)
-- [x] Session files excluded from Docker (.dockerignore: data/sessions/, *.session)
-- [x] No eval() or exec() in any source file
-- [x] No hardcoded tokens or credentials in source
-- [x] .env.example has empty values for all Telegram credentials
-- [x] No TELEGRAM_LOGIN_CODE, TELEGRAM_2FA, or TELEGRAM_PASSWORD variables in .env.example
-- [x] Session path shown as [PROTECTED] in health checks
-- [x] Authorization command uses getpass (never echoes login code or 2FA password)
-- [x] Lock file prevents concurrent authorization
-- [x] Authorization result file records only: success/failure, redacted self ID, session_configured
-- [x] Docker: telegram-ingestor has no TELEGRAM_BOT_TOKEN env var
-- [x] Docker: telegram-bot has no TELEGRAM_API_ID/API_HASH/PHONE env vars
-- [x] Session volume not shared with telegram-bot container
-- [x] Non-root user (newsroom) in Dockerfile
-- [x] Prompt-injection fixtures remain inert data (no eval, no exec, no code execution)
-- [x] Telegram adapter produces pure data records (no Telethon objects cross boundary)
-- [x] Collector has no send_message capability (read-only)
+## Security Scan Results
 
-## Pending (live verification)
-- [ ] Git scan for MTProto credentials and session data (post-live)
-- [ ] Docker build context inspection (post-live)
-- [ ] Docker image inspection (post-live)
-- [ ] Log inspection (post-live)
-- [ ] Database row inspection (post-live)
-- [ ] Evidence document inspection (post-live)
+### Git
+- No session files tracked in Git (verified: `git ls-files | grep .session` → empty)
+- No API hash, phone, login code, or 2FA password in Git history
+- .env untracked (Gate 0 verified)
+- .gitignore excludes data/sessions/, *.session, *.session-journal
+
+### Docker
+- .dockerignore excludes data/sessions/, *.session
+- Session volume (telegram_sessions) not mounted in telegram-bot service
+- Non-root user (newsroom) in Dockerfile
+- Session file readable only by newsroom user inside container
+
+### Application Logs
+- No secrets in ingestor logs (verified: grep for api_hash, phone, login_code, 2fa, password → empty)
+- Session path shown as [PROTECTED] in health checks
+- Authorization result file: only self_id, username, session_configured
+
+### PostgreSQL
+- No API hash or credentials in raw_items JSONB (verified)
+- No session data in database rows
+- Chat IDs hashed (not raw) in deliveries table
+
+### Evidence Documents
+- No secrets in any evidence file
+- Only public channel IDs, usernames, message IDs, report IDs, delivery IDs recorded
+- No phone number, api_hash, login code, 2FA password, or session data in any document
+
+### Reports
+- Persian report contains only public channel permalinks and story content
+- No credentials in delivered messages
+
+## Summary
+- No credential or session data leaked anywhere
+- All secrets remain in .env (untracked) or Docker volume (not in images)

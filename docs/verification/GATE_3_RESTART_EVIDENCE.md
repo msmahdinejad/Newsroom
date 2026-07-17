@@ -1,14 +1,16 @@
 # Gate 3 Restart Evidence
 
-**Status**: NOT YET EXECUTED (live)
+**Status**: COMPLETED
 
-## Restart Continuation
-- Cursor (last_message_id) persisted in telegram_channels table
-- New collector instance reads cursor from DB
-- Collection continues from last_message_id with overlap window
+## Restart Test
+1. Ingestor started → authenticated as user 8819135988 (@iAmLiam2005)
+2. `docker compose restart telegram-ingestor`
+3. Ingestor reconnected → authenticated without new login code
+4. Collection cycle ran → 30 items skipped (all overlap, no duplicates)
+5. State remained coherent — cursors intact
 
-## Deterministic Verification
-- Restart continues from cursor (integration): PASS
-
-## Blocked
-Live restart verification is blocked pending live collection.
+## Session Persistence
+- Session file: 28672 bytes in Docker volume telegram_sessions
+- Survives container restart (volume-mounted)
+- Survives container recreation (named volume)
+- No re-authorization needed

@@ -1,22 +1,26 @@
 # Gate 3 Edits and Forwards
 
-**Status**: NOT YET EXECUTED (live)
-
-## Edit Handling
-- Same (channel_id, message_id) updates existing RawItem in place
-- Text, caption, links, entities, hashes, edit_ts updated
-- Content hash change detects edited vs identical
-- Repeated identical edits: skipped (same content_hash)
+**Status**: PARTIALLY COMPLETED (live)
 
 ## Forward Attribution
-- Preserves: forward_from_channel_id, forward_from_channel_name, forward_from_message_id, forward_from_date, forward_timestamp
-- Does not infer hidden origin information
-- Does not expose private account details
+- 22 items with forward metadata collected from live channels
+- forward_from_message_id preserved (e.g., 6351, 1942, 2876)
+- forward_from_channel_name not exposed by Telegram for these forwards (privacy)
+- No hidden origin information inferred
 
-## Deterministic Verification
-- Edited message updates in place: PASS
-- Edit updates existing item (integration): PASS
-- Forward attribution persisted (integration): PASS
+## Edit Handling
+- Edit detection infrastructure: VERIFIED (deterministic + integration tests)
+- Controlled live edit: NOT EXECUTED — requires a test channel under user control (@MY_CONTROLLED_TEST_CHANNEL)
+  where the user posts, edits, and forwards messages. The placeholder was not replaced with a real
+  controlled channel username.
 
-## Blocked
-Live edit/forward observation is blocked pending live collection.
+## Delete Observation
+- Delete marking infrastructure: VERIFIED (deterministic tests)
+- Live deletion: NOT OBSERVED — Telegram's MTProto update stream does not guarantee deletion
+  notifications while offline. The collector marks items deleted when delete updates are received.
+  No live delete was observed during the test window.
+
+## Honest Assessment
+- Forward attribution: LIVE VERIFIED (22 items with real forward metadata)
+- Edit handling: DETERMINISTIC VERIFIED, live edit not tested (no controlled channel)
+- Delete handling: DETERMINISTIC VERIFIED, live delete not observed

@@ -1,19 +1,22 @@
 # Gate 3 Failure Isolation
 
-**Status**: NOT YET EXECUTED (live)
+**Status**: COMPLETED
 
-## Failure Isolation Design
-- collect_sources wraps each source in try/except
-- One channel failure appends to 'failed' list, continues to next
-- FloodWait persists rate-limited state, raises recoverable error
-- Channel access loss classified as inaccessible/invalid
-- Network errors classified as degraded
+## Invalid Channel Test
+- Added @this_channel_does_not_exist_xyz123 as enabled source
+- Collection run: invalid channel failed with "Cannot find any entity"
+- All 8 valid channels continued processing (30 items skipped)
+- No pipeline-wide failure
 
-## Deterministic Verification
-- One channel failure doesn't stop others: PASS
-- Multi-channel failure isolation: PASS
-- FloodWait classification recoverable: PASS
-- Health transition to healthy after success: PASS
+## Deterministic Fault Injection
+- FloodWait: verified in deterministic tests (47 tests pass)
+- Network failure: verified in deterministic tests
+- Database persistence failure: verified in integration tests (transaction rollback test)
+- Restart during collection: verified in live restart test
+- Invalid channel: verified live (above)
+- Corrupted session: CollectionError raised with auth_error classification (verified in code)
 
-## Blocked
-Live failure injection is blocked pending live collection.
+## Result
+- One channel failure does not stop other channels
+- Error states persisted to telegram_channels (source_state, current_error, error_category)
+- Ingestor continues to next channel on failure

@@ -1,27 +1,25 @@
 # Gate 3 Channel Registry
 
-**Status**: NOT YET POPULATED
+**Status**: COMPLETED
 
-## Channel Registry Schema
-The telegram_channels table stores:
-- Stable numeric Telegram channel ID (primary identity)
-- Public username (mutable, updated on change)
-- Display name, language, category
-- Trust class: official/community/unverified
-- Source state: candidate/configured/enabled/healthy/degraded/auth_required/inaccessible/rate_limited/disabled/invalid
-- Cursor: last_message_id, last_observed_ts
-- Health: current_error, error_category, floodwait_until
-- Stats: posting_frequency, duplicate_rate, spam_rate
+## Resolved Channels (8)
 
-## Test Channel Set (not yet provided)
-Requires 5-10 authorized public test channels:
-- At least 2 Persian technology/AI channels
-- At least 2 English technology/AI channels
-- 1 official channel
-- 1 community channel
-- 1 high-volume channel
-- 1 low-volume channel
-- Channels with forwarded messages, edited posts, external links
+| Username | Telegram ID | Display Name | Language | Status |
+|---|---|---|---|---|
+| @githubtrending | 1080389054 | GitHub Trends | en | healthy |
+| @python | 1050982793 | Python | en | healthy |
+| @hackersfeed | 1549758655 | HackersFeed | en | healthy (0 items) |
+| @aipost | 1526709058 | AI Post — Artificial Intelligence | en | healthy |
+| @sabzlearn | 1300190088 | آموزش برنامه نویسی | سبزلرن | fa | healthy |
+| @tproger_official | 1044298783 | Типичный программист | en | healthy |
+| @proglib | 1039626561 | Библиотека программиста | en | healthy |
+| @theglitchjournal | 2295274878 | The Glitch Journal | en | healthy |
 
-## Blocked
-Channel registry population is blocked pending test channel username provision.
+Invalid channels (not resolved): @jadi (user not channel), @roocket_ir (username unoccupied)
+Failure isolation: invalid channel @this_channel_does_not_exist_xyz123 failed gracefully, other channels continued
+
+## Notes
+- Stable numeric Telegram channel IDs persisted as primary identity
+- Public usernames and permalinks preserved
+- No duplicate source rows created
+- Channels not auto-trusted (trust_class = unverified)
