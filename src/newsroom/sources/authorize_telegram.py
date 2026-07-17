@@ -157,15 +157,23 @@ async def _async_main() -> int:
             print("Sending login code to your Telegram app...")
             await client.send_code_request(settings.telegram_phone)
 
-            # Request login code interactively — never echoed, never logged
-            code = getpass.getpass("Enter the login code: ")
+            # Request login code interactively — never logged, never persisted
+            # Use input() for Docker TTY compatibility (getpass may not work in all Docker TTYs)
+            # The code is ephemeral and only used once — not a password
+            sys.stdout.flush()
+            code = input("Enter the login code: ").strip()
 
             try:
                 await client.sign_in(settings.telegram_phone, code)
             except SessionPasswordNeededError:
-                # 2FA required — request password interactively, never logged
+                # 2FA required — use getpass for the password (never echoed)
                 print("Two-factor authentication is enabled.")
-                password = getpass.getpass("Enter your 2FA password: ")
+                sys.stdout.flush()
+                try:
+                    password = getpass.getpass("Enter your 2FA password: ")
+                except (EOFError, OSError):
+                    # Fallback if getpass doesn't work in this environment
+                    password = input("Enter your 2FA password: ").strip()
                 await client.sign_in(password=password)
 
         # Verify identity
