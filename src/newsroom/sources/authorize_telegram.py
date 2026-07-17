@@ -14,6 +14,7 @@ Security:
 
 from __future__ import annotations
 
+import asyncio
 import getpass
 import json
 import os
@@ -78,7 +79,10 @@ def _check_session_excluded() -> bool:
 
 def main() -> int:
     setup_logging()
+    return asyncio.run(_async_main())
 
+
+async def _async_main() -> int:
     # For authorization, we need credentials but NOT necessarily the enabled flag
     # (authorization is a pre-enable step). We temporarily override the enabled
     # check so the operator can authorize before enabling.
@@ -144,31 +148,31 @@ def main() -> int:
     )
 
     try:
-        client.connect()
+        await client.connect()
 
-        if client.is_user_authorized():
+        if await client.is_user_authorized():
             print("Session already authorized — verifying identity...")
         else:
             # Send code request — phone is read from env, never echoed
             print("Sending login code to your Telegram app...")
-            client.send_code_request(settings.telegram_phone)
+            await client.send_code_request(settings.telegram_phone)
 
             # Request login code interactively — never echoed, never logged
             code = getpass.getpass("Enter the login code: ")
 
             try:
-                client.sign_in(settings.telegram_phone, code)
+                await client.sign_in(settings.telegram_phone, code)
             except SessionPasswordNeededError:
                 # 2FA required — request password interactively, never logged
                 print("Two-factor authentication is enabled.")
                 password = getpass.getpass("Enter your 2FA password: ")
-                client.sign_in(password=password)
+                await client.sign_in(password=password)
 
         # Verify identity
-        me = client.get_me()
+        me = await client.get_me()
         self_id = int(getattr(me, "id", 0))
-        self_username = getattr(me, "username", "")
-        first_name = getattr(me, "first_name", "")
+        self_username = getattr(me, "username", "") or ""
+        first_name = getattr(me, "first_name", "") or ""
 
         result["success"] = True
         result["self_id"] = self_id
@@ -197,7 +201,7 @@ def main() -> int:
         _release_lock()
         return 1
     finally:
-        client.disconnect()
+        await client.disconnect()
         _write_result(result)
         _release_lock()
 
