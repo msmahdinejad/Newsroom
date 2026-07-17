@@ -1,0 +1,31 @@
+{
+  "type": "telegram",
+  "source_id": 1,
+  "source_name": "telegram_123456",
+  "source_url": "https://t.me/testchannel",
+  "telegram_channel_id": 123456,
+  "message_id": 100,
+  "text": "New AI model released today with improved reasoning capabilities",
+  "caption": "",
+  "date": "2026-07-17T10:00:00+00:00",
+  "edit_date": null,
+  "link": "https://t.me/testchannel/100",
+  "outbound_links": ["https://example.com/ai-model"],
+  "forward_from_channel_id": null,
+  "forward_from_channel_name": null,
+  "forward_from_message_id": null,
+  "forward_from_date": null,
+  "forward_timestamp": null,
+  "reply_to_message_id": null,
+  "media_type": null,
+  "is_edited": false,
+  "is_deleted": false,
+  "content_hash": "abc123",
+  "raw_metadata": {
+    "has_media": false,
+    "media_type": null,
+    "entity_count": 1,
+    "has_forward": false,
+    "has_reply": false
+  }
+}
