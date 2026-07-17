@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, datetime
+from typing import Any
 
 from newsroom.logging import get_logger, setup_logging
 from newsroom.service_status import telegram_ingestor_status
@@ -100,7 +101,7 @@ def _deep_health() -> dict:
 
 async def _collect_all_channels(collector: TelegramMTProtoCollector) -> dict:
     """Collect from all enabled telegram channels. Failure isolation per channel."""
-    results = {"collected": 0, "updated": 0, "skipped": 0, "failed": [], "channels": []}
+    results: dict[str, Any] = {"collected": 0, "updated": 0, "skipped": 0, "failed": [], "channels": []}
 
     with get_db() as db:
         enabled_sources = (
@@ -112,15 +113,15 @@ async def _collect_all_channels(collector: TelegramMTProtoCollector) -> dict:
         for source in enabled_sources:
             try:
                 items = await collector.collect(source)
-                stats = collector.persist_items(db, source, items)
+                stats: dict[str, int] = collector.persist_items(db, source, items)
 
                 # Gap detection
                 msg_ids = [it.get("message_id", 0) for it in items if it.get("message_id")]
                 gaps = collector.detect_gaps(db, source.id, msg_ids)
 
-                results["collected"] += stats["new"]
-                results["updated"] += stats["updated"]
-                results["skipped"] += stats["skipped"]
+                results["collected"] += int(stats["new"])
+                results["updated"] += int(stats["updated"])
+                results["skipped"] += int(stats["skipped"])
                 results["channels"].append({
                     "source": source.name,
                     "new": stats["new"],

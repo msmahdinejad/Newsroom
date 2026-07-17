@@ -253,7 +253,7 @@ def _extract_forward_metadata(fwd_from: Any) -> dict[str, Any]:
                 result["from_channel_name"] = channel_name
 
     if from_name:
-        result["from_channel_name"] = from_name
+        result["from_channel_name"] = str(from_name)
 
     if channel_post is not None:
         result["from_message_id"] = int(channel_post)
@@ -284,5 +284,5 @@ def _extract_peer_name(peer: Any) -> str | None:
     # Only expose channel usernames, never private user names
     username = getattr(peer, "username", None)
     if username:
-        return username
+        return str(username)
     return None
