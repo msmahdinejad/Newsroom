@@ -32,6 +32,10 @@ def db(engine):
     factory = sessionmaker(bind=engine)
     session = factory()
     # Clean telegram-specific tables before each test
+    session.execute(text("DELETE FROM story_items"))
+    session.execute(text("DELETE FROM evidence"))
+    session.execute(text("DELETE FROM stories"))
+    session.execute(text("DELETE FROM normalized_items WHERE raw_item_id IN (SELECT id FROM raw_items WHERE telegram_channel_id IS NOT NULL)"))
     session.execute(text("DELETE FROM telegram_message_gaps"))
     session.execute(text("DELETE FROM telegram_channels"))
     session.execute(text("DELETE FROM collection_cursors WHERE cursor_key LIKE 'tg_%'"))
