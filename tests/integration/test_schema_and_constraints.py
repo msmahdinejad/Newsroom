@@ -26,6 +26,14 @@ EXPECTED_TABLES = {
     "deliveries",
     "job_runs",
     "processing_errors",
+    "telegram_updates",
+    "delivery_chunks",
+    "report_cursors",
+    "command_requests",
+    "telegram_channels",
+    "telegram_message_gaps",
+    "editorial_attempts",
+    "editorial_health",
     "alembic_version",
 }
 

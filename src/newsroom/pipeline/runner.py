@@ -20,7 +20,7 @@ from newsroom.logging import get_logger, setup_logging
 from newsroom.pipeline.collect import collect_sources
 from newsroom.pipeline.lock import PipelineBusyError, PipelineLock
 from newsroom.storage.database import engine
-from newsroom.storage.models import JobRun, NormalizedItem, RawItem, Story
+from newsroom.storage.models import JobRun, NormalizedItem, RawItem, Report, Story
 
 logger = get_logger(__name__)
 
@@ -153,18 +153,38 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
         result["status"] = "ok_empty"
         return
 
-    from newsroom.editorial.persian import PersianEditorial
+    # Gate 4: editorial layer (AI when configured, deterministic fallback)
+    from newsroom.editorial.orchestrator import generate_editorial
 
-    editorial = PersianEditorial()
-    report_id = editorial.generate_report(
-        session, story_ids, report_mode=result["report_mode"]
+    report_mode = result["report_mode"]
+    content, editorial_attempt = generate_editorial(session, story_ids, report_mode)
+
+    report = Report(
+        content_fa=content,
+        story_ids=story_ids,
+        report_mode=report_mode,
+        generation_method="ai" if editorial_attempt.provider != "deterministic" else "deterministic",
     )
-    session.commit()
-    result["report_id"] = report_id
-    stage("report", "ok", f"report {report_id}")
+    session.add(report)
+    session.flush()
+    result["report_id"] = report.id
+
+    # Persist editorial attempt for audit
+    from newsroom.editorial.persistence import compute_cache_key, persist_attempt
+
+    cache_key = compute_cache_key(
+        report_mode,
+        editorial_attempt.evidence_set_hash,
+        editorial_attempt.prompt_version,
+        editorial_attempt.provider,
+        editorial_attempt.model,
+    )
+    persist_attempt(session, editorial_attempt, report.id, cache_key)
+
+    stage("report", "ok", f"report {report.id} ({editorial_attempt.provider}:{editorial_attempt.status})")
 
     stage("deliver", "starting")
-    delivery_id = await _deliver(session, report_id)
+    delivery_id = await _deliver(session, report.id)
     if delivery_id:
         result["delivery_id"] = delivery_id
         stage("deliver", "ok", f"delivery {delivery_id}")

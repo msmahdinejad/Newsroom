@@ -68,11 +68,36 @@ class Settings(BaseSettings):
     # Pipeline lock timeout (seconds) — advisory lock is session-held; timeout is soft doc
     pipeline_lock_timeout: int = 300
 
+    # Gate 4: AI editorial layer
+    editorial_enabled: bool = False
+    editorial_provider: str = "deterministic"  # deterministic | openai_compatible
+    editorial_model: str = ""
+    editorial_api_base: str = "https://api.openai.com/v1"
+    editorial_api_key: str = ""  # env: EDITORIAL_API_KEY — never logged
+    editorial_timeout_seconds: int = 60
+    editorial_max_retries: int = 2
+    editorial_max_input_tokens: int = 12000
+    editorial_max_output_tokens: int = 4000
+    editorial_temperature: float = 0.3
+    editorial_fallback_enabled: bool = True
+    editorial_max_stories_per_call: int = 15
+    editorial_max_evidence_per_story: int = 10
+    editorial_max_excerpt_length: int = 300
+    editorial_concurrency_limit: int = 1
+    editorial_scheduled_run_budget: int = 1
+    editorial_manual_run_budget: int = 3
+
     # Retention
     raw_retention_days: int = 30
     normalized_retention_days: int = 90
 
-    @field_validator("telegram_bot_enabled", "telegram_ingestor_enabled", mode="before")
+    @field_validator(
+        "telegram_bot_enabled",
+        "telegram_ingestor_enabled",
+        "editorial_enabled",
+        "editorial_fallback_enabled",
+        mode="before",
+    )
     @classmethod
     def parse_bool(cls, v: object) -> bool:
         return _env_bool(v)
@@ -103,6 +128,15 @@ class Settings(BaseSettings):
             and self.telegram_api_id
             and self.telegram_api_hash
             and self.telegram_phone
+        )
+
+    def editorial_ready(self) -> bool:
+        """True only when editorial is enabled AND a non-deterministic provider has credentials."""
+        return bool(
+            self.editorial_enabled
+            and self.editorial_provider != "deterministic"
+            and self.editorial_api_key
+            and self.editorial_model
         )
 
 

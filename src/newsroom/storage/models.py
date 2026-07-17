@@ -401,3 +401,71 @@ class TelegramMessageGap(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     unresolved_count: Mapped[int] = mapped_column(Integer, default=0)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+# ── Gate 4: AI editorial state ────────────────────────────────────
+
+class EditorialAttempt(Base):
+    """Audit record for every editorial generation attempt.
+
+    No API keys stored. Enough metadata for replay and audit without
+    duplicating the full evidence set (referenced by evidence_set_hash).
+    """
+    __tablename__ = "editorial_attempts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    report_id: Mapped[int | None] = mapped_column(ForeignKey("reports.id"), nullable=True)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    prompt_version: Mapped[str] = mapped_column(String(30), nullable=False, default="")
+    evidence_set_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    schema_version: Mapped[str] = mapped_column(String(30), nullable=False, default="")
+    report_mode: Mapped[str] = mapped_column(String(30), nullable=False, default="scheduled")
+
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="ok")
+    # ok/fallback/validation_failed/grounding_failed/provider_error
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    fallback_used: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    validation_result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    grounding_result: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    usage: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # token counts
+    output_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # structured output
+
+    error_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)  # redacted
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    # Idempotency: unique identity for cache reuse
+    cache_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True, index=True)
+
+
+class EditorialHealth(Base):
+    """Singleton editorial health state — updated after each attempt."""
+    __tablename__ = "editorial_health"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    provider: Mapped[str] = mapped_column(String(50), default="deterministic")
+    model: Mapped[str] = mapped_column(String(100), default="")
+
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+
+    validation_failure_count: Mapped[int] = mapped_column(Integer, default=0)
+    grounding_failure_count: Mapped[int] = mapped_column(Integer, default=0)
+    fallback_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    rate_limited: Mapped[bool] = mapped_column(Boolean, default=False)
+    rate_limit_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    in_flight: Mapped[int] = mapped_column(Integer, default=0)
+
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

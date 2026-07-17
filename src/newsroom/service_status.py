@@ -172,6 +172,29 @@ def report_worker_status() -> dict[str, Any]:
     return {"status": "healthy", "role": "report_worker"}
 
 
+def editorial_status() -> dict[str, Any]:
+    """Editorial health — no secrets exposed."""
+    if not db_health():
+        return {"status": "disabled", "feature": "editorial", "healthy": True}
+
+    try:
+        from sqlalchemy.orm import sessionmaker
+
+        from newsroom.editorial.persistence import get_editorial_health
+        from newsroom.storage.database import engine
+
+        factory = sessionmaker(bind=engine)
+        with factory() as db:
+            return get_editorial_health(db)
+    except Exception as e:
+        return {
+            "status": "disabled" if not settings.editorial_enabled else "degraded",
+            "feature": "editorial",
+            "healthy": True,  # editorial failure never marks stack unhealthy
+            "error": str(e)[:100],
+        }
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI: python -m newsroom.service_status <bot|ingestor|collector|scheduler|db>"""
     argv = argv or sys.argv[1:]
@@ -189,6 +212,9 @@ def main(argv: list[str] | None = None) -> int:
     elif kind == "report_worker":
         payload = report_worker_status()
         ok = payload["status"] == "healthy"
+    elif kind == "editorial":
+        payload = editorial_status()
+        ok = payload.get("healthy", True)
     elif kind == "scheduler":
         from newsroom.scheduler import health_payload
 
