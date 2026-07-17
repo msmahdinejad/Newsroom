@@ -1,91 +1,69 @@
 # Gate 4 Test Results
 
-## Deterministic tests: 50 passed
+## Qwen Code verification (2026-07-17)
+
+### Full test suite: 400 passed (45.72s)
+
+| Category | Count | File |
+|----------|-------|------|
+| Editorial deterministic tests | 50 | `tests/test_editorial.py` |
+| Editorial adapter tests | 53 | `tests/test_editorial_adapter.py` |
+| PostgreSQL editorial integration tests | 17 | `tests/integration/test_gate4_editorial.py` |
+| Other integration tests | 43 | `tests/integration/test_*.py` |
+| Unit tests (Gates 0-3) | 237 | `tests/test_*.py` |
+| **Total** | **400** | |
+
+### Editorial deterministic tests: 50 passed
 
 File: `tests/test_editorial.py`
 
-Coverage:
-1. Editorial disabled → deterministic
-2. Missing credentials → deterministic
-3. Deterministic provider generates valid output
-4. Deterministic provider no network
-5. Valid structured response passes validation
-6. Malformed JSON rejected
-7. Malformed JSON in markdown repaired
-8. Missing stories field rejected
-9. Missing metadata field rejected
-10. Unknown story ID rejected
-11. Duplicate story entries rejected
-12. Invented evidence ref in claim rejected
-13. Invented links removed by grounding
-14. Unsupported number in claim removed
-15. Supported number in claim kept
-16. Unsupported date in claim removed
-17. Unsupported version in claim removed
-18. Conflicting evidence preserved
-19. Community rumor labeled
-20. Official source labeled
-21. Prompt injection inert
-22. Fake system message treated as data
-23. Source content with JSON delimiters
-24. Excessive input stories capped
-25. Excessive output rejected
-26. Provider timeout raises error
-27. Retry limit respected
-28. Rate limit error category
-29. Provider outage triggers fallback
-30. Safety refusal triggers fallback
-31. Malformed structured response triggers fallback
-32. Cache key deterministic
-33. Cache key changes with mode
-34. Cache key changes with evidence hash
-35. Cache key changes with prompt version
-36. Cache key changes with model
-37. Invalid confidence clamped
-38. Invalid classification rejected
-39. Invalid priority repaired
-40. Persian Unicode in output
-41. RTL content preserved
-42. Telegram-safe rendering
-43. Evidence hash deterministic
-44. Evidence hash changes with content
-45. Empty evidence set
-46. No chain-of-thought in schema
-47. Prompt version in output
-48. Schema version in output
-49. Fallback not labeled as AI
-50. Source trust not affected by content
+Coverage: editorial disabled, missing config, deterministic fallback, valid structured
+response, malformed JSON, missing fields, unknown story/evidence IDs, invented URLs,
+unsupported claims (numbers, dates, versions), conflicting evidence, community rumor,
+official source, prompt injection, fake system messages, JSON delimiters, excessive
+input/output, timeout, retry limit, rate limit, provider outage, safety refusal,
+malformed structured response, cache key determinism, invalidation, Persian Unicode,
+RTL, Telegram-safe rendering, no CoT storage, schema versioning.
 
-## PostgreSQL integration tests: 17 passed
+### Editorial adapter tests: 53 passed (NEW)
+
+File: `tests/test_editorial_adapter.py`
+
+Coverage: URL construction safety (6 tests), effective token limits (10 tests),
+request contract — endpoint, no-tools, response format, auth header, effective tokens (5 tests),
+retry policy — 5xx, 429, 401, 400, max retries (5 tests), response parsing — valid JSON,
+markdown fences, prose before JSON, truncated, empty, no choices, content filter, length,
+unknown fields, usage parsing, no usage, metadata enforcement (12 tests), config safety (6 tests),
+structured output edge cases — multiple JSON, schema failure, malformed, no CoT (4 tests),
+Persian digit grounding (3 tests), cache key with report_mode and editorial settings (4 tests).
+
+### PostgreSQL integration tests: 17 passed
 
 File: `tests/integration/test_gate4_editorial.py`
 
-Coverage:
-1. Editorial attempt persisted
-2. Prompt version persisted
-3. Evidence-set hash persisted
-4. Structured output persisted
-5. Claim-to-evidence refs persisted
-6. Cache key unique constraint
-7. Cache reuse finds existing
-8. Cache reuse no match
-9. Validation failure status persisted
-10. Fallback persisted
-11. Report linkage
-12. No API key in attempt table
-13. No API key in output JSON
-14. Transaction rollback
-15. Editorial health singleton
-16. Editorial health updated
-17. Report mode persisted
+Coverage: attempt persistence, prompt version, evidence-set hash, structured output,
+claim-to-evidence refs, cache key unique, cache reuse, validation failure, fallback,
+report linkage, no API key in attempt, no API key in output, transaction rollback,
+health singleton, health updated, report mode persisted.
 
-## Full suite: 347 passed
+### Lint and type checking
 
-- 280 existing tests (Gates 0-3)
-- 50 editorial deterministic tests
-- 17 editorial integration tests
+- **Ruff:** All checks passed (src/, tests/, scripts/)
+- **MyPy:** Success: no issues found in 59 source files
+- **Compose config:** Valid (all 17 EDITORIAL_* vars forwarded)
 
-## Lint and type checking
+### Live provider verification
 
-- Ruff: All checks passed
-- MyPy: Success: no issues found in 59 source files
+- **Minimal call:** SUCCESS — gemini-3.1-flash-lite, 2,296 tokens
+- **11-scenario evaluation:** 7 live calls + 4 grounding tests — all passed
+- **Total live tokens:** 19,061 (13,090 prompt + 5,971 completion)
+- **Total live calls:** 8
+
+### Known limitations
+
+1. `/report new` mode does not filter out already-delivered stories — the scheduled cursor
+   is written but never read for story selection. All modes select the same 30 most-recent
+   stories. This is a pre-existing design limitation, not a Gate 4 regression.
+2. Command-level idempotency (`CommandRequest.request_key`) is permanent (non-expiring).
+   A repeated `/report` from the same user/chat returns the previously generated report
+   indefinitely rather than generating a fresh one.

@@ -1,5 +1,9 @@
 # Gate 4 Cost and Resource Controls
 
+## Status: VERIFIED
+
+**Date:** 2026-07-17
+
 ## Configuration variables
 
 | Variable | Default | Description |
@@ -14,6 +18,37 @@
 | EDITORIAL_CONCURRENCY_LIMIT | 1 | Concurrency limit |
 | EDITORIAL_SCHEDULED_RUN_BUDGET | 1 | Model calls per scheduled run |
 | EDITORIAL_MANUAL_RUN_BUDGET | 3 | Model calls per manual run |
+
+## Effective limit enforcement (NEW)
+
+The OpenAI-compatible adapter now enforces safe effective limits:
+
+```python
+effective_limit = min(configured_limit, provider_capability, application_safety_cap)
+```
+
+| Parameter | Value |
+|-----------|-------|
+| PROVIDER_MAX_OUTPUT_TOKENS_CAP | 8,192 |
+| APP_SAFETY_OUTPUT_CAP | 8,192 |
+| APP_SAFETY_INPUT_CAP | 128,000 |
+| PROVIDER_MIN_TOKENS | 1 |
+
+### How it works
+
+- The configured value is retained for audit (`provider.configured_max_output_tokens`)
+- The effective value is calculated separately (`provider.effective_max_output_tokens`)
+- The API payload uses the effective value, never the raw configured value
+- Non-positive values are clamped to PROVIDER_MIN_TOKENS (1)
+- This prevents sending impossible values (e.g., 500,000 output tokens) to the provider
+
+### Live verification
+
+The configured `EDITORIAL_MAX_OUTPUT_TOKENS=500000` was capped to 2,000 (for minimal call)
+and the provider accepted it without error. The `configured_max_output_tokens` property
+still returns 500,000 for audit purposes.
+
+Tests: `TestEffectiveTokenLimits` (10 tests in `tests/test_editorial_adapter.py`)
 
 ## Bounding strategy
 
@@ -36,3 +71,17 @@
 - Scheduled runs: 1 model call per run
 - Manual runs: 3 model calls per run
 - The entire database is never sent to one model call
+
+## Live token usage
+
+| Call | Prompt tokens | Completion tokens | Total |
+|------|-------------|-------------------|-------|
+| Minimal call | 1,579 | 717 | 2,296 |
+| English AI story | 1,528 | 774 | 2,302 |
+| Persian tech story | 1,544 | 699 | 2,243 |
+| GitHub release | 1,576 | 766 | 2,342 |
+| Telegram sourced | 1,540 | 649 | 2,189 |
+| Multi-source cluster | 1,964 | 828 | 2,792 |
+| Conflicting evidence | 1,785 | 810 | 2,595 |
+| Prompt injection | 1,574 | 728 | 2,302 |
+| **Total** | **13,090** | **5,971** | **19,061** |
