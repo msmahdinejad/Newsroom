@@ -60,15 +60,20 @@ def _write_result(result: dict) -> None:
 
 
 def _check_session_excluded() -> bool:
-    """Verify session path is git-ignored and docker-ignored."""
-    # Check .gitignore
-    gitignore = Path(".gitignore").read_text(encoding="utf-8")
-    if "data/sessions/" not in gitignore and "*.session" not in gitignore:
-        return False
+    """Verify session path is git-ignored and docker-ignored.
 
-    # Check .dockerignore
-    dockerignore = Path(".dockerignore").read_text(encoding="utf-8")
-    return not ("data/sessions/" not in dockerignore and "*.session" not in dockerignore)
+    Inside Docker, .gitignore/.dockerignore may not be present — skip check.
+    """
+    try:
+        gitignore = Path(".gitignore").read_text(encoding="utf-8")
+        if "data/sessions/" not in gitignore and "*.session" not in gitignore:
+            return False
+
+        dockerignore = Path(".dockerignore").read_text(encoding="utf-8")
+        return not ("data/sessions/" not in dockerignore and "*.session" not in dockerignore)
+    except FileNotFoundError:
+        # Inside Docker, these files may be excluded from the image — acceptable
+        return True
 
 
 def main() -> int:
