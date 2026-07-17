@@ -95,5 +95,6 @@ def test_alembic_at_gate2_revision():
     with eng.connect() as conn:
         row = conn.execute(text("SELECT version_num FROM alembic_version")).first()
     assert row is not None
-    assert row[0] == "0003_gate2_telegram"
+    # Gate 3 advances to 0004_gate3_mtproto — Gate 2 tables still exist
+    assert row[0] in ("0003_gate2_telegram", "0004_gate3_mtproto")
     eng.dispose()
