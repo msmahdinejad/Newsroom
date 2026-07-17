@@ -198,6 +198,34 @@ services:
         max-size: "5m"
         max-file: "3"
 
+  # One-time authorization — run with: docker compose run --rm telegram-authorize
+  # Interactive: requires TTY for getpass login code and optional 2FA password
+  telegram-authorize:
+    build: .
+    container_name: newsroom-telegram-authorize
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELEGRAM_PHONE: ${TELEGRAM_PHONE:-}
+      TELEGRAM_SESSION_PATH: /data/sessions/newsroom_ingestor.session
+    volumes:
+      - telegram_sessions:/data/sessions
+    command: uv run python -m newsroom.sources.authorize_telegram
+    stdin_open: true
+    tty: true
+    restart: "no"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
 volumes:
   postgres_data:
   telegram_sessions:

@@ -74,12 +74,9 @@ def _check_session_excluded() -> bool:
 def main() -> int:
     setup_logging()
 
-    # Check enabled
-    if not settings.telegram_ingestor_enabled:
-        print("ERROR: TELEGRAM_INGESTOR_ENABLED is not true")
-        print("Set TELEGRAM_INGESTOR_ENABLED=true in .env before authorizing")
-        return 1
-
+    # For authorization, we need credentials but NOT necessarily the enabled flag
+    # (authorization is a pre-enable step). We temporarily override the enabled
+    # check so the operator can authorize before enabling.
     # Check credentials present
     missing = []
     if not settings.telegram_api_id:
