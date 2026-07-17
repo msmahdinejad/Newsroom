@@ -3,11 +3,14 @@
 Configurable base URL, model, API key from environment only.
 Structured output via JSON mode or validated JSON response.
 No vendor-specific types outside this adapter.
+
+Uses synchronous httpx.Client — the EditorialProvider.generate interface is
+synchronous by design. This avoids nested asyncio.run() when called from
+within the pipeline runner's already-running event loop.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from typing import Any
@@ -24,12 +27,60 @@ from newsroom.editorial.schema import (
     EditorialResponse,
 )
 
+# ── Provider capability constants ─────────────────────────────────
+# Safety caps for the OpenAI-compatible adapter. These are upper bounds
+# that no reasonable provider configuration should exceed. The effective
+# limit sent to the API is min(configured, provider_cap, app_safety_cap).
+# Values chosen to be safe across Gemini 1.5/2.0 Flash/Pro and common
+# OpenAI-compatible endpoints. Updated when provider specs change.
+PROVIDER_MAX_OUTPUT_TOKENS_CAP = 8192
+APP_SAFETY_OUTPUT_CAP = 8192
+APP_SAFETY_INPUT_CAP = 128000
+PROVIDER_MIN_TOKENS = 1
+
+
+def _build_url(api_base: str, path: str) -> str:
+    """Construct the API URL safely.
+
+    Strips trailing slashes from the base and prepends a single slash
+    to the path to avoid duplicated segments like /v1/v1/ or //chat/.
+    """
+    base = api_base.rstrip("/")
+    suffix = path.lstrip("/")
+    return f"{base}/{suffix}"
+
+
+def compute_effective_output_limit(configured: int) -> tuple[int, int]:
+    """Calculate the safe effective output-token limit.
+
+    Returns (effective_limit, configured_limit).
+    effective = min(configured, PROVIDER_MAX_OUTPUT_TOKENS_CAP, APP_SAFETY_OUTPUT_CAP).
+    Rejects non-positive values by clamping to PROVIDER_MIN_TOKENS.
+    """
+    if configured <= 0:
+        return PROVIDER_MIN_TOKENS, configured
+    effective = min(configured, PROVIDER_MAX_OUTPUT_TOKENS_CAP, APP_SAFETY_OUTPUT_CAP)
+    return effective, configured
+
+
+def compute_effective_input_limit(configured: int) -> tuple[int, int]:
+    """Calculate the safe effective input-token limit.
+
+    Returns (effective_limit, configured_limit).
+    """
+    if configured <= 0:
+        return PROVIDER_MIN_TOKENS, configured
+    effective = min(configured, APP_SAFETY_INPUT_CAP)
+    return effective, configured
+
 
 class OpenAICompatibleEditorialProvider(EditorialProvider):
     """OpenAI-compatible chat completions adapter.
 
     Works with any endpoint that accepts the OpenAI /chat/completions schema.
     API key is read only from the environment — never logged.
+    Uses synchronous httpx.Client to avoid nested asyncio.run() issues
+    when called from within the pipeline runner's event loop.
     """
 
     def __init__(
@@ -42,13 +93,14 @@ class OpenAICompatibleEditorialProvider(EditorialProvider):
         temperature: float = 0.3,
         max_output_tokens: int = 4000,
     ) -> None:
-        self._api_base = api_base.rstrip("/")
+        self._api_base = api_base
         self._api_key = api_key
         self._model = model
         self._timeout = timeout_seconds
         self._max_retries = max_retries
         self._temperature = temperature
-        self._max_output_tokens = max_output_tokens
+        self._configured_output_tokens = max_output_tokens
+        self._effective_output_tokens, _ = compute_effective_output_limit(max_output_tokens)
 
     @property
     def name(self) -> str:
@@ -58,12 +110,16 @@ class OpenAICompatibleEditorialProvider(EditorialProvider):
     def model_name(self) -> str:
         return self._model
 
-    def generate(self, request: EditorialRequest) -> EditorialResponse:
-        """Synchronous wrapper — runs async generation in event loop."""
-        return asyncio.run(self._generate_async(request))
+    @property
+    def effective_max_output_tokens(self) -> int:
+        return self._effective_output_tokens
 
-    async def _generate_async(self, request: EditorialRequest) -> EditorialResponse:
-        """Generate with bounded retries on transient errors."""
+    @property
+    def configured_max_output_tokens(self) -> int:
+        return self._configured_output_tokens
+
+    def generate(self, request: EditorialRequest) -> EditorialResponse:
+        """Synchronous generation with bounded retries on transient errors."""
         messages = build_prompt(request.evidence)
         last_error: EditorialError | None = None
         retry_count = 0
@@ -71,7 +127,7 @@ class OpenAICompatibleEditorialProvider(EditorialProvider):
         for attempt in range(self._max_retries + 1):
             start = time.monotonic()
             try:
-                result = await self._call_api(messages, request)
+                result = self._call_api(messages, request)
                 result.retry_count = retry_count
                 result.latency_ms = time_ms(start)
                 return result
@@ -81,32 +137,35 @@ class OpenAICompatibleEditorialProvider(EditorialProvider):
                     raise
                 retry_count += 1
                 delay = min(2.0 * (2**attempt), 30.0)
-                await asyncio.sleep(delay)
+                time.sleep(delay)
 
         raise last_error or EditorialError(
             EditorialErrorCategory.UNKNOWN, "max retries exhausted", retryable=False
         )
 
-    async def _call_api(
+    def _call_api(
         self,
         messages: list[dict[str, str]],
         request: EditorialRequest,
     ) -> EditorialResponse:
-        """Call the OpenAI-compatible chat completions endpoint."""
+        """Call the OpenAI-compatible chat completions endpoint synchronously."""
+        effective_output = compute_effective_output_limit(request.max_output_tokens)[0]
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": messages,
             "temperature": request.temperature,
-            "max_tokens": request.max_output_tokens,
+            "max_tokens": effective_output,
             "response_format": {"type": "json_object"},
         }
 
+        url = _build_url(self._api_base, "chat/completions")
+
         try:
-            async with httpx.AsyncClient(
+            with httpx.Client(
                 timeout=httpx.Timeout(self._timeout, connect=15.0),
             ) as client:
-                resp = await client.post(
-                    f"{self._api_base}/chat/completions",
+                resp = client.post(
+                    url,
                     json=payload,
                     headers={
                         "Authorization": f"Bearer {self._api_key}",
@@ -149,6 +208,12 @@ class OpenAICompatibleEditorialProvider(EditorialProvider):
                 EditorialErrorCategory.PROVIDER_UNAVAILABLE,
                 f"server error {resp.status_code}",
                 retryable=True,
+            )
+        if resp.status_code == 400:
+            raise EditorialError(
+                EditorialErrorCategory.CONTEXT_LENGTH,
+                f"bad request: {resp.text[:200]}",
+                retryable=False,
             )
 
         if resp.status_code != 200:

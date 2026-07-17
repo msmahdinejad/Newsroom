@@ -68,7 +68,7 @@ def persist_attempt(
         prompt_version=attempt.prompt_version,
         evidence_set_hash=attempt.evidence_set_hash,
         schema_version=attempt.schema_version,
-        report_mode="",  # set by caller
+        report_mode=attempt.report_mode,
         started_at=_parse_iso(attempt.started_at) if attempt.started_at else datetime.now(UTC),
         completed_at=_parse_iso(attempt.completed_at) if attempt.completed_at else None,
         latency_ms=attempt.latency_ms,

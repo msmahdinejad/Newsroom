@@ -49,6 +49,7 @@ class EditorialAttempt:
     prompt_version: str = ""
     evidence_set_hash: str = ""
     schema_version: str = ""
+    report_mode: str = "scheduled"
     started_at: str = ""
     completed_at: str = ""
     latency_ms: int = 0
@@ -99,6 +100,7 @@ def generate_editorial(
     attempt.evidence_set_hash = evidence.evidence_hash()
     attempt.prompt_version = evidence.prompt_version
     attempt.schema_version = evidence.schema_version
+    attempt.report_mode = report_mode
 
     if not evidence.stories:
         # Empty report
@@ -110,23 +112,21 @@ def generate_editorial(
         empty_content = _empty_report(report_mode)
         return empty_content, attempt
 
-    # 2. Check cache
+    # 2. Select provider (needed for cache key identity)
+    provider = select_provider()
+    attempt.provider = provider.name
+    attempt.model = provider.model_name
+
+    # 3. Check cache
     if cache_check:
-        cached = _check_cache(db, evidence, report_mode)
+        cached = _check_cache(db, evidence, report_mode, provider.name, provider.model_name)
         if cached:
             attempt.status = "ok"
             attempt.fallback_used = False
             attempt.completed_at = datetime.now(UTC).isoformat()
             attempt.latency_ms = int((time.monotonic() - start) * 1000)
-            attempt.provider = cached.provider
-            attempt.model = cached.model
             content = _render_persian_report(cached.output, report_mode)
             return content, attempt
-
-    # 3. Select and call provider
-    provider = select_provider()
-    attempt.provider = provider.name
-    attempt.model = provider.model_name
 
     request = EditorialRequest(
         evidence=evidence,
@@ -240,11 +240,36 @@ def _check_cache(
     db: Session,
     evidence: EditorialEvidenceSet,
     report_mode: str,
+    provider: str,
+    model: str,
 ) -> EditorialResponse | None:
-    """Check for cached editorial result. Returns None if no cache hit."""
-    # ponytail: cache lookup is a DB query on editorial_attempts table
-    # Implemented in persistence layer — for now return None
-    # The cache will be populated by the persistence layer after successful generation
+    """Check for cached editorial result by cache key. Returns None if no hit."""
+    from newsroom.editorial.persistence import compute_cache_key, find_cached_attempt
+
+    cache_key = compute_cache_key(
+        report_mode,
+        evidence.evidence_hash(),
+        evidence.prompt_version,
+        provider,
+        model,
+    )
+    record = find_cached_attempt(db, cache_key)
+    if record and record.output_json:
+        try:
+            output = EditorialOutput.model_validate(record.output_json)
+            return EditorialResponse(
+                output=output,
+                model=record.model,
+                provider=record.provider,
+                latency_ms=0,
+                finish_status="stop",
+                usage=record.usage if isinstance(record.usage, dict) else None,
+                retry_count=0,
+                fallback_used=False,
+            )
+        except Exception:
+            logger.debug("cached editorial output failed to validate — skipping cache")
+            return None
     return None
 
 
