@@ -170,6 +170,7 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
     result["report_id"] = report.id
 
     # Persist editorial attempt for audit
+    from newsroom.config import settings as _settings
     from newsroom.editorial.persistence import compute_cache_key, persist_attempt
 
     cache_key = compute_cache_key(
@@ -178,6 +179,9 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
         editorial_attempt.prompt_version,
         editorial_attempt.provider,
         editorial_attempt.model,
+        temperature=_settings.editorial_temperature,
+        max_input_tokens=_settings.editorial_max_input_tokens,
+        max_output_tokens=_settings.editorial_max_output_tokens,
     )
     persist_attempt(session, editorial_attempt, report.id, cache_key)
 

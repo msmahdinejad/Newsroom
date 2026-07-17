@@ -926,3 +926,21 @@ class TestCacheKeyWithReportMode:
         assert compute_cache_key("scheduled", "hash1", "v2", "openai_compatible", "model1") != base
         assert compute_cache_key("scheduled", "hash1", "v1", "deterministic", "model1") != base
         assert compute_cache_key("scheduled", "hash1", "v1", "openai_compatible", "model2") != base
+
+    def test_cache_key_includes_editorial_settings(self):
+        """Cache key invalidates when temperature or token budgets change."""
+        from newsroom.editorial.persistence import compute_cache_key
+
+        base = compute_cache_key("scheduled", "hash1", "v1", "openai_compatible", "model1")
+        # Change temperature
+        assert compute_cache_key(
+            "scheduled", "hash1", "v1", "openai_compatible", "model1", temperature=0.7
+        ) != base
+        # Change max_input_tokens
+        assert compute_cache_key(
+            "scheduled", "hash1", "v1", "openai_compatible", "model1", max_input_tokens=8000
+        ) != base
+        # Change max_output_tokens
+        assert compute_cache_key(
+            "scheduled", "hash1", "v1", "openai_compatible", "model1", max_output_tokens=2000
+        ) != base

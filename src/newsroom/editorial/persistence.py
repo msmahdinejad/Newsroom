@@ -32,12 +32,19 @@ def compute_cache_key(
     prompt_version: str,
     provider: str,
     model: str,
+    temperature: float = 0.3,
+    max_input_tokens: int = 12000,
+    max_output_tokens: int = 4000,
 ) -> str:
     """Deterministic cache key for editorial idempotency.
 
-    Same (mode, evidence, prompt, provider, model) = same key.
+    Same (mode, evidence, prompt, provider, model, generation settings) = same key.
+    Includes generation settings so temperature/token-budget changes invalidate cache.
     """
-    raw = f"{report_mode}:{evidence_hash}:{prompt_version}:{provider}:{model}"
+    raw = (
+        f"{report_mode}:{evidence_hash}:{prompt_version}:{provider}:{model}"
+        f":t{temperature}:mi{max_input_tokens}:mo{max_output_tokens}"
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:64]
 
 

@@ -252,6 +252,9 @@ def _check_cache(
         evidence.prompt_version,
         provider,
         model,
+        temperature=settings.editorial_temperature,
+        max_input_tokens=settings.editorial_max_input_tokens,
+        max_output_tokens=settings.editorial_max_output_tokens,
     )
     record = find_cached_attempt(db, cache_key)
     if record and record.output_json:
