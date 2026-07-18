@@ -47,6 +47,18 @@ class Normalizer:
             return self._normalize_github(raw_item)
         elif item_type == "telegram":
             return self._normalize_telegram(raw_item)
+        elif item_type == "youtube":
+            return self._normalize_youtube(raw_item)
+        elif item_type == "web_page":
+            return self._normalize_web_page(raw_item)
+        elif item_type == "github_discovery":
+            return self._normalize_github_discovery(raw_item)
+        elif item_type == "x_post":
+            return self._normalize_x_post(raw_item)
+        elif item_type == "reddit_post":
+            return self._normalize_reddit_post(raw_item)
+        elif item_type == "linkedin_public":
+            return self._normalize_linkedin_public(raw_item)
         else:
             raise ValueError(f"Unknown item type: {item_type}")
 
@@ -105,6 +117,119 @@ class Normalizer:
             "language": self._detect_language(text),
             "content_hash": self._compute_hash(title, text),
             "url_hash": self._compute_hash(link) if link else self._compute_hash(title),
+        }
+
+    def _normalize_youtube(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """Normalize a YouTube video metadata item.
+
+        Identity is the stable video_id and channel_id, never the title.
+        Published timestamp comes from yt-dlp's upload_date field.
+        """
+        video_id = str(raw.get("video_id") or "")
+        channel_id = str(raw.get("channel_id") or "")
+        title = self._normalize_text(raw.get("title", ""))
+        description = self._normalize_text(raw.get("description", ""))
+        canonical = raw.get("canonical_url") or f"https://www.youtube.com/watch?v={video_id}"
+
+        # Dedup identity: video_id is stable globally; channel_id scopes it.
+        return {
+            "title": title,
+            "description": description,
+            "source_url": canonical,
+            "canonical_url": self._canonicalize_url(canonical),
+            "published_at": self._parse_timestamp(raw.get("published")),
+            "language": self._detect_language(title + " " + description),
+            "content_hash": self._compute_hash(f"yt:{video_id}:{channel_id}"),
+            "url_hash": self._compute_hash(self._canonicalize_url(canonical)),
+        }
+
+    def _normalize_web_page(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """Normalize a web-page read item. Source URL is the canonical identity."""
+        title = self._normalize_text(raw.get("title", ""))
+        description = self._normalize_text(raw.get("description", ""))
+        source_url = raw.get("link") or raw.get("source_url") or ""
+
+        return {
+            "title": title or source_url,
+            "description": description,
+            "source_url": source_url,
+            "canonical_url": self._canonicalize_url(source_url),
+            "published_at": self._parse_timestamp(raw.get("published")),
+            "language": self._detect_language(title + " " + description),
+            "content_hash": self._compute_hash(source_url, title),
+            "url_hash": self._compute_hash(self._canonicalize_url(source_url)),
+        }
+
+    def _normalize_github_discovery(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """Normalize a GitHub repo-discovery item. Repo full_name is the identity."""
+        full_name = str(raw.get("repo_full_name") or "")
+        name = self._normalize_text(raw.get("name") or full_name)
+        description = self._normalize_text(raw.get("description", ""))
+        source_url = raw.get("url") or f"https://github.com/{full_name}"
+
+        return {
+            "title": name,
+            "description": description,
+            "source_url": source_url,
+            "canonical_url": self._canonicalize_url(source_url),
+            "published_at": None,  # discovery has no publication timestamp
+            "language": "en",
+            "content_hash": self._compute_hash(f"gh-disc:{full_name}"),
+            "url_hash": self._compute_hash(self._canonicalize_url(source_url)),
+        }
+
+    def _normalize_x_post(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """Normalize an X/Twitter public-post item. post_id is the identity."""
+        post_id = str(raw.get("post_id") or "")
+        text = self._normalize_text(raw.get("content", raw.get("description", "")))
+        source_url = raw.get("link") or raw.get("source_url") or ""
+        title = text[:120] if text else f"X post {post_id}"
+
+        return {
+            "title": title,
+            "description": text,
+            "source_url": source_url,
+            "canonical_url": source_url,
+            "published_at": self._parse_timestamp(raw.get("published")),
+            "language": self._detect_language(text),
+            "content_hash": self._compute_hash(f"x:{post_id}"),
+            "url_hash": self._compute_hash(source_url) if source_url else self._compute_hash(f"x:{post_id}"),
+        }
+
+    def _normalize_reddit_post(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """Normalize a Reddit public-post item. post_id is the identity."""
+        post_id = str(raw.get("post_id") or "")
+        subreddit = str(raw.get("subreddit") or "")
+        text = self._normalize_text(raw.get("content", raw.get("description", "")))
+        source_url = raw.get("link") or raw.get("source_url") or ""
+        title = text[:120] if text else f"Reddit post {post_id}"
+
+        return {
+            "title": title,
+            "description": text,
+            "source_url": source_url,
+            "canonical_url": source_url,
+            "published_at": self._parse_timestamp(raw.get("published")),
+            "language": self._detect_language(text),
+            "content_hash": self._compute_hash(f"reddit:{subreddit}:{post_id}"),
+            "url_hash": self._compute_hash(source_url) if source_url else self._compute_hash(f"reddit:{post_id}"),
+        }
+
+    def _normalize_linkedin_public(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """Normalize a LinkedIn public-page item. Source URL is the identity."""
+        title = self._normalize_text(raw.get("title", ""))
+        description = self._normalize_text(raw.get("description", ""))
+        source_url = raw.get("link") or raw.get("source_url") or ""
+
+        return {
+            "title": title or source_url,
+            "description": description,
+            "source_url": source_url,
+            "canonical_url": self._canonicalize_url(source_url),
+            "published_at": self._parse_timestamp(raw.get("published")),
+            "language": self._detect_language(title + " " + description),
+            "content_hash": self._compute_hash(source_url, title),
+            "url_hash": self._compute_hash(self._canonicalize_url(source_url)),
         }
 
     def _normalize_text(self, text: str) -> str:

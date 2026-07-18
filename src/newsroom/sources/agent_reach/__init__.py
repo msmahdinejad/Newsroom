@@ -17,6 +17,17 @@ The boundary contract:
 Agent-Reach-specific types never leak past this package into the core pipeline.
 """
 
+from newsroom.sources.agent_reach.adapters import (
+    DEFAULT_WEB_ALLOWED_DOMAINS,
+    GitHubDiscoveryCollector,
+    LinkedInPublicReadCollector,
+    RedditPublicReadCollector,
+    SSRFError,
+    WebPageReader,
+    XPublicReadCollector,
+    YouTubeCollector,
+    apply_default_production_decisions,
+)
 from newsroom.sources.agent_reach.registry import (
     AUTHENTICATED_BY_DEFAULT,
     CHANNELS,
@@ -59,12 +70,21 @@ __all__ = [
     "ChannelStatus",
     "CommandResult",
     "ControlledRunner",
+    "DEFAULT_WEB_ALLOWED_DOMAINS",
     "EXECUTABLE_ALLOWLIST",
+    "GitHubDiscoveryCollector",
+    "LinkedInPublicReadCollector",
     "MAX_ARGUMENT_LENGTH",
     "OPERATION_ALLOWLIST",
     "ProductionApproval",
+    "RedditPublicReadCollector",
     "RunnerError",
+    "SSRFError",
     "UNATTENDED_OK_BY_DEFAULT",
+    "WebPageReader",
+    "XPublicReadCollector",
+    "YouTubeCollector",
+    "apply_default_production_decisions",
     "redact_credentials",
     "run_agent_reach",
     "run_upstream",
