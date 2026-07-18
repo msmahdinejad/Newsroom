@@ -77,6 +77,24 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
     session.commit()
     stage("collect", "ok", f"{coll['new_items']} new / {coll['sources']} sources")
 
+    # Gate 5: Agent-Reach-backed external sources (YouTube, web, etc.).
+    # Skipped cleanly when Agent-Reach is disabled or no AR sources configured.
+    from newsroom.pipeline.gate5_collect import collect_agent_reach_sources
+
+    stage("collect_agent_reach", "starting")
+    ar_coll = await collect_agent_reach_sources(session)
+    session.commit()
+    if ar_coll.get("disabled"):
+        stage("collect_agent_reach", "skipped", "agent_reach_disabled")
+    elif ar_coll["sources"] == 0:
+        stage("collect_agent_reach", "skipped", "no agent_reach sources")
+    else:
+        stage(
+            "collect_agent_reach",
+            "ok",
+            f"{ar_coll['new_items']} new / {ar_coll['sources']} sources",
+        )
+
     stage("normalize", "starting")
     from newsroom.processing.normalize import Normalizer
 
