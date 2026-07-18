@@ -166,6 +166,10 @@ class Story(Base):
     cluster_keywords: Mapped[list] = mapped_column(JSONB, default=list)
     source_count: Mapped[int] = mapped_column(Integer, default=1)
 
+    # Material change tracking for /report new eligibility
+    material_version: Mapped[int] = mapped_column(Integer, default=1)
+    material_change_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     items: Mapped[list["StoryItem"]] = relationship(back_populates="story")
@@ -469,3 +473,158 @@ class EditorialHealth(Base):
     in_flight: Mapped[int] = mapped_column(Integer, default=0)
 
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+# ── Gate 4 scalable: editorial jobs, shards, artifacts ───────────
+
+
+class EditorialJob(Base):
+    """Top-level persistent job for a scalable editorial report.
+
+    Tracks the full lifecycle of a hierarchical map/reduce report generation.
+    No API keys stored — only provider name and model.
+    """
+
+    __tablename__ = "editorial_jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
+    report_mode: Mapped[str] = mapped_column(String(30), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")
+    # pending/running/validated/failed_retryable/failed_permanent/fallback/completed/superseded
+
+    candidate_story_ids: Mapped[list] = mapped_column(JSONB, default=list)
+    excluded_as_delivered_count: Mapped[int] = mapped_column(Integer, default=0)
+    materially_updated_count: Mapped[int] = mapped_column(Integer, default=0)
+    selected_count: Mapped[int] = mapped_column(Integer, default=0)
+    omitted_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    shard_count: Mapped[int] = mapped_column(Integer, default=0)
+    partition_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    reduction_depth: Mapped[int] = mapped_column(Integer, default=0)
+    max_reduction_depth: Mapped[int] = mapped_column(Integer, default=3)
+
+    total_model_calls: Mapped[int] = mapped_column(Integer, default=0)
+    total_input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    max_input_token_budget: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_output_token_budget: Mapped[int] = mapped_column(Integer, nullable=False)
+    map_call_budget: Mapped[int] = mapped_column(Integer, nullable=False)
+    reduction_call_budget: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    report_id: Mapped[int | None] = mapped_column(ForeignKey("reports.id"), nullable=True)
+    fallback_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    partial_ai: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EditorialShard(Base):
+    """Bounded partition of stories for one AI map call.
+
+    Stable shard ID ensures deterministic partitioning for identical inputs.
+    Processing lease prevents duplicate concurrent work.
+    """
+
+    __tablename__ = "editorial_shards"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_db_id: Mapped[int] = mapped_column(ForeignKey("editorial_jobs.id"), nullable=False, index=True)
+    shard_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    shard_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_shards: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    story_ids: Mapped[list] = mapped_column(JSONB, nullable=False)
+    evidence_ref_ids: Mapped[list] = mapped_column(JSONB, nullable=False)
+    evidence_set_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    estimated_input_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    effective_input_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+    effective_output_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    prompt_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    partition_version: Mapped[str] = mapped_column(String(30), nullable=False)
+
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")
+    # pending/running/validated/failed_retryable/failed_permanent/fallback/superseded/completed
+
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_retries: Mapped[int] = mapped_column(Integer, default=2)
+
+    lease_owner: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    leased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    artifact_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    error_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    usage: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (UniqueConstraint("job_db_id", "shard_id", name="uq_editorial_shard_id"),)
+
+
+class EditorialArtifact(Base):
+    """Validated output from a map or reduce stage.
+
+    Stores structured conclusions, evidence mappings, and safe metadata.
+    No chain-of-thought, prompts, or API keys stored.
+    """
+
+    __tablename__ = "editorial_artifacts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_db_id: Mapped[int] = mapped_column(ForeignKey("editorial_jobs.id"), nullable=False, index=True)
+    shard_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    artifact_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    # map/reduction_topic/reduction_final
+    reduction_level: Mapped[int] = mapped_column(Integer, default=0)
+
+    output_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    story_ids: Mapped[list] = mapped_column(JSONB, nullable=False)
+    evidence_ref_ids: Mapped[list] = mapped_column(JSONB, nullable=False)
+
+    schema_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    validation_result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    grounding_result: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    cache_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True, index=True)
+    provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    usage: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="validated")
+    # validated/failed/superseded
+
+    child_artifact_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EditorialArtifactLineage(Base):
+    """Evidence traceability from artifact to source.
+
+    Every final claim traces through:
+    final → reduction → map → story → evidence_ref → source_url
+    """
+
+    __tablename__ = "editorial_artifact_lineage"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    artifact_id: Mapped[int] = mapped_column(ForeignKey("editorial_artifacts.id"), nullable=False, index=True)
+    story_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    evidence_ref_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

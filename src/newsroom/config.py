@@ -87,6 +87,19 @@ class Settings(BaseSettings):
     editorial_scheduled_run_budget: int = 1
     editorial_manual_run_budget: int = 3
 
+    # Gate 4 scalable: hierarchical editorial controls
+    editorial_max_stories_per_shard: int = 8
+    editorial_max_map_calls_per_report: int = 12
+    editorial_max_reduction_calls_per_report: int = 4
+    editorial_max_hierarchy_depth: int = 3
+    editorial_max_concurrent_map: int = 2
+    editorial_max_total_input_tokens_per_report: int = 100000
+    editorial_max_total_output_tokens_per_report: int = 30000
+    editorial_shard_input_token_limit: int = 8000
+    editorial_shard_output_token_limit: int = 4000
+    editorial_max_pending_jobs: int = 3
+    editorial_stale_job_timeout_seconds: int = 600
+
     # Retention
     raw_retention_days: int = 30
     normalized_retention_days: int = 90
