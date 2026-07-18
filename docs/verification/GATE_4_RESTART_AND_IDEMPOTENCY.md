@@ -2,7 +2,7 @@
 
 ## Status: VERIFIED
 
-**Date:** 2026-07-17
+**Date:** 2026-07-18 (updated for scalable editorial)
 
 ## Cache key computation
 
@@ -75,9 +75,47 @@ The `editorial_attempts` table stores:
 
 ## Known limitation: `/report new`
 
-The scheduled cursor (`scheduled_delivery`) is written after confirmed delivery but is never
-read for story selection. All report modes select the same 30 most-recent stories. This is
-a pre-existing design issue from the prior agent's implementation, not a Gate 4 regression.
-Fixing it requires reading the cursor in the pipeline runner's story selection to exclude
-stories from previously delivered reports — a change to the verified pipeline that is out of
-scope for the Gate 4 editorial verification.
+**FIXED (2026-07-18):** The `/report new` mode now correctly excludes stories from
+successfully delivered reports. See `GATE_4_REPORT_NEW_SEMANTICS.md` for details.
+The scheduled cursor is still written for scheduled delivery tracking, but story
+selection for `manual_new` mode now uses the `get_delivered_story_ids()` set-based
+query against `reports.story_ids` joined to `deliveries.status = 'delivered'`.
+
+## Scalable editorial restart and resumability
+
+### Editorial jobs, shards, and artifacts
+
+Migration `0006_gate4_scalable` adds:
+- `editorial_jobs` — top-level job with status, budgets, counts
+- `editorial_shards` — per-shard records with lease state
+- `editorial_artifacts` — validated map/reduce outputs
+- `editorial_artifact_lineage` — evidence traceability
+
+### Restart behavior
+
+- ✅ Validated shards not regenerated unnecessarily (cache check in `_process_shard`)
+- ✅ Failed shards may retry according to policy (`failed_retryable` status)
+- ✅ Final reduction waits for required child artifacts (all shards must complete)
+- ✅ Duplicate workers cannot process the same shard concurrently (unique lease)
+- ✅ Accepted artifacts are reusable from cache (`cache_key` unique index)
+- ✅ Stale running leases are recoverable (`lease_expires_at` check)
+
+### Idempotency
+
+- Editorial job `job_id` is unique — duplicate jobs rejected
+- Shard `(job_db_id, shard_id)` is unique — duplicate shards rejected
+- Artifact `cache_key` is unique — duplicate artifacts rejected
+- Pipeline `PipelineLock` prevents concurrent pipeline runs
+
+### Tests
+
+- `test_completed_shard_stays_completed` — shard status preserved across restart
+- `test_expired_lease_can_be_reacquired` — stale lease recovery
+- `test_failed_shard_marked_retryable` — failed shard isolation
+- `test_no_api_key_persisted` — no secrets in editorial tables
+
+## Command-idempotency retention
+
+The existing `CommandRequest` table (Gate 2) is unchanged. The permanent,
+non-expiring idempotency records remain as-is. See `GATE_4_REPORT_NEW_SEMANTICS.md`
+for the documented growth risk and future archival policy.
