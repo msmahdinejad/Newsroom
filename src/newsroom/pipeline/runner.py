@@ -147,17 +147,44 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
         stage("evidence", "skipped", "no stories")
 
     stage("report", "starting")
-    story_ids = [s.id for s in stories] if stories else []
-    if not story_ids:
-        stage("report", "skipped", "no stories")
-        result["status"] = "ok_empty"
-        return
-
-    # Gate 4: editorial layer (AI when configured, deterministic fallback)
-    from newsroom.editorial.orchestrator import generate_editorial
+    from newsroom.editorial.selection import select_stories_for_report
 
     report_mode = result["report_mode"]
-    content, editorial_attempt = generate_editorial(session, story_ids, report_mode)
+    selection = select_stories_for_report(session, report_mode)
+    story_ids = selection.story_ids
+
+    if not story_ids or selection.no_new_items:
+        stage("report", "skipped", f"no new items (excluded {selection.excluded_as_delivered} delivered)")
+        result["status"] = "ok_empty"
+        result["no_new_items"] = True
+        result["selection_stats"] = {
+            "total_candidates": selection.total_candidates,
+            "excluded_as_delivered": selection.excluded_as_delivered,
+            "materially_updated": selection.materially_updated,
+            "selected": selection.selected_count,
+            "omitted": selection.omitted_count,
+        }
+        return
+
+    # Gate 4: editorial layer — hierarchical for large sets, single-call for small
+    from newsroom.config import settings as _cfg
+    from newsroom.editorial.orchestrator import generate_editorial
+
+    if len(story_ids) > _cfg.editorial_max_stories_per_call:
+        from newsroom.editorial.hierarchy import run_hierarchical_editorial
+
+        hier_result = run_hierarchical_editorial(session, story_ids, report_mode)
+        content = hier_result.content
+        editorial_attempt = hier_result.attempt
+        result["hierarchical"] = True
+        result["shard_count"] = hier_result.job.shard_count
+        result["total_model_calls"] = hier_result.total_model_calls
+        result["total_input_tokens"] = hier_result.total_input_tokens
+        result["total_output_tokens"] = hier_result.total_output_tokens
+        result["cache_hits"] = hier_result.cache_hits
+        result["fallback_shards"] = hier_result.fallback_shards
+    else:
+        content, editorial_attempt = generate_editorial(session, story_ids, report_mode)
 
     report = Report(
         content_fa=content,
@@ -186,6 +213,13 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
     persist_attempt(session, editorial_attempt, report.id, cache_key)
 
     stage("report", "ok", f"report {report.id} ({editorial_attempt.provider}:{editorial_attempt.status})")
+    result["selection_stats"] = {
+        "total_candidates": selection.total_candidates,
+        "excluded_as_delivered": selection.excluded_as_delivered,
+        "materially_updated": selection.materially_updated,
+        "selected": selection.selected_count,
+        "omitted": selection.omitted_count,
+    }
 
     stage("deliver", "starting")
     delivery_id = await _deliver(session, report.id)
