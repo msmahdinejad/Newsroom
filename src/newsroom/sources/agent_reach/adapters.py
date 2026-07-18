@@ -650,14 +650,22 @@ class XPublicReadCollector(SourceCollector):
         ]
 
     def _is_public_x_url(self, url: str) -> bool:
+        """A public X/Twitter post URL must contain a /status/ segment.
+
+        Profile URLs (e.g. https://x.com/someuser) are not collected — only
+        individual public posts are. This avoids collecting personal profile
+        pages, which are out of scope for the gate spec.
+        """
         try:
             parsed = urlparse(url)
         except Exception:
             return False
         host = (parsed.hostname or "").lower()
-        return host in {"twitter.com", "www.twitter.com", "x.com", "www.x.com", "t.me"} and bool(
-            parsed.path and len(parsed.path.strip("/")) > 0
-        )
+        if host not in {"twitter.com", "www.twitter.com", "x.com", "www.x.com", "t.me"}:
+            return False
+        # Require a /status/ segment for an individual post
+        parts = [p for p in parsed.path.split("/") if p]
+        return "status" in parts
 
     def _extract_post_id(self, url: str) -> str:
         try:
