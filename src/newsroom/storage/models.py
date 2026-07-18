@@ -628,3 +628,70 @@ class EditorialArtifactLineage(Base):
     evidence_ref_id: Mapped[str] = mapped_column(String(100), nullable=False)
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# ── Gate 5: Agent-Reach capability layer state ─────────────────────
+
+class AgentReachBackendState(Base):
+    """Per-channel Agent-Reach backend state — Newsroom-owned durability.
+
+    Agent-Reach itself never writes to this table. Newsroom records the
+    pinned version, selected backend, fallback backends, health, last
+    success/failure, production approval, and the bounded real-read flag.
+
+    No credentials, no cookies, no authorization headers stored here.
+    """
+    __tablename__ = "agent_reach_backend_state"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    channel: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+    pinned_version: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    selected_backend: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    fallback_backends: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    healthy: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    degraded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    production_ready: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    production_approval: Mapped[str] = mapped_column(String(60), nullable=False, default="deferred")
+    last_doctor_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class AgentReachSourceState(Base):
+    """Per-Source Agent-Reach adapter state.
+
+    Extends the existing sources + collection_cursors tables with
+    Agent-Reach-specific state: selected backend, backend version, durable
+    cursor, pagination, rate-limit state, source-specific metadata, health,
+    retry-after, and safe error category.
+
+    No cookies, no local browser-profile paths, no complete authorization
+    headers, no Agent-Reach config contents, no unrelated command output,
+    no private messages.
+    """
+    __tablename__ = "agent_reach_source_state"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"), nullable=False, unique=True, index=True)
+    channel: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    backend: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    backend_version: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    last_stable_item_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    last_original_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_publication_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_collected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_raw_content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_edit_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    cursor: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    pagination_state: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    rate_limit_state: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    source_metadata: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    health_status: Mapped[str] = mapped_column(String(30), nullable=False, default="configured")
+    retry_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
