@@ -47,3 +47,9 @@ data/sessions/
 *.session-journal
 *.session-shm
 *.session-wal
+
+# Gate 5: Agent-Reach worker local state — cookies, tokens, upstream tool installs.
+# Never commit, never bake into images, never share with editorial/Telegram containers.
+data/agent-reach/
+.agent-reach-venv/
+agent_reach_audit/

@@ -100,6 +100,23 @@ class Settings(BaseSettings):
     editorial_max_pending_jobs: int = 3
     editorial_stale_job_timeout_seconds: int = 600
 
+    # Gate 5: Agent-Reach capability layer (external internet/social platforms)
+    # Agent-Reach is a capability-selection, diagnostics, and backend-routing layer.
+    # Newsroom owns source config, cursors, retries, normalization, persistence, and security.
+    agent_reach_enabled: bool = False
+    agent_reach_executable: str = "agent-reach"  # resolved from PATH or absolute
+    agent_reach_config_dir: str = "./data/agent-reach"  # isolated writable config dir
+    agent_reach_timeout_seconds: int = 60  # per-call timeout
+    agent_reach_max_output_bytes: int = 2 * 1024 * 1024  # 2 MiB stdout/stderr cap
+    agent_reach_max_retries: int = 1
+    agent_reach_concurrency_limit: int = 2  # bounded parallel upstream calls
+    # Channel allowlist — comma-separated. Empty = all known channels (with safe defaults).
+    agent_reach_allowed_channels: str = "web,rss,github,youtube"
+    agent_reach_pinned_version: str = ""  # required for production; pinned revision
+    # Allow authenticated channels (cookies/tokens). Default false — owner must opt in.
+    agent_reach_allow_authenticated_channels: bool = False
+    agent_reach_health_interval_seconds: int = 300  # min seconds between doctor runs
+
     # Retention
     raw_retention_days: int = 30
     normalized_retention_days: int = 90
@@ -109,6 +126,8 @@ class Settings(BaseSettings):
         "telegram_ingestor_enabled",
         "editorial_enabled",
         "editorial_fallback_enabled",
+        "agent_reach_enabled",
+        "agent_reach_allow_authenticated_channels",
         mode="before",
     )
     @classmethod
@@ -144,13 +163,33 @@ class Settings(BaseSettings):
         )
 
     def editorial_ready(self) -> bool:
-        """True only when editorial is enabled AND a non-deterministic provider has credentials."""
+        """True only when editorial is enabled AND a non-det. provider has credentials."""
         return bool(
             self.editorial_enabled
             and self.editorial_provider != "deterministic"
             and self.editorial_api_key
             and self.editorial_model
         )
+
+    def agent_reach_allowed_channels_set(self) -> set[str]:
+        """Parse comma-separated channel allowlist. Empty entries skipped.
+
+        Order preserved by the caller; empty string yields empty set (deny all
+        upstream Agent-Reach channels) — production safety default.
+        """
+        raw = self.agent_reach_allowed_channels.strip()
+        if not raw:
+            return set()
+        result: set[str] = set()
+        for part in raw.split(","):
+            channel = part.strip().lower()
+            if channel:
+                result.add(channel)
+        return result
+
+    def agent_reach_ready(self) -> bool:
+        """True only when Agent-Reach is enabled AND a pinned version is recorded."""
+        return bool(self.agent_reach_enabled and self.agent_reach_pinned_version)
 
 
 settings = Settings()
