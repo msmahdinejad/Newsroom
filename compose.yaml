@@ -215,6 +215,59 @@ services:
         max-size: "5m"
         max-file: "3"
 
+  # Gate 5: Agent-Reach worker — isolated runtime for external internet and
+  # social-platform capability calls. Non-root, no Docker socket, no access
+  # to the Telegram MTProto session volume, no access to editorial API
+  # credentials, bounded CPU and memory, isolated writable config directory.
+  # Only the controlled runner inside newsroom.sources.agent_reach may launch
+  # processes here; source content and editorial AI cannot produce commands.
+  agent-reach-worker:
+    build: .
+    container_name: newsroom-agent-reach-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
+      AGENT_REACH_ENABLED: ${AGENT_REACH_ENABLED:-false}
+      AGENT_REACH_EXECUTABLE: ${AGENT_REACH_EXECUTABLE:-agent-reach}
+      AGENT_REACH_CONFIG_DIR: /data/agent-reach
+      AGENT_REACH_TIMEOUT_SECONDS: ${AGENT_REACH_TIMEOUT_SECONDS:-60}
+      AGENT_REACH_MAX_OUTPUT_BYTES: ${AGENT_REACH_MAX_OUTPUT_BYTES:-2097152}
+      AGENT_REACH_MAX_RETRIES: ${AGENT_REACH_MAX_RETRIES:-1}
+      AGENT_REACH_CONCURRENCY_LIMIT: ${AGENT_REACH_CONCURRENCY_LIMIT:-2}
+      AGENT_REACH_ALLOWED_CHANNELS: ${AGENT_REACH_ALLOWED_CHANNELS:-web,rss,github,youtube}
+      AGENT_REACH_PINNED_VERSION: ${AGENT_REACH_PINNED_VERSION:-}
+      AGENT_REACH_ALLOW_AUTHENTICATED_CHANNELS: ${AGENT_REACH_ALLOW_AUTHENTICATED_CHANNELS:-false}
+      AGENT_REACH_HEALTH_INTERVAL_SECONDS: ${AGENT_REACH_HEALTH_INTERVAL_SECONDS:-300}
+      # Deliberately NOT passing TELEGRAM_BOT_TOKEN, TELEGRAM_API_HASH,
+      # EDITORIAL_API_KEY, or any other application secret. The worker talks
+      # to upstream platforms via the controlled runner only.
+    volumes:
+      - agent_reach_config:/data/agent-reach
+    # Bounded CPU and memory — the worker is a capability/diagnostics layer,
+    # not a heavy compute service.
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    command: uv run python -m newsroom.service_status agent_reach_worker
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "uv run python -m newsroom.service_status agent_reach_worker"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
   # One-time authorization — run with: docker compose run --rm telegram-authorize
   # Interactive: requires TTY for getpass login code and optional 2FA password
   telegram-authorize:
@@ -246,3 +299,4 @@ services:
 volumes:
   postgres_data:
   telegram_sessions:
+  agent_reach_config:

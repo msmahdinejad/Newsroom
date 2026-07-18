@@ -195,6 +195,65 @@ def editorial_status() -> dict[str, Any]:
         }
 
 
+def agent_reach_worker_status() -> dict[str, Any]:
+    """Health for the Agent-Reach worker — safe, no secrets exposed.
+
+    Disabled mode: healthy with explicit disabled status. Ready mode:
+    checks DB connectivity and the Agent-Reach pinned version. Exposes only
+    safe fields — never cookies, tokens, browser-profile paths, command
+    environments, or full command output.
+    """
+    if not settings.agent_reach_enabled:
+        return {"status": "disabled", "feature": "agent_reach", "healthy": True}
+
+    payload: dict[str, Any] = {
+        "status": "enabled",
+        "feature": "agent_reach",
+        "pinned_version": settings.agent_reach_pinned_version or "",
+        "allowed_channels": sorted(settings.agent_reach_allowed_channels_set()),
+        "allow_authenticated": settings.agent_reach_allow_authenticated_channels,
+        "db_connected": db_health(),
+    }
+    degraded: list[str] = []
+    if not payload["db_connected"]:
+        degraded.append("database")
+    if not settings.agent_reach_pinned_version:
+        degraded.append("no_pinned_version")
+
+    # Channel health from the backend_state table (safe fields only).
+    try:
+        from sqlalchemy.orm import sessionmaker
+
+        from newsroom.storage.database import engine
+        from newsroom.storage.models import AgentReachBackendState
+
+        factory = sessionmaker(bind=engine)
+        with factory() as db:
+            rows = db.query(AgentReachBackendState).all()
+            channels = []
+            for row in rows:
+                channels.append(
+                    {
+                        "channel": row.channel,
+                        "selected_backend": row.selected_backend,
+                        "healthy": row.healthy,
+                        "degraded": row.degraded,
+                        "production_ready": row.production_ready,
+                        "production_approval": row.production_approval,
+                        "last_success_at": row.last_success_at.isoformat() if row.last_success_at else None,
+                        "last_failure_category": row.failure_category,
+                    }
+                )
+            payload["channels"] = channels
+    except Exception:
+        payload["channels"] = []
+
+    if degraded:
+        payload["degraded"] = degraded
+    payload["healthy"] = len(degraded) == 0
+    return payload
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI: python -m newsroom.service_status <bot|ingestor|collector|scheduler|db>"""
     argv = argv or sys.argv[1:]
@@ -215,6 +274,10 @@ def main(argv: list[str] | None = None) -> int:
     elif kind == "editorial":
         payload = editorial_status()
         ok = payload.get("healthy", True)
+    elif kind == "agent_reach_worker":
+        payload = agent_reach_worker_status()
+        # disabled/blocked are healthy modes; enabled checks deep health
+        ok = payload.get("healthy", False)
     elif kind == "scheduler":
         from newsroom.scheduler import health_payload
 
