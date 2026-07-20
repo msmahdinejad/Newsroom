@@ -49,9 +49,63 @@ def db(engine):
     factory = sessionmaker(bind=engine)
     session = factory()
     # Clean Gate 5-specific rows before each test. Order matters for FKs.
+    # The live-verification script may leave rows behind; clean everything
+    # that references the AR source types so the fixture is idempotent.
     session.execute(text("DELETE FROM agent_reach_source_state"))
     session.execute(text("DELETE FROM agent_reach_backend_state"))
-    # Clean any agent-reach raw items and sources
+    # collection_runs references sources.id directly — must delete first.
+    session.execute(
+        text(
+            "DELETE FROM collection_runs WHERE source_id IN ("
+            "SELECT id FROM sources WHERE type IN "
+            "('youtube','web_page','github_discovery','x_post','reddit_post','linkedin_public')"
+            ")"
+        )
+    )
+    # Find story IDs linked to AR-sourced items, then delete reports and
+    # deliveries that reference those stories via the JSONB story_ids column.
+    # Use Python-side iteration because the story_ids JSONB containment
+    # query is fragile across Postgres versions.
+    ar_story_ids_row = session.execute(
+        text(
+            "SELECT id FROM stories WHERE id IN ("
+            "SELECT story_id FROM story_items WHERE item_id IN ("
+            "SELECT id FROM normalized_items WHERE raw_item_id IN ("
+            "SELECT id FROM raw_items WHERE source_id IN ("
+            "SELECT id FROM sources WHERE type IN "
+            "('youtube','web_page','github_discovery','x_post','reddit_post','linkedin_public')"
+            "))))"
+        )
+    ).fetchall()
+    ar_story_ids = [r[0] for r in ar_story_ids_row]
+    if ar_story_ids:
+        # Find reports whose story_ids JSONB array contains any AR story ID.
+        # story_ids is a JSONB list of integers; cast to text for comparison.
+        all_reports = session.execute(
+            text("SELECT id, story_ids FROM reports")
+        ).fetchall()
+        ar_report_ids = []
+        for rid, sids in all_reports:
+            if sids and any(sid in ar_story_ids for sid in sids):
+                ar_report_ids.append(rid)
+        if ar_report_ids:
+            session.execute(
+                text("DELETE FROM delivery_chunks WHERE delivery_id IN ("
+                     "SELECT id FROM deliveries WHERE report_id = ANY(:rids))"),
+                {"rids": ar_report_ids},
+            )
+            session.execute(
+                text("DELETE FROM deliveries WHERE report_id = ANY(:rids)"),
+                {"rids": ar_report_ids},
+            )
+            session.execute(
+                text("DELETE FROM reports WHERE id = ANY(:rids)"),
+                {"rids": ar_report_ids},
+            )
+    # Editorial artifact lineage / artifacts / attempts — clear all to be safe.
+    session.execute(text("DELETE FROM editorial_artifact_lineage"))
+    session.execute(text("DELETE FROM editorial_artifacts"))
+    session.execute(text("DELETE FROM editorial_attempts"))
     session.execute(text("DELETE FROM story_items"))
     session.execute(text("DELETE FROM evidence"))
     session.execute(text("DELETE FROM stories"))
