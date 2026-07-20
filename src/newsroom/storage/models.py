@@ -695,3 +695,36 @@ class AgentReachSourceState(Base):
     last_error_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+# ── Gate 5X: X/Twitter account state for production timeline ingestion ──
+
+
+class XAccountState(Base):
+    """Per-account X/Twitter state for the production timeline collector.
+
+    Tracks the stable numeric account ID (which never changes on handle
+    rename), the configured handle, the last resolved handle, per-account
+    health, rate-limit state, and the per-account cursor. Survives handle
+    changes without breaking dedup.
+
+    No cookies, tokens, or authorization headers stored here.
+    """
+
+    __tablename__ = "x_account_state"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"), nullable=False, unique=True, index=True)
+    account_id: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    configured_handle: Mapped[str] = mapped_column(String(20), nullable=False)
+    last_resolved_handle: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    last_resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    health_status: Mapped[str] = mapped_column(String(30), nullable=False, default="configured")
+    cursor: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    rate_limit_state: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    retry_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_posts_collected: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
