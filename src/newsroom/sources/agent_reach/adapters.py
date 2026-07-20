@@ -48,6 +48,8 @@ from newsroom.sources.agent_reach.runner import (
     run_upstream,
     validate_repo_identifier,
     validate_url,
+    validate_x_handle,
+    validate_x_post_id,
     validate_youtube_channel_id,
     validate_youtube_video_id,
 )
@@ -938,6 +940,374 @@ def apply_default_production_decisions(
     return registry
 
 
+# ── X / Twitter production timeline collector ───────────────────
+
+
+# Bounded defaults per the gate spec.
+X_DEFAULT_POLL_INTERVAL_MINUTES = 30
+X_DEFAULT_MAX_POSTS_PER_POLL = 20
+X_DEFAULT_INITIAL_BACKFILL = 30
+X_DEFAULT_OVERLAP = 8  # 5–10 range; 8 is the midpoint
+X_DEFAULT_CONCURRENCY = 1  # one account at a time (rate-limit safe)
+
+
+class XTimelineCollector(SourceCollector):
+    """Production X/Twitter timeline collector via twitter-cli (Agent-Reach backend).
+
+    Production scope (read-only):
+      - resolve configured account (handle -> stable numeric account ID)
+      - bounded recent account timeline (user-posts)
+      - bounded single-post reconciliation (tweet by ID)
+      - quote-post metadata (quotedTweet field)
+
+    Out of scope (forbidden):
+      - production search
+      - posting, replies, likes, follows, DMs, account changes
+      - the controlled runner has no allowlisted operations for these
+
+    Identity: ``x + post_id`` — stable numeric post ID, never display name.
+
+    Auth handling:
+      - TWITTER_AUTH_TOKEN and TWITTER_CT0 are passed via extra_env to the
+        controlled runner ONLY for user/user-posts/tweet operations.
+      - The adapter reads them from source.config['auth_env_keys'] which
+        names env vars to read from the host environment — the values
+        themselves never enter the database or the source registry.
+      - If the env vars are not set, the adapter raises CollectionError
+        (auth_not_configured) — it never silently proceeds.
+      - twitter:status is called without tokens (capability probe).
+
+    Bounded defaults:
+      - poll every 30 minutes
+      - max 20 posts per account per poll
+      - initial backfill 30
+      - overlap 5–10 (we use 8)
+      - concurrency 1
+      - bounded timeout and retries
+
+    Inclusion policy:
+      - original posts: include
+      - quote posts: include (with quotedTweet metadata)
+      - replies: exclude by default, configurable via source.config['include_replies']
+      - reposts (retweets): exclude by default, configurable via source.config['include_reposts']
+    """
+
+    def __init__(self, runner: ControlledRunner | None = None) -> None:
+        self._runner = runner or ControlledRunner()
+
+    async def collect(self, source: Source) -> list[dict[str, Any]]:
+        cfg = source.config or {}
+        handle = str(cfg.get("handle") or cfg.get("screen_name") or "")
+        if not handle:
+            raise CollectionError(
+                "x timeline source requires config.handle",
+                source.url,
+                recoverable=False,
+            )
+        try:
+            handle = validate_x_handle(handle)
+        except RunnerError as e:
+            raise CollectionError(str(e), source.url, recoverable=False) from e
+
+        # Auth: read token env var names from config; read values from host env.
+        # Never store the values in the database, repo, or logs.
+        auth_token_env = str(cfg.get("auth_token_env") or "TWITTER_AUTH_TOKEN")
+        ct0_env = str(cfg.get("ct0_env") or "TWITTER_CT0")
+        import os
+
+        auth_token = os.environ.get(auth_token_env, "")
+        ct0 = os.environ.get(ct0_env, "")
+        if not auth_token or not ct0:
+            raise CollectionError(
+                "x auth not configured (env vars not set)",
+                source.url,
+                recoverable=False,
+            )
+        auth_env = {"TWITTER_AUTH_TOKEN": auth_token, "TWITTER_CT0": ct0}
+
+        # Resolve the handle to a stable numeric account ID (cached in source state).
+        account_id, resolved_handle = await self._resolve_account(source, handle, auth_env)
+        if not account_id:
+            raise CollectionError(
+                f"could not resolve x handle '{handle}' to a stable account ID",
+                source.url,
+                recoverable=True,
+            )
+
+        # Bounded timeline read.
+        max_posts = int(cfg.get("max_posts") or X_DEFAULT_MAX_POSTS_PER_POLL)
+        max_posts = max(1, min(max_posts, 50))
+        try:
+            result = run_upstream(
+                "twitter",
+                "user-posts",
+                [resolved_handle, "-n", str(max_posts)],
+                runner=self._runner,
+                extra_env=auth_env,
+            )
+        except RunnerError as e:
+            raise CollectionError(str(e), source.url, recoverable=e.category != "disabled") from e
+
+        if not result.ok:
+            stderr_text = result.stderr_text()
+            # Detect auth failure / rate limit / challenge specifically.
+            category = self._classify_failure(result.returncode, stderr_text)
+            raise CollectionError(
+                f"twitter user-posts exit={result.returncode} category={category}: "
+                f"{redact_credentials(stderr_text[:200])}",
+                source.url,
+                recoverable=category in ("rate_limit", "challenge", "transient"),
+            )
+
+        # Parse the JSON output. twitter-cli emits a JSON array of tweet dicts.
+        items = self._parse_timeline(result.stdout_text(), source, account_id, resolved_handle)
+        if not items:
+            return []
+
+        # Apply inclusion policy.
+        include_replies = bool(cfg.get("include_replies", False))
+        include_reposts = bool(cfg.get("include_reposts", False))
+        filtered = [
+            item
+            for item in items
+            if (item["post_kind"] == "original")
+            or (item["post_kind"] == "quote")
+            or (item["post_kind"] == "reply" and include_replies)
+            or (item["post_kind"] == "repost" and include_reposts)
+        ]
+        return filtered
+
+    async def _resolve_account(
+        self,
+        source: Source,
+        handle: str,
+        auth_env: dict[str, str],
+    ) -> tuple[str, str]:
+        """Resolve a handle to a stable numeric account ID.
+
+        Returns (account_id, resolved_handle). The resolved handle may differ
+        from the configured handle if the account was renamed. We persist
+        the stable account ID and the resolved handle separately so a handle
+        change does not break dedup.
+        """
+        # Check source.config for a cached account_id first.
+        cfg = source.config or {}
+        cached_id = str(cfg.get("account_id") or "")
+        if cached_id and cached_id.isdigit():
+            # We have a cached stable ID; trust it. Handle reconciliation
+            # happens via the timeline read itself.
+            return cached_id, handle
+        # No cached ID — resolve via twitter user --json.
+        try:
+            result = run_upstream(
+                "twitter",
+                "user",
+                [handle],
+                runner=self._runner,
+                extra_env=auth_env,
+            )
+        except RunnerError as e:
+            raise CollectionError(str(e), source.url, recoverable=e.category != "disabled") from e
+        if not result.ok:
+            raise CollectionError(
+                f"twitter user exit={result.returncode}: {redact_credentials(result.stderr_text()[:200])}",
+                source.url,
+                recoverable=False,
+            )
+        try:
+            data = json.loads(result.stdout_text())
+        except json.JSONDecodeError as e:
+            raise CollectionError(
+                f"twitter user returned non-JSON: {e}",
+                source.url,
+                recoverable=False,
+            ) from e
+        if not isinstance(data, dict):
+            raise CollectionError(
+                "twitter user returned non-object JSON",
+                source.url,
+                recoverable=False,
+            )
+        account_id = str(data.get("id") or "")
+        resolved_handle = str(data.get("screenName") or data.get("screen_name") or handle)
+        if not account_id or not account_id.isdigit():
+            raise CollectionError(
+                f"twitter user did not return a numeric account ID: {account_id[:32]}",
+                source.url,
+                recoverable=False,
+            )
+        return account_id, resolved_handle
+
+    def _classify_failure(self, returncode: int, stderr: str) -> str:
+        """Classify a twitter-cli failure into a safe category for health state."""
+        lower = stderr.lower()
+        if "rate limit" in lower or "429" in lower:
+            return "rate_limit"
+        if "challenge" in lower or "captcha" in lower or "verification" in lower:
+            return "challenge"
+        if "auth" in lower or "401" in lower or "not_authenticated" in lower:
+            return "auth_failure"
+        if "timeout" in lower or "timed out" in lower:
+            return "timeout"
+        if "not found" in lower or "404" in lower:
+            return "not_found"
+        return "transient"
+
+    def _parse_timeline(
+        self,
+        stdout: str,
+        source: Source,
+        account_id: str,
+        resolved_handle: str,
+    ) -> list[dict[str, Any]]:
+        """Parse twitter-cli user-posts JSON output into raw item dicts.
+
+        The JSON shape (from twitter-cli serialization.py):
+          [{"id": "...", "text": "...", "author": {"id": "...", "screenName": "..."},
+            "metrics": {...}, "createdAt": "...", "createdAtISO": "...",
+            "isRetweet": bool, "retweetedBy": str|null,
+            "quotedTweet": {...}|null, "media": [...], "urls": [...],
+            "lang": "...", "articleTitle": "...", "articleText": "..."}, ...]
+        """
+        if not stdout or not stdout.strip():
+            return []
+        try:
+            data = json.loads(stdout)
+        except json.JSONDecodeError as e:
+            raise CollectionError(
+                f"twitter user-posts returned non-JSON: {e}",
+                source.url,
+                recoverable=False,
+            ) from e
+        if not isinstance(data, list):
+            return []
+
+        items: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for tweet in data:
+            if not isinstance(tweet, dict):
+                continue
+            post_id = str(tweet.get("id") or "")
+            try:
+                validate_x_post_id(post_id)
+            except RunnerError:
+                continue  # skip malformed post IDs
+            if post_id in seen_ids:
+                continue
+            seen_ids.add(post_id)
+
+            # Determine post kind: original / reply / repost / quote.
+            is_retweet = bool(tweet.get("isRetweet"))
+            retweeted_by = tweet.get("retweetedBy")
+            quoted = tweet.get("quotedTweet")
+            text = str(tweet.get("text") or "")
+            # Reply detection: twitter-cli doesn't expose inReplyTo directly
+            # in the serialization; we infer from text starting with "@handle".
+            is_reply = text.startswith("@") and " " in text and not is_retweet
+
+            if is_retweet or retweeted_by:
+                post_kind = "repost"
+            elif quoted:
+                post_kind = "quote"
+            elif is_reply:
+                post_kind = "reply"
+            else:
+                post_kind = "original"
+
+            # Author — stable numeric account ID.
+            author = tweet.get("author") or {}
+            author_id = str(author.get("id") or account_id)
+            author_handle = str(author.get("screenName") or author.get("screen_name") or resolved_handle)
+
+            # Quoted tweet metadata (for quote posts).
+            quoted_metadata: dict[str, Any] | None = None
+            if isinstance(quoted, dict):
+                quoted_author = quoted.get("author") or {}
+                quoted_metadata = {
+                    "quoted_post_id": str(quoted.get("id") or ""),
+                    "quoted_text": str(quoted.get("text") or "")[:1000],
+                    "quoted_author_id": str(quoted_author.get("id") or ""),
+                    "quoted_author_handle": str(
+                        quoted_author.get("screenName")
+                        or quoted_author.get("screen_name")
+                        or ""
+                    ),
+                    "quoted_url": self._canonical_url(
+                        str(quoted_author.get("screenName") or ""),
+                        str(quoted.get("id") or ""),
+                    ),
+                }
+
+            # Media metadata (bounded).
+            media_list = tweet.get("media") or []
+            media: list[dict[str, Any]] = []
+            if isinstance(media_list, list):
+                for m in media_list[:4]:  # bound to 4 media items
+                    if isinstance(m, dict):
+                        media.append(
+                            {
+                                "type": str(m.get("type") or ""),
+                                "url": str(m.get("url") or "")[:500],
+                            }
+                        )
+
+            # Timestamps — prefer createdAtISO for stability.
+            published = str(tweet.get("createdAtISO") or tweet.get("createdAt") or "")
+
+            # Bounded text.
+            bounded_text = text[:280 * 4]  # Twitter limit is 280 chars; allow 4x for safety
+            if len(bounded_text) > 2000:
+                bounded_text = bounded_text[:2000]
+
+            item = {
+                "type": "x_post",
+                "source_id": source.id,
+                "source_name": source.name,
+                "source_url": source.url,
+                "post_id": post_id,
+                "account_id": author_id,
+                "handle": author_handle,
+                "post_kind": post_kind,
+                "text": bounded_text,
+                "published": published,
+                "canonical_url": self._canonical_url(author_handle, post_id),
+                "link": self._canonical_url(author_handle, post_id),
+                "lang": str(tweet.get("lang") or ""),
+                "metrics": {
+                    "likes": int(tweet.get("metrics", {}).get("likes") or 0),
+                    "retweets": int(tweet.get("metrics", {}).get("retweets") or 0),
+                    "replies": int(tweet.get("metrics", {}).get("replies") or 0),
+                    "quotes": int(tweet.get("metrics", {}).get("quotes") or 0),
+                    "views": int(tweet.get("metrics", {}).get("views") or 0),
+                },
+                "media": media,
+                "urls": [str(u) for u in (tweet.get("urls") or []) if isinstance(u, str)][:4],
+                "quoted_tweet": quoted_metadata,
+                "is_retweet": is_retweet,
+                "retweeted_by": str(retweeted_by) if retweeted_by else None,
+                "collected_via": "agent_reach_twitter_cli",
+            }
+            items.append(item)
+        return items
+
+    @staticmethod
+    def _canonical_url(handle: str, post_id: str) -> str:
+        """Build a canonical X post URL from handle + post ID."""
+        h = handle.lstrip("@")
+        return f"https://x.com/{h}/status/{post_id}"
+
+    def validate_url(self, source_url: str) -> bool:
+        # Timeline sources use a placeholder URL; the real handle lives in config.
+        return (
+            source_url.startswith("agent-reach:x-timeline:")
+            or "x.com" in source_url
+            or "twitter.com" in source_url
+        )
+
+    async def close(self) -> None:
+        pass
+
+
 __all__ = [
     "DEFAULT_WEB_ALLOWED_DOMAINS",
     "GitHubDiscoveryCollector",
@@ -947,6 +1317,7 @@ __all__ = [
     "WebPageReader",
     "WebReadResult",
     "XPublicReadCollector",
+    "XTimelineCollector",
     "YouTubeCollector",
     "apply_default_production_decisions",
     "_is_private_ip",

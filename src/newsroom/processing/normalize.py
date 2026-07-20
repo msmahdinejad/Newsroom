@@ -179,12 +179,24 @@ class Normalizer:
         }
 
     def _normalize_x_post(self, raw: dict[str, Any]) -> dict[str, Any]:
-        """Normalize an X/Twitter public-post item. post_id is the identity."""
+        """Normalize an X/Twitter post item. post_id is the identity.
+
+        Handles both the public-page reader (XPublicReadCollector) and the
+        production timeline collector (XTimelineCollector). The timeline
+        collector produces 'text', 'account_id', 'handle', 'post_kind', and
+        optional 'quoted_tweet' fields.
+        """
         post_id = str(raw.get("post_id") or "")
-        text = self._normalize_text(raw.get("content", raw.get("description", "")))
-        source_url = raw.get("link") or raw.get("source_url") or ""
+        # The timeline collector uses 'text'; the public-page reader uses
+        # 'content' or 'description'. Prefer 'text' for timeline items.
+        text = self._normalize_text(
+            raw.get("text") or raw.get("content") or raw.get("description") or ""
+        )
+        source_url = raw.get("link") or raw.get("source_url") or raw.get("canonical_url") or ""
         title = text[:120] if text else f"X post {post_id}"
 
+        # Identity: x + post_id — stable numeric post ID, never display name.
+        # The account_id and handle are metadata, not part of the dedup identity.
         return {
             "title": title,
             "description": text,

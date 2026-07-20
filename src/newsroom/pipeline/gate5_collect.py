@@ -42,6 +42,7 @@ from newsroom.sources.agent_reach.adapters import (
     SSRFError,
     WebPageReader,
     XPublicReadCollector,
+    XTimelineCollector,
     YouTubeCollector,
 )
 from newsroom.sources.agent_reach.runner import RunnerError
@@ -62,7 +63,8 @@ AGENT_REACH_SOURCE_TYPES: frozenset[str] = frozenset(
         "youtube",
         "web_page",
         "github_discovery",
-        "x_post",
+        "x_post",  # public-page reader (manual discovery)
+        "x_timeline",  # production timeline collector (Gate 5X)
         "reddit_post",
         "linkedin_public",
     }
@@ -106,6 +108,8 @@ def _adapter_for(source_type: str):
         return GitHubDiscoveryCollector()
     if source_type == "x_post":
         return XPublicReadCollector()
+    if source_type == "x_timeline":
+        return XTimelineCollector()
     if source_type == "reddit_post":
         return RedditPublicReadCollector()
     if source_type == "linkedin_public":
@@ -384,6 +388,7 @@ def _channel_for_source_type(source_type: str) -> str | None:
         "web_page": "web",
         "github_discovery": "github",
         "x_post": "x",
+        "x_timeline": "x",
         "reddit_post": "reddit",
         "linkedin_public": "linkedin",
     }.get(source_type)
@@ -396,6 +401,7 @@ def _backend_for_source_type(source_type: str) -> str:
         "web_page": "jina-reader",
         "github_discovery": "gh",
         "x_post": "jina-reader",
+        "x_timeline": "twitter-cli",
         "reddit_post": "jina-reader",
         "linkedin_public": "jina-reader",
     }.get(source_type, "")

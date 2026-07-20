@@ -117,7 +117,15 @@ def filter_new_items(
 
     # Gate 5: Agent-Reach-backed sources. Identity is a stable platform-native
     # item ID; we keep an overlap band for safety.
-    if source_type in ("youtube", "web_page", "github_discovery", "x_post", "reddit_post", "linkedin_public"):
+    if source_type in (
+        "youtube",
+        "web_page",
+        "github_discovery",
+        "x_post",
+        "x_timeline",
+        "reddit_post",
+        "linkedin_public",
+    ):
         last_seen = cursor.get("last_stable_item_id")
         seen_ids = set(cursor.get("seen_item_ids") or [])
         if not last_seen and not seen_ids:
@@ -188,7 +196,15 @@ def advance_cursor_from_items(
 
     # Gate 5: Agent-Reach-backed sources. Track seen stable item IDs in a
     # bounded set (last 200). last_stable_item_id is the most recent.
-    if source_type in ("youtube", "web_page", "github_discovery", "x_post", "reddit_post", "linkedin_public"):
+    if source_type in (
+        "youtube",
+        "web_page",
+        "github_discovery",
+        "x_post",
+        "x_timeline",
+        "reddit_post",
+        "linkedin_public",
+    ):
         seen = list(cursor.get("seen_item_ids") or [])
         last_stable = str(cursor.get("last_stable_item_id") or "")
         for it in persisted_items:

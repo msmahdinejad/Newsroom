@@ -730,10 +730,17 @@ def run_upstream(
     fixed_args: list[str],
     *,
     runner: ControlledRunner | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> CommandResult:
-    """Run an upstream tool (yt-dlp, gh, curl, etc.) via the controlled runner."""
+    """Run an upstream tool (yt-dlp, gh, curl, twitter, etc.) via the controlled runner.
+
+    ``extra_env`` adds env vars to the subprocess (e.g. auth tokens). Only
+    keys already allowed by ``ALLOWED_ENV_KEYS`` plus the explicit ``extra``
+    keys pass through — the sanitized environment still drops all
+    application secrets not listed here.
+    """
     r = runner or ControlledRunner()
-    return r.run(executable, operation, fixed_args)
+    return r.run(executable, operation, fixed_args, extra_env=extra_env)
 
 
 def redact_credentials(text: str) -> str:
