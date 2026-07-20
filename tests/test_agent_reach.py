@@ -284,10 +284,11 @@ def test_doctor_malformed_json_records_error():
 
 
 def test_doctor_missing_channels_key_records_error():
+    """A doctor output with no recognizable channel records records an error."""
     registry = AgentReachCapabilityRegistry(pinned_version="1.5.0")
     registry.parse_doctor_output('{"version": "1.5.0"}')
     assert registry.doctor_parse_error is not None
-    assert "no 'channels'" in registry.doctor_parse_error
+    assert "no recognizable channel" in registry.doctor_parse_error
 
 
 def test_doctor_empty_output_records_error():

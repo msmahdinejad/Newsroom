@@ -279,54 +279,83 @@ class AgentReachCapabilityRegistry:
             return
         self._doctor_raw = data
 
-        # Agent-Reach v1.5.0 doctor output shape:
+        # Agent-Reach v1.5.0 doctor output is a flat dict of channels:
         #   {
-        #     "version": "1.5.0",
-        #     "channels": {
-        #       "youtube": {
-        #         "available": true,
-        #         "active_backend": "yt-dlp",
-        #         "fallback_backends": ["OpenCLI"],
-        #         "needs_auth": false,
-        #         "unattended_ok": true
-        #       },
-        #       ...
-        #     }
+        #     "github": {"status": "warn", "backends": ["gh CLI"], "active_backend": "gh CLI", "tier": 0, ...},
+        #     "youtube": {"status": "off", "backends": ["yt-dlp"], "active_backend": null, "tier": 0, ...},
+        #     ...
         #   }
+        # Some hypothetical versions wrap channels under a "channels" key. Handle
+        # both shapes defensively.
         channels = data.get("channels")
-        if not isinstance(channels, dict):
-            # Some versions emit a list of channel objects; handle that too.
-            if isinstance(channels, list):
-                for item in channels:
-                    if not isinstance(item, dict):
-                        continue
+        if isinstance(channels, dict):
+            for name, record in channels.items():
+                if isinstance(record, dict):
+                    self._apply_channel_record(str(name), record)
+            return
+        if isinstance(channels, list):
+            for item in channels:
+                if isinstance(item, dict):
                     name = str(item.get("channel") or item.get("name") or "")
                     if name:
                         self._apply_channel_record(name, item)
-                return
-            self._doctor_parse_error = "doctor output has no 'channels' object"
             return
-        for name, record in channels.items():
-            if not isinstance(record, dict):
-                continue
-            self._apply_channel_record(str(name), record)
+        # Flat dict — each key is a channel name. Detect this by checking that
+        # at least one key maps to a dict with a "status" or "backends" field.
+        flat = True
+        for _name, record in data.items():
+            if isinstance(record, dict) and ("status" in record or "backends" in record or "active_backend" in record):
+                flat = False  # It IS a channel record — proceed
+                break
+        if not flat or not data:
+            for name, record in data.items():
+                if isinstance(record, dict):
+                    self._apply_channel_record(str(name), record)
+            return
+        self._doctor_parse_error = "doctor output has no recognizable channel records"
 
     def _apply_channel_record(self, name: str, record: dict[str, Any]) -> None:
-        # Normalize the name to lower-case and only accept known channels.
+        # Normalize the name to lower-case. Agent-Reach v1.5.0 emits channel
+        # names like "exa_search" (not "search"); "twitter" (not "x"). Map
+        # them to our canonical channel names.
         norm = name.lower()
+        # Map upstream channel names to our canonical channel names.
+        channel_name_map = {
+            "exa_search": "search",
+            "twitter": "x",  # Twitter/X — same channel
+            "xiaoyuzhou": "podcast",  # 小宇宙 is a podcast platform
+        }
+        norm = channel_name_map.get(norm, norm)
         if norm not in self._entries:
             return
         entry = self._entries[norm]
-        available = bool(record.get("available") or record.get("healthy") or record.get("ok"))
+        # Agent-Reach v1.5.0 doctor uses "status": "ok" / "warn" / "off" / "error"
+        # "ok" = fully working; "warn" = installed but needs config (e.g. JS runtime);
+        # "off" = not installed; "error" = broken.
+        # We treat "ok" and "warn" as available — the backend is present. "warn"
+        # is recorded as degraded=True via the mark_failure path in live
+        # verification; the registry itself records healthy=True for "warn".
+        status = str(record.get("status") or "").lower()
+        available = status in ("ok", "warn") or bool(
+            record.get("available") or record.get("healthy") or record.get("ok")
+        )
         backend = str(record.get("active_backend") or record.get("backend") or record.get("selected") or "")
-        fallbacks = record.get("fallback_backends") or record.get("fallbacks") or []
-        if not isinstance(fallbacks, list):
-            fallbacks = []
-        fallbacks = [str(b) for b in fallbacks if b]
+        # Backends list (all known) vs fallback_backends (everything except active)
+        all_backends = record.get("backends") or record.get("fallback_backends") or []
+        if not isinstance(all_backends, list):
+            all_backends = []
+        all_backends = [str(b) for b in all_backends if b]
+        fallbacks = [b for b in all_backends if b != backend]
+        # Authentication requirement: tier 1 or 2 channels need auth by default;
+        # tier 0 channels (web, rss, github, youtube, v2ex, exa_search) do not.
+        tier = record.get("tier")
         needs_auth = bool(record.get("needs_auth") or record.get("auth_required"))
+        if tier in (1, 2) and not needs_auth:
+            needs_auth = norm in AUTHENTICATED_BY_DEFAULT
         unattended = bool(record.get("unattended_ok", norm in UNATTENDED_OK_BY_DEFAULT))
 
-        # Only flip enabled to True if the channel is in the configured allowlist.
+        # Only flip enabled to True if the channel is in the configured allowlist
+        # AND available AND (if it needs auth, authenticated channels must be allowed).
         allowed = settings.agent_reach_allowed_channels_set()
         if norm in allowed and available and not (needs_auth and not self._allow_authenticated):
             entry.enabled = True
