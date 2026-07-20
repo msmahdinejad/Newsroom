@@ -28,6 +28,7 @@ from newsroom.sources.agent_reach.adapters import (
     XTimelineCollector,
     YouTubeCollector,
     apply_default_production_decisions,
+    upgrade_x_to_production,
 )
 from newsroom.sources.agent_reach.registry import (
     AUTHENTICATED_BY_DEFAULT,
@@ -89,6 +90,7 @@ __all__ = [
     "XTimelineCollector",
     "YouTubeCollector",
     "apply_default_production_decisions",
+    "upgrade_x_to_production",
     "redact_credentials",
     "run_agent_reach",
     "run_upstream",

@@ -940,6 +940,34 @@ def apply_default_production_decisions(
     return registry
 
 
+def upgrade_x_to_production(
+    registry: AgentReachCapabilityRegistry,
+) -> AgentReachCapabilityRegistry:
+    """Flip the X channel to production ingestion approved with dedicated auth.
+
+    Called after live verification confirms that:
+    1. local X auth is configured (TWITTER_AUTH_TOKEN + TWITTER_CT0 env vars)
+    2. a reviewed curated account list exists
+    3. bounded real-read verification of timeline monitoring succeeded
+    4. restart and cursor continuation work
+    5. three polling cycles operated unattended across restart
+
+    This is a one-way promotion — the registry flips X from MANUAL_DISCOVERY
+    to APPROVED_WITH_AUTH and marks it production_ready. It is only called
+    when the owner has explicitly opted in via
+    AGENT_REACH_ALLOW_AUTHENTICATED_CHANNELS=true and the live verification
+    has succeeded.
+    """
+    registry.set_production_approval(
+        "x",
+        ProductionApproval.APPROVED_WITH_AUTH,
+        notes="twitter-cli backend, curated account allowlist, dedicated auth, "
+        "bounded real-read verified across 3 polling cycles with restart",
+    )
+    registry.mark_success("x", backend="twitter-cli", production_ready=True)
+    return registry
+
+
 # ── X / Twitter production timeline collector ───────────────────
 
 
@@ -1320,6 +1348,7 @@ __all__ = [
     "XTimelineCollector",
     "YouTubeCollector",
     "apply_default_production_decisions",
+    "upgrade_x_to_production",
     "_is_private_ip",
     "_validate_public_url",
     "_validate_redirect_target",
