@@ -25,6 +25,7 @@ from newsroom.sources.agent_reach.adapters import (
     SSRFError,
     WebPageReader,
     XPublicReadCollector,
+    XTimelineCollector,
     YouTubeCollector,
     apply_default_production_decisions,
 )
@@ -55,6 +56,8 @@ from newsroom.sources.agent_reach.runner import (
     validate_query,
     validate_repo_identifier,
     validate_url,
+    validate_x_handle,
+    validate_x_post_id,
     validate_youtube_channel_id,
     validate_youtube_video_id,
 )
@@ -83,6 +86,7 @@ __all__ = [
     "UNATTENDED_OK_BY_DEFAULT",
     "WebPageReader",
     "XPublicReadCollector",
+    "XTimelineCollector",
     "YouTubeCollector",
     "apply_default_production_decisions",
     "redact_credentials",
@@ -93,6 +97,8 @@ __all__ = [
     "validate_query",
     "validate_repo_identifier",
     "validate_url",
+    "validate_x_handle",
+    "validate_x_post_id",
     "validate_youtube_channel_id",
     "validate_youtube_video_id",
 ]

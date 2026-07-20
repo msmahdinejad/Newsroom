@@ -52,6 +52,7 @@ EXECUTABLE_ALLOWLIST: frozenset[str] = frozenset(
         "python",  # used for inline feedparser capability probes (bounded -c)
         "python3",
         "curl",  # Jina Reader web reads — bounded to r.jina.ai allowlist
+        "twitter",  # twitter-cli — X/Twitter bounded timeline + single-post read
     }
 )
 
@@ -78,10 +79,21 @@ OPERATION_ALLOWLIST: dict[str, frozenset[str]] = {
     "python": frozenset({"feedparser-probe"}),
     "python3": frozenset({"feedparser-probe"}),
     "curl": frozenset({"jina-read"}),
+    "twitter": frozenset(
+        {
+            "status",  # auth check (no auth tokens required)
+            "user",  # resolve handle to stable numeric account ID
+            "user-posts",  # bounded account timeline read
+            "tweet",  # single-post reconciliation (by stable post ID)
+        }
+    ),
 }
 
 # Operations that require an authenticated channel. The runner refuses these
 # unless settings.agent_reach_allow_authenticated_channels is true.
+# Note: twitter:status is NOT here — it's a capability probe, not an
+# authenticated read. The adapter checks auth itself and refuses to pass
+# tokens to user/user-posts/tweet if auth is not configured.
 AUTHENTICATED_OPERATIONS: frozenset[str] = frozenset(
     {
         "agent-reach:configure",
@@ -240,6 +252,42 @@ def validate_youtube_channel_id(channel_id: str) -> str:
             category="argument_invalid",
         )
     return channel_id
+
+
+# X/Twitter handle: letters, digits, underscore; 1–15 chars (Twitter limit).
+_X_HANDLE_RE = re.compile(r"^[A-Za-z0-9_]{1,15}$")
+# X/Twitter post ID: numeric, 1–20 digits.
+_X_POST_ID_RE = re.compile(r"^[0-9]{1,20}$")
+
+
+def validate_x_handle(handle: str) -> str:
+    """Validate an X/Twitter screen name (handle).
+
+    Accepts the handle with or without a leading '@'. Returns the bare
+    handle (no '@'). Rejects control chars, newlines, and shell
+    metacharacters.
+    """
+    if not isinstance(handle, str) or not handle:
+        raise RunnerError("empty x handle", category="argument_invalid")
+    h = handle.lstrip("@")
+    _reject_control_chars(h, "x handle")
+    _check_length(h, "x handle")
+    if not _X_HANDLE_RE.match(h):
+        raise RunnerError(
+            f"invalid x handle: {h[:32]}",
+            category="argument_invalid",
+        )
+    return h
+
+
+def validate_x_post_id(post_id: str) -> str:
+    """Validate an X/Twitter numeric post ID (tweet ID)."""
+    if not isinstance(post_id, str) or not _X_POST_ID_RE.match(post_id or ""):
+        raise RunnerError(
+            f"invalid x post id: {(post_id or '')[:32]}",
+            category="argument_invalid",
+        )
+    return post_id
 
 
 def validate_query(query: str, max_length: int = 256) -> str:
@@ -512,6 +560,23 @@ class ControlledRunner:
                     *fixed_args,
                 ]
             )
+        elif executable == "twitter":
+            # twitter-cli (v0.8.5) — bounded read-only operations.
+            # The adapter validates the handle/post-id before calling; the
+            # runner enforces JSON output and the operation allowlist.
+            # Auth tokens are passed via extra_env (TWITTER_AUTH_TOKEN,
+            # TWITTER_CT0) — never via args, never via the default env.
+            if operation == "status":
+                cmd.extend(["status", "--json"])
+            elif operation == "user":
+                # fixed_args: [SCREEN_NAME]
+                cmd.extend(["user", *fixed_args, "--json"])
+            elif operation == "user-posts":
+                # fixed_args: [SCREEN_NAME, "-n", MAX_COUNT]
+                cmd.extend(["user-posts", *fixed_args, "--json"])
+            elif operation == "tweet":
+                # fixed_args: [TWEET_ID]
+                cmd.extend(["tweet", *fixed_args, "--json", "-n", "0"])
         return cmd
 
     def run(
@@ -716,6 +781,8 @@ __all__ = [
     "validate_query",
     "validate_repo_identifier",
     "validate_url",
+    "validate_x_handle",
+    "validate_x_post_id",
     "validate_youtube_channel_id",
     "validate_youtube_video_id",
 ]
