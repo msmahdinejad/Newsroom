@@ -25,7 +25,6 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import sessionmaker
 
-from newsroom.config import settings
 from newsroom.storage.database import engine
 from newsroom.storage.models import (
     AgentReachSourceState,

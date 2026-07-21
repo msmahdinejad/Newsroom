@@ -9,7 +9,6 @@ the network connection is refused (environmental). Failures are per-source.
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 from pathlib import Path
 

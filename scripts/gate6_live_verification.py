@@ -9,6 +9,7 @@ and reports per-platform results. A failed platform does not stop the others.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sys
 from datetime import UTC, datetime
@@ -101,13 +102,10 @@ async def main() -> int:
                 src.consecutive_failures = (src.consecutive_failures or 0) + 1
                 session.commit()
             finally:
-                try:
+                with contextlib.suppress(Exception):
                     await collector.close()
-                except Exception:
-                    pass
             summary.append(rec)
         print(json.dumps(summary, ensure_ascii=False, indent=2))
-        ok = sum(1 for r in summary if r["status"] == "ok" and r.get("new", 0) >= 0)
         print(f"\n[VERIFIED] {sum(1 for r in summary if r['status']=='ok')} platforms ok, {sum(1 for r in summary if r['status']=='error')} errors")
         return 0
     finally:

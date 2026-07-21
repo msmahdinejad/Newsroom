@@ -5,7 +5,6 @@ applies the default production decisions, flips the channels that passed
 bounded real-read verification to production_ready, and persists the state
 rows to agent_reach_backend_state.
 """
-import json
 import sys
 
 from sqlalchemy.orm import sessionmaker
