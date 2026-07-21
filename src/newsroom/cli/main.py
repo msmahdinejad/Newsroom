@@ -65,6 +65,13 @@ def main() -> int:
     pipeline_sub = pipeline_parser.add_subparsers(dest="pipeline_command")
     pipeline_sub.add_parser("run", help="Run full pipeline")
 
+    sources_parser = subparsers.add_parser("sources", help="Source inventory management")
+    sources_sub = sources_parser.add_subparsers(dest="sources_command")
+    sources_sub.add_parser("import", help="Import source workbook")
+    sources_sub.add_parser("activate", help="Activate accessible sources")
+    sources_sub.add_parser("reconcile", help="Import + activate in one step")
+    sources_sub.add_parser("status", help="Print reconciliation summary")
+
     args = parser.parse_args()
 
     if args.command == "health":
@@ -83,6 +90,9 @@ def main() -> int:
     elif args.command == "pipeline" and args.pipeline_command == "run":
         from newsroom.cli.commands.pipeline import pipeline_run_command
         return pipeline_run_command(args)
+    elif args.command == "sources":
+        from newsroom.cli.commands.sources import sources_command
+        return sources_command(args)
     else:
         parser.print_help()
         return 1

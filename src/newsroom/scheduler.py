@@ -20,7 +20,19 @@ from newsroom.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
 
-JOB_IDS = ("morning_news", "afternoon_news", "evening_news")
+# Gate 6: four scheduled reports at six-hour boundaries (Tehran time).
+# 00:00, 06:00, 12:00, 18:00 — independent of host/container timezone.
+JOB_IDS = ("report_00", "report_06", "report_12", "report_18")
+SCHEDULE_HOURS: tuple[int, ...] = (0, 6, 12, 18)
+
+
+def scheduled_specs() -> list[tuple[str, int, int, str, str]]:
+    """Return the (job_id, hour, minute, label, name) tuples for the four
+    six-hour scheduled reports. Deterministic and testable without a DB."""
+    return [
+        (f"report_{h:02d}", h, 0, f"{h:02d}:00", f"Scheduled report ({h:02d}:00 Tehran)")
+        for h in SCHEDULE_HOURS
+    ]
 
 
 async def run_scheduled_pipeline(job_label: str) -> None:
@@ -59,12 +71,8 @@ def create_scheduler() -> AsyncIOScheduler:
     )
 
     tz = settings.timezone or "Asia/Tehran"
-    specs = [
-        ("morning_news", 9, 0, "morning", "Morning News Report (09:00 Tehran)"),
-        ("afternoon_news", 15, 0, "afternoon", "Afternoon News Report (15:00 Tehran)"),
-        ("evening_news", 21, 0, "evening", "Evening News Report (21:00 Tehran)"),
-    ]
-    for jid, hour, minute, label, name in specs:
+    # Gate 6: six-hour reporting cadence at 00:00, 06:00, 12:00, 18:00 Tehran.
+    for jid, hour, minute, label, name in scheduled_specs():
         scheduler.add_job(
             run_scheduled_pipeline,
             CronTrigger(hour=hour, minute=minute, timezone=tz),

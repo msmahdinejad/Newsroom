@@ -40,6 +40,31 @@ class Settings(BaseSettings):
     schedule_evening: str = "21:00"
     timezone: str = "Asia/Tehran"
 
+    # Gate 6: six-hour reporting cadence (00/06/12/18 Tehran). The four
+    # scheduled jobs are registered in newsroom.scheduler with these hours.
+    schedule_report_hours: str = "0,6,12,18"
+
+    # Gate 6: safe per-platform collection intervals (seconds).
+    # Telegram/X: frequent incremental; RSS: conditional; websites: conservative;
+    # GitHub: release polling; YouTube: channel incremental; Reddit/forums: bounded.
+    collect_interval_telegram_seconds: int = 300
+    collect_interval_x_seconds: int = 1800
+    collect_interval_rss_seconds: int = 900
+    collect_interval_web_seconds: int = 3600
+    collect_interval_github_seconds: int = 1800
+    collect_interval_youtube_seconds: int = 1200
+    collect_interval_reddit_seconds: int = 900
+    # Bounded concurrency across sources during one collection pass.
+    collect_concurrency: int = 4
+    # Bounded backfill window per source per pass.
+    collect_limit_per_source: int = 10
+    # Retry delay base with jitter (seconds). Exponential backoff + jitter.
+    collect_retry_base_delay_seconds: float = 5.0
+    collect_retry_max_delay_seconds: float = 3600.0
+    # Soak-test bounds.
+    soak_max_cycles: int = 3
+    soak_cycle_pause_seconds: int = 2
+
     # Manual report cooldown (seconds)
     manual_cooldown_seconds: int = 600
 

@@ -49,8 +49,12 @@ HELP_TEXT = (
     "گزارش فوری — اخبار از آخرین گزارش زمان‌بندی‌شده\n"
     "خبرهای جدید — فقط اخبار کاملاً جدید\n"
     "گزارش جامع فعلی — گزارش گسترده فعلی\n"
-    "آخرین گزارش — آخرین گزارش تولید شده\n\n"
-    "⏰ زمان‌بندی خودکار: ۰۹:۰۰ | ۱۵:۰۰ | ۲۱:۰۰ (تهران)"
+    "آخرین گزارش — آخرین گزارش تولید شده\n"
+    "/status — وضعیت سرویس‌ها\n"
+    "/sources — آمار منابع\n"
+    "/collect — جمع‌آوری فوری\n"
+    "/schedule — زمان‌بندی گزارش‌ها\n\n"
+    "⏰ زمان‌بندی خودکار: ۰۰:۰۰ | ۰۶:۰۰ | ۱۲:۰۰ | ۱۸:۰۰ (تهران)"
 )
 
 # Max update_id offset stored to survive restart
@@ -243,6 +247,18 @@ class TelegramBot:
         if cmd == "/latest" or cmd == "latest":
             return await self._handle_latest(chat_id)
 
+        if cmd == "/status" or cmd == "status":
+            return await self._handle_status(chat_id)
+
+        if cmd == "/sources" or cmd == "sources":
+            return await self._handle_sources(chat_id)
+
+        if cmd == "/schedule" or cmd == "schedule":
+            return self._handle_schedule(chat_id)
+
+        if cmd == "/collect" or cmd == "collect":
+            return await self._handle_collect(chat_id)
+
         if cmd in ("/report", "/report new", "/report comprehensive") or cmd in (
             "report_now", "report_new", "report_comprehensive"
         ):
@@ -305,6 +321,71 @@ class TelegramBot:
             logger.error(f"/latest failed: {e}")
             with contextlib.suppress(Exception):
                 await self.api.send_message(chat_id, "❌ خطا در بازیابی گزارش.")
+            return "error"
+
+    async def _handle_status(self, chat_id: int | str) -> str:
+        """Return the /status safe operational summary."""
+        from newsroom.delivery.status_commands import status_text
+
+        try:
+            with get_db() as db:
+                text = status_text(db)
+            await self._send_text(chat_id, text)
+            return "ok"
+        except Exception as e:
+            logger.error(f"/status failed: {e}")
+            with contextlib.suppress(Exception):
+                await self._send_text(chat_id, "❌ خطا در وضعیت.")
+            return "error"
+
+    async def _handle_sources(self, chat_id: int | str) -> str:
+        """Return the /sources inventory summary."""
+        from newsroom.delivery.status_commands import sources_text
+
+        try:
+            with get_db() as db:
+                text = sources_text(db)
+            await self._send_text(chat_id, text)
+            return "ok"
+        except Exception as e:
+            logger.error(f"/sources failed: {e}")
+            with contextlib.suppress(Exception):
+                await self._send_text(chat_id, "❌ خطا در آمار منابع.")
+            return "error"
+
+    def _handle_schedule(self, chat_id: int | str) -> str:
+        """Return the /schedule summary (synchronous, DB read-only)."""
+        from newsroom.delivery.status_commands import schedule_text
+
+        try:
+            with get_db() as db:
+                text = schedule_text(db)
+            asyncio.get_running_loop().create_task(self._send_text(chat_id, text))
+        except Exception as e:
+            logger.error(f"/schedule failed: {e}")
+            with contextlib.suppress(Exception):
+                asyncio.get_running_loop().create_task(
+                    self._send_text(chat_id, "❌ خطا در زمان‌بندی.")
+                )
+        return "ok"
+
+    async def _handle_collect(self, chat_id: int | str) -> str:
+        """Run one bounded collection pass (no report generation)."""
+        await self._send_text(chat_id, "⏳ در حال جمع‌آوری منابع...")
+        try:
+            from newsroom.pipeline.collect import collect_sources
+
+            with get_db() as db:
+                result = await collect_sources(db)
+            await self._send_text(
+                chat_id,
+                f"✅ جمع‌آوری: {result.get('new_items', 0)} آیتم از {result.get('sources', 0)} منبع"
+                f" (شکست: {len(result.get('failed', []))})",
+            )
+            return "ok"
+        except Exception as e:
+            logger.error(f"/collect failed: {e}")
+            await self._send_text(chat_id, "❌ خطا در جمع‌آوری.")
             return "error"
 
     async def _handle_report(
