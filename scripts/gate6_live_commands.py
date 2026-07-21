@@ -19,9 +19,10 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
-from newsroom.delivery.bot import TelegramBot
-from newsroom.delivery.status_commands import schedule_text, sources_text, status_text
-from newsroom.storage.database import get_db
+# ruff: noqa: E402
+from newsroom.delivery.bot import TelegramBot  # noqa: E402
+from newsroom.delivery.status_commands import schedule_text, sources_text, status_text  # noqa: E402
+from newsroom.storage.database import get_db  # noqa: E402
 
 
 async def main() -> int:
