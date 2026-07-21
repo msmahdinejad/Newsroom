@@ -1,12 +1,45 @@
-"""Structured logging with correlation IDs."""
+"""Structured logging with correlation IDs and secret redaction."""
 
 import json
 import logging
+import re
 import sys
 from datetime import UTC, datetime
 from typing import Any
 
 from newsroom.config import settings
+
+# Patterns redacted from every log message. The Telegram Bot API embeds the
+# bot token in the request URL; httpx logs that URL, so we scrub it here.
+_REDACT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"bot\d{6,}:[A-Za-z0-9_-]{20,}"),  # Telegram bot token in URLs
+    re.compile(r"(?i)(api[_-]?key|token|password|secret|auth)[=:]\s*[^\s&\"']+"),
+    re.compile(r"Bearer\s+[A-Za-z0-9_.\-]+"),
+)
+
+
+def redact(message: str) -> str:
+    """Redact known secret patterns from a log message."""
+    for pat in _REDACT_PATTERNS:
+        message = pat.sub("***", message)
+    return message
+
+
+class RedactingFilter(logging.Filter):
+    """Filter that redacts secrets from log records before emission."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if record.msg and isinstance(record.msg, str):
+                record.msg = redact(record.msg)
+            if record.args:
+                if isinstance(record.args, dict):
+                    record.args = {k: (redact(v) if isinstance(v, str) else v) for k, v in record.args.items()}
+                elif isinstance(record.args, tuple):
+                    record.args = tuple(redact(a) if isinstance(a, str) else a for a in record.args)
+        except Exception:
+            pass
+        return True
 
 
 class JsonFormatter(logging.Formatter):
@@ -35,10 +68,18 @@ def setup_logging() -> None:
         handler.setFormatter(
             logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         )
+    handler.addFilter(RedactingFilter())
     logging.root.setLevel(settings.log_level)
     # Avoid duplicate handlers on re-init
     if not logging.root.handlers:
         logging.root.addHandler(handler)
+    else:
+        for h in logging.root.handlers:
+            if RedactingFilter() not in h.filters:
+                h.addFilter(RedactingFilter())
+    # Also silence httpx request-URL INFO noise (and token leakage) by default.
+    for noisy in ("httpx", "telethon", "httpcore"):
+        logging.getLogger(noisy).setLevel(max(logging.WARNING, logging.getLevelName(settings.log_level)))
 
 
 def get_logger(name: str) -> logging.Logger:

@@ -72,28 +72,36 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
         result["stages"].append(entry)
         _emit({"stage": name, "status": status, "detail": detail})
 
-    stage("collect", "starting")
-    coll = await collect_sources(session)
-    session.commit()
-    stage("collect", "ok", f"{coll['new_items']} new / {coll['sources']} sources")
+    skip_collect = os.environ.get("NEWSROOM_SKIP_COLLECT", "").lower() in ("1", "true", "yes", "on")
+
+    if skip_collect:
+        stage("collect", "skipped", "NEWSROOM_SKIP_COLLECT set")
+    else:
+        stage("collect", "starting")
+        coll = await collect_sources(session)
+        session.commit()
+        stage("collect", "ok", f"{coll['new_items']} new / {coll['sources']} sources")
 
     # Gate 5: Agent-Reach-backed external sources (YouTube, web, etc.).
     # Skipped cleanly when Agent-Reach is disabled or no AR sources configured.
     from newsroom.pipeline.gate5_collect import collect_agent_reach_sources
 
-    stage("collect_agent_reach", "starting")
-    ar_coll = await collect_agent_reach_sources(session)
-    session.commit()
-    if ar_coll.get("disabled"):
-        stage("collect_agent_reach", "skipped", "agent_reach_disabled")
-    elif ar_coll["sources"] == 0:
-        stage("collect_agent_reach", "skipped", "no agent_reach sources")
+    if skip_collect:
+        stage("collect_agent_reach", "skipped", "NEWSROOM_SKIP_COLLECT set")
     else:
-        stage(
-            "collect_agent_reach",
-            "ok",
-            f"{ar_coll['new_items']} new / {ar_coll['sources']} sources",
-        )
+        stage("collect_agent_reach", "starting")
+        ar_coll = await collect_agent_reach_sources(session)
+        session.commit()
+        if ar_coll.get("disabled"):
+            stage("collect_agent_reach", "skipped", "agent_reach_disabled")
+        elif ar_coll["sources"] == 0:
+            stage("collect_agent_reach", "skipped", "no agent_reach sources")
+        else:
+            stage(
+                "collect_agent_reach",
+                "ok",
+                f"{ar_coll['new_items']} new / {ar_coll['sources']} sources",
+            )
 
     stage("normalize", "starting")
     from newsroom.processing.normalize import Normalizer
@@ -182,6 +190,29 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
             "selected": selection.selected_count,
             "omitted": selection.omitted_count,
         }
+        # No-news path: persist a short Persian notice, deliver it, and advance
+        # the scheduled cursor — with ZERO editorial provider calls.
+        from newsroom.editorial.orchestrator import _empty_report
+
+        notice = _empty_report(report_mode)
+        report = Report(
+            content_fa=notice,
+            story_ids=[],
+            report_mode=report_mode,
+            generation_method="none",
+        )
+        session.add(report)
+        session.flush()
+        result["report_id"] = report.id
+        result["no_news_notice"] = True
+        stage("report", "ok", f"no-news notice {report.id} (zero provider calls)")
+        stage("deliver", "starting")
+        delivery_id = await _deliver(session, report.id)
+        if delivery_id:
+            result["delivery_id"] = delivery_id
+            stage("deliver", "ok", f"no-news notice delivery {delivery_id}")
+        else:
+            stage("deliver", "skipped", "telegram disabled or not configured")
         return
 
     # Gate 4: editorial layer — hierarchical for large sets, single-call for small

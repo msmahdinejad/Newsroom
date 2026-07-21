@@ -113,6 +113,22 @@ def get_delivered_story_versions(db: Session) -> dict[int, int]:
     return updated
 
 
+def get_scheduled_boundary(db: Session) -> datetime | None:
+    """Return the advanced_at of the last completely delivered scheduled report.
+
+    Used as the 'since the last completely delivered scheduled report' window
+    boundary for scheduled report selection. None when no scheduled report
+    has been delivered yet (first run selects all recent material).
+    """
+    row = db.execute(
+        text(
+            "SELECT advanced_at FROM report_cursors "
+            "WHERE cursor_key = 'scheduled_delivery' AND advanced_at IS NOT NULL"
+        )
+    ).first()
+    return row[0] if row else None
+
+
 def select_stories_for_report(
     db: Session,
     report_mode: str,
@@ -121,33 +137,48 @@ def select_stories_for_report(
     """Select stories for a report based on the report mode.
 
     - manual_new: exclude delivered stories (unless materially updated)
-    - manual / manual_comprehensive / scheduled: include all recent stories
+    - scheduled: select material since the last delivered scheduled report
+      boundary (created or materially changed after it), excluding delivered
+      unchanged stories. With no new material since the boundary → no_new_items
+      (the no-news path makes zero editorial provider calls).
+    - manual / manual_comprehensive: include all recent stories
     - latest: no selection (handled by bot directly)
 
     Returns a SelectionResult with counts and no_new_items flag.
     """
-    # Get candidates: most recent non-duplicate stories, ordered by importance
-    candidates = (
-        db.query(Story)
-        .order_by(Story.importance_score.desc(), Story.created_at.desc())
-        .limit(MAX_CANDIDATE_STORIES)
-        .all()
-    )
+    delivered_ids = get_delivered_story_ids(db)
+    updated_ids = get_delivered_story_versions(db)
+    excluded_delivered = delivered_ids - set(updated_ids.keys())
+    materially_updated = len(updated_ids)
 
-    candidate_ids = [s.id for s in candidates]
-    total_candidates = len(candidate_ids)
-
-    if report_mode == "manual_new":
-        delivered_ids = get_delivered_story_ids(db)
-        updated_ids = get_delivered_story_versions(db)
-
-        # Exclude delivered unless materially updated
-        excluded = delivered_ids - set(updated_ids.keys())
-        materially_updated = len(updated_ids)
-
-        selected = [sid for sid in candidate_ids if sid not in excluded]
-        excluded_count = len(candidate_ids) - len(selected)
-
+    if report_mode == "scheduled":
+        boundary = get_scheduled_boundary(db)
+        if boundary is None:
+            # First scheduled run — all recent candidates are new material.
+            candidates = (
+                db.query(Story)
+                .order_by(Story.importance_score.desc(), Story.created_at.desc())
+                .limit(MAX_CANDIDATE_STORIES)
+                .all()
+            )
+            candidate_ids = [s.id for s in candidates]
+        else:
+            # New material since the boundary: created or materially changed after.
+            candidates = (
+                db.query(Story)
+                .filter(
+                    (Story.created_at > boundary)
+                    | (Story.material_change_at.is_not(None) & (Story.material_change_at > boundary))
+                )
+                .order_by(Story.importance_score.desc(), Story.created_at.desc())
+                .limit(MAX_CANDIDATE_STORIES)
+                .all()
+            )
+            candidate_ids = [s.id for s in candidates]
+        total_candidates = len(candidate_ids)
+        # Exclude delivered unchanged stories (already delivered, no change).
+        selected = [sid for sid in candidate_ids if sid not in excluded_delivered]
+        excluded_count = total_candidates - len(selected)
         if not selected:
             return SelectionResult(
                 story_ids=[],
@@ -159,11 +190,8 @@ def select_stories_for_report(
                 report_mode=report_mode,
                 no_new_items=True,
             )
-
-        # Limit to max_stories
         selected = selected[:max_stories]
-        omitted = max(0, len(candidate_ids) - len(selected))
-
+        omitted = max(0, total_candidates - len(selected))
         return SelectionResult(
             story_ids=selected,
             excluded_as_delivered=excluded_count,
@@ -175,7 +203,50 @@ def select_stories_for_report(
             no_new_items=False,
         )
 
-    # All other modes: include all candidates (up to max_stories)
+    if report_mode == "manual_new":
+        candidate_ids = [
+            s.id
+            for s in db.query(Story)
+            .order_by(Story.importance_score.desc(), Story.created_at.desc())
+            .limit(MAX_CANDIDATE_STORIES)
+            .all()
+        ]
+        total_candidates = len(candidate_ids)
+        selected = [sid for sid in candidate_ids if sid not in excluded_delivered]
+        excluded_count = len(candidate_ids) - len(selected)
+        if not selected:
+            return SelectionResult(
+                story_ids=[],
+                excluded_as_delivered=excluded_count,
+                materially_updated=materially_updated,
+                total_candidates=total_candidates,
+                selected_count=0,
+                omitted_count=0,
+                report_mode=report_mode,
+                no_new_items=True,
+            )
+        selected = selected[:max_stories]
+        omitted = max(0, len(candidate_ids) - len(selected))
+        return SelectionResult(
+            story_ids=selected,
+            excluded_as_delivered=excluded_count,
+            materially_updated=materially_updated,
+            total_candidates=total_candidates,
+            selected_count=len(selected),
+            omitted_count=omitted,
+            report_mode=report_mode,
+            no_new_items=False,
+        )
+
+    # manual / manual_comprehensive: include all candidates (up to max_stories)
+    candidates = (
+        db.query(Story)
+        .order_by(Story.importance_score.desc(), Story.created_at.desc())
+        .limit(MAX_CANDIDATE_STORIES)
+        .all()
+    )
+    candidate_ids = [s.id for s in candidates]
+    total_candidates = len(candidate_ids)
     selected = candidate_ids[:max_stories]
     omitted = max(0, len(candidate_ids) - len(selected))
 

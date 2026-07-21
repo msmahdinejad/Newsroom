@@ -58,12 +58,19 @@ async def collect_sources(
     *,
     source_type: str | None = None,
     limit_per_source: int = 10,
+    max_sources: int | None = None,
 ) -> dict[str, Any]:
-    """Collect enabled sources, advance cursors only after persist success."""
+    """Collect enabled sources, advance cursors only after persist success.
+
+    ``max_sources`` caps the number of sources processed in this pass (for
+    bounded verification/soak runs); the remaining sources keep their state.
+    """
     query = session.query(Source).filter(Source.enabled.is_(True))
     if source_type:
         query = query.filter(Source.type == source_type)
     sources = query.all()
+    if max_sources is not None:
+        sources = sources[:max_sources]
 
     rss = RSSCollector()
     gh = GitHubCollector()
