@@ -86,27 +86,30 @@ def test_html_reader_validate_url():
 # ── Native Reddit subreddit collector ─────────────────────────────
 
 
-REDDIT_JSON = {
-    "data": {
-        "children": [
-            {"data": {"id": "ab1", "title": "New model", "selftext": "body",
-             "permalink": "/r/AI_Agents/comments/ab1/x", "created_utc": 1700000000.0,
-             "score": 42, "num_comments": 3, "author": "u1", "is_self": False}},
-            {"data": {"id": "cd2", "title": "Other", "selftext": "",
-             "permalink": "/r/AI_Agents/comments/cd2/y", "created_utc": 1700000100.0,
-             "score": 5, "num_comments": 0, "author": "u2", "is_self": True}},
-        ]
-    }
-}
+REDDIT_RSS = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+ <title>r/AI_Agents</title>
+ <entry>
+  <id>t3_ab1</id>
+  <title>New model</title>
+  <link href="https://www.reddit.com/r/AI_Agents/comments/ab1/x"/>
+  <updated>2026-07-01T00:00:00+00:00</updated>
+ </entry>
+ <entry>
+  <id>t3_cd2</id>
+  <title>Other</title>
+  <link href="https://www.reddit.com/r/AI_Agents/comments/cd2/y"/>
+  <updated>2026-07-02T00:00:00+00:00</updated>
+ </entry>
+</feed>"""
 
 
 @pytest.mark.asyncio
-async def test_reddit_parses_json():
+async def test_reddit_parses_rss():
     c = NativeRedditSubredditCollector()
     resp = MagicMock()
     resp.status_code = 200
-    resp.json.return_value = REDDIT_JSON
-    resp.content = b"{}"
+    resp.content = REDDIT_RSS.encode()
     resp.raise_for_status = MagicMock()
     with patch.object(c.client, "get", new_callable=AsyncMock) as mg:
         mg.return_value = resp
@@ -124,6 +127,19 @@ async def test_reddit_rate_limit_is_recoverable():
     c = NativeRedditSubredditCollector()
     resp = MagicMock()
     resp.status_code = 429
+    with patch.object(c.client, "get", new_callable=AsyncMock) as mg:
+        mg.return_value = resp
+        with pytest.raises(CollectionError) as exc:
+            await c.collect(_src("https://www.reddit.com/r/ai/", stype="reddit_subreddit"))
+    assert exc.value.recoverable is True
+    await c.close()
+
+
+@pytest.mark.asyncio
+async def test_reddit_blocked_is_recoverable():
+    c = NativeRedditSubredditCollector()
+    resp = MagicMock()
+    resp.status_code = 403
     with patch.object(c.client, "get", new_callable=AsyncMock) as mg:
         mg.return_value = resp
         with pytest.raises(CollectionError) as exc:

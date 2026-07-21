@@ -53,8 +53,56 @@ class NativeYouTubeRssCollector(SourceCollector):
             ),
             follow_redirects=True,
             limits=httpx.Limits(max_connections=6),
-            headers={"User-Agent": settings.collection_user_agent, "Accept": "text/html,application/xml"},
+            headers={
+                # RSS feed fetch works with any UA. The handle->channel_id
+                # resolution step uses a crawler UA that YouTube serves to
+                # without the EU consent wall (browser UAs are gated behind a
+                # consent redirect). Read-only public channel metadata only.
+                "User-Agent": "Mozilla/5.0 (compatible; newsroom/2.0; +https://github.com/newsroom)",
+                "Accept": "text/html,application/atom+xml,application/xml",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
         )
+
+    async def _resolve_channel(self, source: Source) -> tuple[str, str]:
+        """Resolve a handle/@handle/c/channel URL to a stable channel ID.
+
+        Uses a crawler User-Agent for the channel-page fetch because YouTube
+        gates browser UAs behind an EU consent redirect that hides the
+        channel ID. The resolved channel ID is cached in source.config.
+        """
+        cfg = source.config or {}
+        handle = str(cfg.get("channel_handle") or "").lstrip("@").strip()
+        channel_id_cfg = str(cfg.get("channel_id") or "").strip()
+        if channel_id_cfg:
+            return channel_id_cfg, handle
+        url = source.url
+        p = urlparse(url)
+        parts = [x for x in p.path.split("/") if x]
+        if not handle and parts:
+            if parts[0].startswith("@"):
+                handle = parts[0].lstrip("@")
+            elif parts[0] == "channel" and len(parts) > 1:
+                return parts[1], handle
+        if not handle:
+            raise CollectionError("youtube source requires config.channel_handle or a /@handle URL", source.url, recoverable=False)
+
+        page_url = f"https://www.youtube.com/@{handle}"
+        # Crawler UA bypasses the EU consent redirect (read-only public metadata).
+        try:
+            response = await self.client.get(
+                page_url, headers={"User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"}
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as e:
+            raise CollectionError(f"youtube resolve failed: {e}", source.url, recoverable=True) from e
+
+        html = response.text
+        for rx in (_CHANNEL_ID_RE, _EXTERNAL_ID_RE, _CANONICAL_RE):
+            m = rx.search(html)
+            if m:
+                return m.group(1), handle
+        raise CollectionError(f"could not find channel ID for @{handle}", source.url, recoverable=True)
 
     async def collect(self, source: Source) -> list[dict[str, Any]]:
         cfg = source.config or {}
@@ -115,38 +163,6 @@ class NativeYouTubeRssCollector(SourceCollector):
             )
         logger.info(f"YouTube {source.name}: {len(items)} videos (channel {channel_id})")
         return items
-
-    async def _resolve_channel(self, source: Source) -> tuple[str, str]:
-        """Resolve a handle/@handle/c/channel URL to a stable channel ID."""
-        cfg = source.config or {}
-        handle = str(cfg.get("channel_handle") or "").lstrip("@").strip()
-        channel_id_cfg = str(cfg.get("channel_id") or "").strip()
-        if channel_id_cfg:
-            return channel_id_cfg, handle
-        url = source.url
-        p = urlparse(url)
-        parts = [x for x in p.path.split("/") if x]
-        if not handle and parts:
-            if parts[0].startswith("@"):
-                handle = parts[0].lstrip("@")
-            elif parts[0] == "channel" and len(parts) > 1:
-                return parts[1], handle
-        if not handle:
-            raise CollectionError("youtube source requires config.channel_handle or a /@handle URL", source.url, recoverable=False)
-
-        page_url = f"https://www.youtube.com/@{handle}"
-        try:
-            response = await self.client.get(page_url)
-            response.raise_for_status()
-        except httpx.HTTPError as e:
-            raise CollectionError(f"youtube resolve failed: {e}", source.url, recoverable=True) from e
-
-        html = response.text
-        for rx in (_CHANNEL_ID_RE, _EXTERNAL_ID_RE, _CANONICAL_RE):
-            m = rx.search(html)
-            if m:
-                return m.group(1), handle
-        raise CollectionError(f"could not find channel ID for @{handle}", source.url, recoverable=True)
 
     def _parse_published(self, entry: Any) -> str | None:
         ts = getattr(entry, "published_parsed", None)

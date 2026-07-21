@@ -255,6 +255,29 @@ def _str(val: Any) -> str:
     return str(val).strip() if val is not None else ""
 
 
+def _trunc(val: str, n: int) -> str:
+    return val[:n] if len(val) > n else val
+
+
+def _review_level(verification: str) -> str:
+    """Derive a short review-level category from the workbook Verification text.
+
+    Fits the varchar(50) column and gives a coarse, comparable review level.
+    """
+    v = (verification or "").lower()
+    if "official page checked" in v:
+        return "official_checked"
+    if "checked 2026" in v:
+        return "directory_checked"
+    if "known/stable" in v or "known public" in v or "known or likely public" in v:
+        return "known_public"
+    if "public" in v:
+        return "public_unverified"
+    if "found in public telegram directory" in v:
+        return "directory_listed"
+    return "unverified"
+
+
 # ── Workbook location ─────────────────────────────────────────────
 
 
@@ -434,65 +457,74 @@ def import_workbook(session: Session, path: Path) -> ImportReport:
         platform_counts[row.platform] = platform_counts.get(row.platform, 0) + 1
         sid = stable_identity_for(row.platform, row.handle, row.public_url)
         vresult, vdetail = _validate_row(row)
-        validation_counts[vresult] = validation_counts.get(vresult, 0) + 1
 
-        if sid in seen_identities:
-            # Duplicate stable identity — report and skip (keep first).
+        is_duplicate = sid in seen_identities
+        if is_duplicate:
+            # Same source appears on a second workbook row. Retain the row
+            # (no silent disappearance) but mark it as a duplicate so it is
+            # never activated. The first occurrence is canonical.
+            vresult = "duplicate"
+            vdetail = "duplicate stable identity — first occurrence retained"
             report.duplicates.append(
                 {"workbook_id": row.workbook_id, "name": row.name, "platform": row.platform, "identity": sid[:12]}
             )
             report.duplicate_by_identity += 1
-            continue
-        seen_identities.add(sid)
+        else:
+            seen_identities.add(sid)
+        validation_counts[vresult] = validation_counts.get(vresult, 0) + 1
 
         mapped_type, _inactive = mapped_type_for(row.platform, row.workbook_type, row.public_url)
 
-        existing = session.query(SourceInventory).filter_by(stable_identity=sid).first()
+        # Idempotency: one inventory row per workbook row (key = workbook_id).
+        existing = session.query(SourceInventory).filter_by(workbook_id=row.workbook_id).first()
         if existing:
             # Update workbook metadata; preserve activation-managed fields.
-            existing.workbook_id = row.workbook_id
             existing.platform = row.platform
-            existing.workbook_type = row.workbook_type
-            existing.name = row.name
-            existing.handle = row.handle or None
+            existing.workbook_type = _trunc(row.workbook_type, 50)
+            existing.name = _trunc(row.name, 500)
+            existing.handle = _trunc(row.handle, 255) or None
             existing.public_url = row.public_url
-            existing.topic = row.topic or None
+            existing.topic = _trunc(row.topic, 200) or None
             existing.tags = row.tags or None
-            existing.language = row.language or None
-            existing.content_mode = row.content_mode or None
-            existing.review_level = row.verification or None
+            existing.language = _trunc(row.language, 30) or None
+            existing.content_mode = _trunc(row.content_mode, 30) or None
+            existing.review_level = _review_level(row.verification)
             existing.verification = row.verification or None
             existing.discovery_source = row.discovery_source or None
-            existing.tier = row.tier or None
+            existing.tier = _trunc(row.tier, 30) or None
             existing.coverage_score = row.coverage_score
-            existing.risk = row.risk or None
+            existing.risk = _trunc(row.risk, 30) or None
             existing.speed = row.speed
             existing.informal = row.informal
             existing.noise = row.noise
             existing.is_community = row.is_community
             existing.is_opensource_api = row.is_opensource_api
+            existing.stable_identity = sid
             existing.mapped_type = mapped_type
             existing.validation_result = vresult
             existing.validation_detail = vdetail or None
+            if is_duplicate:
+                existing.operational_state = "duplicate"
+                existing.inactive_reason = "duplicate_identity"
             report.upserted += 1
         else:
             inv = SourceInventory(
                 workbook_id=row.workbook_id,
                 platform=row.platform,
-                workbook_type=row.workbook_type,
-                name=row.name,
-                handle=row.handle or None,
+                workbook_type=_trunc(row.workbook_type, 50),
+                name=_trunc(row.name, 500),
+                handle=_trunc(row.handle, 255) or None,
                 public_url=row.public_url,
-                topic=row.topic or None,
+                topic=_trunc(row.topic, 200) or None,
                 tags=row.tags or None,
-                language=row.language or None,
-                content_mode=row.content_mode or None,
-                review_level=row.verification or None,
+                language=_trunc(row.language, 30) or None,
+                content_mode=_trunc(row.content_mode, 30) or None,
+                review_level=_review_level(row.verification),
                 verification=row.verification or None,
                 discovery_source=row.discovery_source or None,
-                tier=row.tier or None,
+                tier=_trunc(row.tier, 30) or None,
                 coverage_score=row.coverage_score,
-                risk=row.risk or None,
+                risk=_trunc(row.risk, 30) or None,
                 speed=row.speed,
                 informal=row.informal,
                 noise=row.noise,
@@ -502,12 +534,13 @@ def import_workbook(session: Session, path: Path) -> ImportReport:
                 mapped_type=mapped_type,
                 validation_result=vresult,
                 validation_detail=vdetail or None,
-                operational_state="inactive",
+                operational_state="duplicate" if is_duplicate else "inactive",
+                inactive_reason="duplicate_identity" if is_duplicate else None,
             )
             session.add(inv)
             report.upserted += 1
 
-        if vresult != "ok":
+        if vresult not in ("ok", "duplicate"):
             report.invalid.append(
                 {
                     "workbook_id": row.workbook_id,
@@ -554,6 +587,8 @@ def _activation_reason(
     telegram_mtproto_available: bool,
 ) -> str | None:
     """Return an inactive_reason if the row must be inactive, else None."""
+    if inventory.validation_result == "duplicate":
+        return "duplicate_identity"
     if inventory.validation_result != "ok":
         return f"invalid:{inventory.validation_result}"
     mapped, reason = mapped_type_for(inventory.platform, inventory.workbook_type, inventory.public_url)
@@ -611,16 +646,23 @@ def activate_inventory_sources(
             telegram_mtproto_available=telegram_mtproto_available,
         )
         plat = inv.platform
-        ps = report.by_platform_state.setdefault(plat, {"active": 0, "inactive": 0, "invalid": 0})
+        ps = report.by_platform_state.setdefault(
+            plat, {"active": 0, "inactive": 0, "invalid": 0, "duplicate": 0}
+        )
 
         if reason is not None:
-            inv.operational_state = "inactive"
             inv.inactive_reason = reason
-            if reason.startswith("invalid:"):
+            if reason == "duplicate_identity":
+                inv.operational_state = "duplicate"
+                report.inactive += 1
+                ps["duplicate"] += 1
+                report.inactive_reasons[reason] = report.inactive_reasons.get(reason, 0) + 1
+            elif reason.startswith("invalid:"):
                 inv.operational_state = "invalid"
                 report.invalid += 1
                 ps["invalid"] += 1
             else:
+                inv.operational_state = "inactive"
                 report.inactive += 1
                 ps["inactive"] += 1
                 report.inactive_reasons[reason] = report.inactive_reasons.get(reason, 0) + 1

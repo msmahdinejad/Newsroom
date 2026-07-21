@@ -44,7 +44,7 @@ def upgrade() -> None:
     op.create_table(
         "source_inventory",
         sa.Column("id", sa.Integer, primary_key=True),
-        sa.Column("workbook_id", sa.Integer, nullable=False, index=True),
+        sa.Column("workbook_id", sa.Integer, nullable=False, unique=True, index=True),
         sa.Column("platform", sa.String(50), nullable=False, index=True),
         sa.Column("workbook_type", sa.String(50), nullable=False, server_default=""),
         sa.Column("name", sa.String(500), nullable=False, server_default=""),
@@ -89,7 +89,6 @@ def upgrade() -> None:
         "ix_source_inventory_stable_identity",
         "source_inventory",
         ["stable_identity"],
-        unique=True,
     )
     op.create_index("ix_source_inventory_validation", "source_inventory", ["validation_result"])
     op.create_index("ix_source_inventory_state", "source_inventory", ["operational_state"])

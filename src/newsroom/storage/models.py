@@ -766,8 +766,8 @@ class SourceInventory(Base):
     __tablename__ = "source_inventory"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    # Original workbook row ID (preserved verbatim).
-    workbook_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    # Original workbook row ID (preserved verbatim) — idempotency key for import.
+    workbook_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, index=True)
     # Platform + source type as recorded in the workbook (Type column).
     platform: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     workbook_type: Mapped[str] = mapped_column(String(50), nullable=False, default="")
@@ -791,8 +791,10 @@ class SourceInventory(Base):
     is_community: Mapped[bool] = mapped_column(Boolean, default=False)
     is_opensource_api: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    # Stable normalized identity — independent of display name.
-    stable_identity: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    # Stable normalized identity — independent of display name. Non-unique:
+    # the same source may appear on multiple workbook rows; duplicates are
+    # retained (operational_state='duplicate') so no row disappears silently.
+    stable_identity: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     # Mapped Newsroom source type for collection (rss, github_releases,
     # telegram, reddit_subreddit, web_page, youtube_rss, x_timeline, ...).
     mapped_type: Mapped[str] = mapped_column(String(50), nullable=False, default="")

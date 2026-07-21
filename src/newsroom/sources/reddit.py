@@ -1,15 +1,15 @@
 """Native bounded Reddit subreddit collector — read-only, no Agent-Reach.
 
-Reads a public subreddit's recent posts via Reddit's public JSON endpoint
-(``https://www.reddit.com/r/{sub}/new.json``). No login state, no cookies,
-no OAuth. Reddit serves public subreddit JSON to a descriptive User-Agent
-without authentication, subject to rate limiting.
+Reads a public subreddit's recent posts via Reddit's public RSS feed
+(``https://www.reddit.com/r/{sub}/.rss``). No login state, no cookies, no
+OAuth. Reddit serves public subreddit RSS to a descriptive browser-like
+User-Agent without authentication, subject to rate limiting (HTTP 429).
 
 Guarantees:
-  * bounded result count (<= 25 posts per fetch);
+  * bounded result count (the RSS feed returns ~25 recent posts);
   * rate-limit awareness (HTTP 429 → retry-after, recoverable);
   * bounded timeouts and response size;
-  * stable post identity (``t3_`` ID) — independent of title/handle;
+  * stable post identity (Reddit permalinks/t3 IDs) — independent of title;
   * content treated as data only.
 """
 
@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
+import feedparser
 import httpx
 
 from newsroom.config import settings
@@ -49,8 +50,17 @@ def _subreddit_from(source: Source) -> str:
     )
 
 
+def _post_id_from_permalink(permalink: str) -> str:
+    """Extract the post id from a Reddit permalink: /r/sub/comments/<id>/..."""
+    parts = [x for x in permalink.split("/") if x]
+    for i, p in enumerate(parts):
+        if p == "comments" and i + 1 < len(parts):
+            return parts[i + 1]
+    return ""
+
+
 class NativeRedditSubredditCollector(SourceCollector):
-    """Collect recent public posts from a subreddit via Reddit JSON."""
+    """Collect recent public posts from a subreddit via Reddit RSS."""
 
     def __init__(self) -> None:
         self.client = httpx.AsyncClient(
@@ -63,18 +73,23 @@ class NativeRedditSubredditCollector(SourceCollector):
             follow_redirects=True,
             limits=httpx.Limits(max_connections=4),
             headers={
-                "User-Agent": f"{settings.collection_user_agent} (public subreddit reader)",
-                "Accept": "application/json",
+                # A real browser UA avoids Reddit's 403 bot block (the
+                # ``compatible;`` bot form is rejected; a browser UA is served).
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "application/rss+xml, application/atom+xml, text/xml, */*",
+                "Accept-Language": "en-US,en;q=0.9",
             },
         )
 
     async def collect(self, source: Source) -> list[dict[str, Any]]:
         sub = _subreddit_from(source)
-        url = f"{REDDIT_BASE}/r/{sub}/new.json?limit={MAX_POSTS}"
+        url = f"{REDDIT_BASE}/r/{sub}/.rss?limit={MAX_POSTS}"
         try:
             response = await self.client.get(url)
             if response.status_code == 429:
                 raise CollectionError("reddit rate limited (429)", source.url, recoverable=True)
+            if response.status_code == 403:
+                raise CollectionError("reddit blocked (403)", source.url, recoverable=True)
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
             raise CollectionError(f"HTTP {e.response.status_code}", source.url, recoverable=True) from e
@@ -85,28 +100,21 @@ class NativeRedditSubredditCollector(SourceCollector):
         if len(response.content) > max_size:
             raise CollectionError("reddit response too large", source.url, recoverable=False)
 
-        try:
-            data = response.json()
-        except Exception as e:
-            raise CollectionError(f"non-JSON reddit response: {e}", source.url, recoverable=False) from e
+        feed = feedparser.parse(response.content)
+        if feed.bozo and not feed.entries:
+            raise CollectionError("reddit feed parse failed", source.url, recoverable=False)
 
-        children = (
-            data.get("data", {}).get("children", []) if isinstance(data, dict) else []
-        )
         items: list[dict[str, Any]] = []
-        for child in children[:MAX_POSTS]:
-            post = child.get("data", {}) if isinstance(child, dict) else {}
-            post_id = str(post.get("id") or "")
+        for entry in feed.entries[:MAX_POSTS]:
+            permalink = getattr(entry, "link", "") or ""
+            post_id = _post_id_from_permalink(permalink) or getattr(entry, "id", "")
             if not post_id:
                 continue
-            created = float(post.get("created_utc") or 0)
-            published = datetime.fromtimestamp(created, UTC).isoformat() if created else None
-            permalink = post.get("permalink") or f"r/{sub}/comments/{post_id}"
-            link = (
-                f"https://www.reddit.com/{permalink.lstrip('/')}"
-                if not permalink.startswith("http")
-                else permalink
-            )
+            # Normalize post id: strip the "t3_" prefix when present.
+            if post_id.startswith("t3_"):
+                post_id = post_id[3:]
+            published = self._parse_published(entry)
+            link = permalink if permalink.startswith("http") else f"{REDDIT_BASE}{permalink}"
             items.append(
                 {
                     "type": "reddit_post",
@@ -115,20 +123,24 @@ class NativeRedditSubredditCollector(SourceCollector):
                     "source_url": source.url,
                     "post_id": post_id,
                     "subreddit": sub,
-                    "title": str(post.get("title") or "")[:500],
-                    "description": str(post.get("selftext") or "")[:2000],
+                    "title": str(getattr(entry, "title", "") or "")[:500],
+                    "description": str(getattr(entry, "summary", "") or "")[:2000],
                     "link": link,
                     "canonical_url": link,
                     "published": published,
-                    "score": int(post.get("score") or 0),
-                    "num_comments": int(post.get("num_comments") or 0),
-                    "author": str(post.get("author") or ""),
-                    "is_self": bool(post.get("is_self")),
-                    "collected_via": "native_reddit_json",
+                    "author": str(getattr(entry, "author", "") or ""),
+                    "collected_via": "native_reddit_rss",
                 }
             )
         logger.info(f"Reddit r/{sub}: {len(items)} posts")
         return items
+
+    def _parse_published(self, entry: Any) -> str | None:
+        ts = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
+        if ts:
+            dt = datetime(*ts[:6])
+            return dt.replace(tzinfo=UTC).isoformat()
+        return None
 
     def validate_url(self, source_url: str) -> bool:
         p = urlparse(source_url)

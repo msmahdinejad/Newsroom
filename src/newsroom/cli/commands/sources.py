@@ -84,5 +84,5 @@ def _do_status() -> int:
         summary = reconciliation_summary(db)
     _print(summary)
     ok = summary["reconciled"]
-    print(f"[{'OK' if ok else 'WARN'}] total={summary['total']} expected={summary['expected']}")
+    print(f"[{'OK' if ok else 'WARN'}] total={summary['total']} expected={summary['expected_total']}")
     return 0 if ok else 1
