@@ -46,6 +46,14 @@ class Source(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     config: Mapped[dict] = mapped_column(JSONB, default=dict)  # adapter-specific config
 
+    # Gate 6: workbook linkage + stable identity (independent of display name).
+    # stable_identity is a deterministic hash of (platform, normalized handle/URL)
+    # so a source survives handle renames and duplicate display names.
+    stable_identity: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
+    workbook_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    platform: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    inactive_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
     # Health tracking (denormalized for quick queries)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -727,4 +735,76 @@ class XAccountState(Base):
     consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_posts_collected: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+# ── Gate 6: authoritative source workbook inventory ───────────────
+
+
+class SourceInventory(Base):
+    """Authoritative production source registry — one row per workbook row.
+
+    Holds every reviewed workbook source (expected 1344) with all preserved
+    workbook metadata, a stable normalized identity (independent of display
+    name), validation result, operational state, and a link to the active
+    collector row in ``sources`` when the source is activated.
+
+    Repeated import is idempotent by ``stable_identity``: no duplicates, no
+    silent row disappearance. Disabling a source never removes its historical
+    raw items (the ``sources`` row is retained with ``enabled=False``).
+
+    Existing source-state names are reused:
+      operational_state: active | inactive | invalid
+      (active rows link to ``sources`` via source_id; inactive rows carry a
+      concise ``inactive_reason`` using the repository's existing inactive
+      vocabulary: agent_reach_not_configured, x_auth_not_configured,
+      access_required, not_a_repo, invalid_url, ...).
+
+    No credentials, cookies, or session material stored here.
+    """
+
+    __tablename__ = "source_inventory"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Original workbook row ID (preserved verbatim).
+    workbook_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    # Platform + source type as recorded in the workbook (Type column).
+    platform: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    workbook_type: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    name: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    handle: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    public_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    topic: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    tags: Mapped[str | None] = mapped_column(Text, nullable=True)
+    language: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    content_mode: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    review_level: Mapped[str | None] = mapped_column(String(50), nullable=True)  # Verification column
+    verification: Mapped[str | None] = mapped_column(Text, nullable=True)
+    discovery_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tier: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)  # Core/Discovery/Community/Watchlist
+    coverage_score: Mapped[int] = mapped_column(Integer, default=0)
+    risk: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Numeric workbook scores preserved for ranking.
+    speed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    informal: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    noise: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_community: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_opensource_api: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Stable normalized identity — independent of display name.
+    stable_identity: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    # Mapped Newsroom source type for collection (rss, github_releases,
+    # telegram, reddit_subreddit, web_page, youtube_rss, x_timeline, ...).
+    mapped_type: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    # validation_result: ok | invalid_url | invalid_handle | missing_url | duplicate
+    validation_result: Mapped[str] = mapped_column(String(50), nullable=False, default="ok", index=True)
+    validation_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # operational_state: active | inactive | invalid (reuses existing vocab)
+    operational_state: Mapped[str] = mapped_column(String(30), nullable=False, default="inactive", index=True)
+    inactive_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    # Link to the active collector row (sources.id) when activated.
+    source_id: Mapped[int | None] = mapped_column(ForeignKey("sources.id"), nullable=True, index=True)
+
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

@@ -54,3 +54,8 @@ data/sessions/
 data/agent-reach/
 .agent-reach-venv/
 agent_reach_audit/
+
+# Gate 6: source workbook (source data + derived import copy).
+# The importer copies the original to config/import/source-radar.xlsx on import.
+tech_ai_programming_source_radar_global_2026*.xlsx
+config/import/

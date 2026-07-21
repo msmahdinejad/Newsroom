@@ -16,21 +16,40 @@ from newsroom.pipeline.cursors import (
     save_cursor,
 )
 from newsroom.sources.github import GitHubCollector
+from newsroom.sources.html_reader import NativeHtmlReader
+from newsroom.sources.reddit import NativeRedditSubredditCollector
 from newsroom.sources.rss import RSSCollector
 from newsroom.sources.telegram_collector import TelegramMTProtoCollector
+from newsroom.sources.youtube_rss import NativeYouTubeRssCollector
 from newsroom.storage.models import CollectionRun, RawItem, Source
 
 logger = get_logger(__name__)
+
+# Native (Agent-Reach-free) source types handled by this module.
+NATIVE_SOURCE_TYPES: frozenset[str] = frozenset(
+    {"rss", "github_releases", "telegram", "web_page", "reddit_subreddit", "youtube_rss"}
+)
 
 
 def raw_content_hash(item: dict[str, Any]) -> str:
     item_url = item.get("link") or item.get("html_url") or ""
     title = item.get("title") or item.get("name") or ""
-    if item.get("type") == "telegram":
+    itype = item.get("type", "")
+    if itype == "telegram":
         # Telegram identity is channel_id:message_id — use that for hash
         channel_id = item.get("telegram_channel_id", 0)
         msg_id = item.get("message_id", 0)
         return hashlib.sha256(f"tg:{channel_id}:{msg_id}".encode()).hexdigest()
+    if itype == "youtube" or itype == "youtube_rss":
+        video_id = item.get("video_id") or ""
+        channel_id = item.get("channel_id") or ""
+        if video_id:
+            return hashlib.sha256(f"yt:{video_id}:{channel_id}".encode()).hexdigest()
+    if itype == "reddit_post":
+        post_id = item.get("post_id") or ""
+        subreddit = item.get("subreddit") or ""
+        if post_id:
+            return hashlib.sha256(f"reddit:{subreddit}:{post_id}".encode()).hexdigest()
     return hashlib.sha256((item_url + title).encode()).hexdigest()
 
 
@@ -49,6 +68,9 @@ async def collect_sources(
     rss = RSSCollector()
     gh = GitHubCollector()
     tg = TelegramMTProtoCollector()
+    html = NativeHtmlReader()
+    reddit = NativeRedditSubredditCollector()
+    yt = NativeYouTubeRssCollector()
     total_new = 0
     failed: list[str] = []
     per_source: list[dict[str, Any]] = []
@@ -68,6 +90,12 @@ async def collect_sources(
                     items = await rss.collect(source)
                 elif source.type == "github_releases":
                     items = await gh.collect(source)
+                elif source.type == "web_page":
+                    items = await html.collect(source)
+                elif source.type == "reddit_subreddit":
+                    items = await reddit.collect(source)
+                elif source.type == "youtube_rss":
+                    items = await yt.collect(source)
                 elif source.type == "telegram":
                     if not tg.configured:
                         run.status = "ok"
