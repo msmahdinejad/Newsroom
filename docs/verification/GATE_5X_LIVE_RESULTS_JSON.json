@@ -1,0 +1,66 @@
+{
+  "timestamp": "2026-07-21T09:44:39.781896+00:00",
+  "accounts_resolved": [
+    {
+      "handle": "OpenAI",
+      "account_id": "4398626122",
+      "screen_name": "OpenAI"
+    },
+    {
+      "handle": "OpenAIDevs",
+      "account_id": "1633874951508721686",
+      "screen_name": "OpenAIDevs"
+    },
+    {
+      "handle": "GoogleDeepMind",
+      "account_id": "4783690002",
+      "screen_name": "GoogleDeepMind"
+    },
+    {
+      "handle": "huggingface",
+      "account_id": "778764142412984320",
+      "screen_name": "huggingface"
+    },
+    {
+      "handle": "NVIDIAAI",
+      "account_id": "740238495952736256",
+      "screen_name": "NVIDIAAI"
+    },
+    {
+      "handle": "NVIDIAAIDev",
+      "account_id": "877952584333410305",
+      "screen_name": "NVIDIAAIDev"
+    }
+  ],
+  "accounts_failed": [],
+  "invalid_handle": "this_handle_does_not_exist_12345abc",
+  "invalid_handle_isolated": true,
+  "cycles": [
+    {
+      "cycle": 1,
+      "posts_this_cycle": 63,
+      "failed_accounts": [],
+      "invalid_handle_isolated": true
+    },
+    {
+      "cycle": 2,
+      "posts_this_cycle": 0,
+      "failed_accounts": [],
+      "invalid_handle_isolated": true
+    },
+    {
+      "cycle": 3,
+      "posts_this_cycle": 0,
+      "failed_accounts": [],
+      "invalid_handle_isolated": true
+    }
+  ],
+  "total_unique_post_ids": 63,
+  "duplicate_content_hash_groups": 0,
+  "post_kind_counts": {
+    "original": 53,
+    "quote": 10
+  },
+  "quote_count": 10,
+  "security_scan_clean": true
+}

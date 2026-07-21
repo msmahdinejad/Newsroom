@@ -242,12 +242,14 @@ def test_account_resolution_via_twitter_user(monkeypatch):
             ("twitter", "user"): _make_result(
                 "twitter", "user",
                 stdout=json.dumps(
-                    {"id": "12345", "screenName": "testuser", "name": "Test User"}
+                    {"ok": True, "data": {"id": "12345", "screenName": "testuser", "name": "Test User"}}
                 ).encode(),
             ),
             ("twitter", "user-posts"): _make_result(
                 "twitter", "user-posts",
-                stdout=json.dumps([_make_tweet(post_id="999", author_id="12345")]).encode(),
+                stdout=json.dumps(
+                    {"ok": True, "data": [_make_tweet(post_id="999", author_id="12345")]}
+                ).encode(),
             ),
         }
     )
@@ -257,6 +259,53 @@ def test_account_resolution_via_twitter_user(monkeypatch):
     items = asyncio.run(collector.collect(source))
     assert len(items) == 1
     assert items[0]["account_id"] == "12345"
+
+
+def test_account_resolution_handles_wrapper_and_bare_shapes(monkeypatch):
+    """The adapter handles both {"ok":true,"data":{...}} and bare {...} shapes."""
+    _set_auth_env(monkeypatch)
+    # Test bare shape (older twitter-cli versions)
+    source = _make_source(config={"handle": "testuser"})
+    runner = FakeRunner(
+        results={
+            ("twitter", "user"): _make_result(
+                "twitter", "user",
+                stdout=json.dumps({"id": "999", "screenName": "testuser"}).encode(),
+            ),
+            ("twitter", "user-posts"): _make_result(
+                "twitter", "user-posts",
+                stdout=json.dumps([_make_tweet(post_id="111", author_id="999")]).encode(),
+            ),
+        }
+    )
+    collector = XTimelineCollector(runner=runner)  # type: ignore[arg-type]
+    import asyncio
+
+    items = asyncio.run(collector.collect(source))
+    assert len(items) == 1
+    assert items[0]["account_id"] == "999"
+
+
+def test_user_posts_wrapper_shape_parsed(monkeypatch):
+    """The adapter handles {"ok":true,"data":[...]} wrapper for user-posts."""
+    _set_auth_env(monkeypatch)
+    source = _make_source(config={"handle": "testuser", "account_id": "100"})
+    tweets = [_make_tweet(post_id="111"), _make_tweet(post_id="222")]
+    runner = FakeRunner(
+        results={
+            ("twitter", "user-posts"): _make_result(
+                "twitter", "user-posts",
+                stdout=json.dumps({"ok": True, "data": tweets}).encode(),
+            ),
+        }
+    )
+    collector = XTimelineCollector(runner=runner)  # type: ignore[arg-type]
+    import asyncio
+
+    items = asyncio.run(collector.collect(source))
+    assert len(items) == 2
+    assert items[0]["post_id"] == "111"
+    assert items[1]["post_id"] == "222"
 
 
 def test_account_resolution_failure_raises_error(monkeypatch):

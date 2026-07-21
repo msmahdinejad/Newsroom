@@ -159,11 +159,15 @@ def test_gate5_tables_exist(engine):
 
 
 def test_alembic_at_gate5_revision(engine):
-    """The DB is at the gate5_agent_reach alembic revision."""
+    """The DB is at the gate5_agent_reach alembic revision (or a later compatible one)."""
     with engine.connect() as conn:
         row = conn.execute(text("SELECT version_num FROM alembic_version")).first()
     assert row is not None
-    assert row[0] == "0007_gate5_agent_reach"
+    # Gate 5X advances to 0008_gate5x_x_ingestion — Gate 5 tables still exist
+    assert row[0] in (
+        "0007_gate5_agent_reach",
+        "0008_gate5x_x_ingestion",
+    )
 
 
 # ── 2. Agent-Reach source registration ─────────────────────────

@@ -1156,8 +1156,16 @@ class XTimelineCollector(SourceCollector):
                 source.url,
                 recoverable=False,
             )
-        account_id = str(data.get("id") or "")
-        resolved_handle = str(data.get("screenName") or data.get("screen_name") or handle)
+        # twitter-cli wraps user data under {"ok": true, "data": {...}}
+        user_data = data.get("data") if data.get("ok") else data
+        if not isinstance(user_data, dict):
+            raise CollectionError(
+                "twitter user returned no user data object",
+                source.url,
+                recoverable=False,
+            )
+        account_id = str(user_data.get("id") or "")
+        resolved_handle = str(user_data.get("screenName") or user_data.get("screen_name") or handle)
         if not account_id or not account_id.isdigit():
             raise CollectionError(
                 f"twitter user did not return a numeric account ID: {account_id[:32]}",
@@ -1208,7 +1216,11 @@ class XTimelineCollector(SourceCollector):
                 recoverable=False,
             ) from e
         if not isinstance(data, list):
-            return []
+            # twitter-cli wraps posts under {"ok": true, "data": [...]}
+            if isinstance(data, dict) and data.get("ok") and isinstance(data.get("data"), list):
+                data = data["data"]
+            else:
+                return []
 
         items: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
