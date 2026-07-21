@@ -17,6 +17,12 @@ _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+# Ensure the repo root is importable so `from tests.scalability_datasets`
+# (used by the scalability suite) resolves.
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 
 @pytest.fixture
 def mock_db():

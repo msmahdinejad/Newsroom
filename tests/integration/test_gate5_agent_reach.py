@@ -163,10 +163,11 @@ def test_alembic_at_gate5_revision(engine):
     with engine.connect() as conn:
         row = conn.execute(text("SELECT version_num FROM alembic_version")).first()
     assert row is not None
-    # Gate 5X advances to 0008_gate5x_x_ingestion — Gate 5 tables still exist
+    # Gate 6 advances to 0009_gate6_source_inventory — Gate 5 tables still exist
     assert row[0] in (
         "0007_gate5_agent_reach",
         "0008_gate5x_x_ingestion",
+        "0009_gate6_source_inventory",
     )
 
 

@@ -254,12 +254,28 @@ class TestNoNewItemsBehavior:
         assert result.story_ids == []
         assert result.excluded_as_delivered >= 2
 
-    def test_scheduled_mode_never_no_new_items_when_stories_exist(self, db: Session):
+    def test_scheduled_mode_excludes_delivered_unchanged(self, db: Session):
+        """Gate 6: scheduled mode selects material since the last delivered
+        scheduled report and excludes delivered unchanged stories — so a
+        delivered story with no new material since the boundary is excluded
+        (enabling the no-news path)."""
         s1 = _make_story(db, "Story 1", importance=0.9)
         _make_delivered_report(db, [s1.id])
 
         result = select_stories_for_report(db, "scheduled")
-        assert s1.id in result.story_ids
+        # s1 was delivered and has no material change since -> excluded.
+        assert s1.id not in result.story_ids
+        assert result.no_new_items is True
+
+    def test_scheduled_mode_includes_new_story_after_boundary(self, db: Session):
+        """A brand-new story (not delivered) is selected by scheduled mode."""
+        s_new = _make_story(db, "New Story", importance=0.95)
+        # Another story already delivered
+        s_old = _make_story(db, "Old Story", importance=0.5)
+        _make_delivered_report(db, [s_old.id])
+
+        result = select_stories_for_report(db, "scheduled")
+        assert s_new.id in result.story_ids
         assert not result.no_new_items
 
 
