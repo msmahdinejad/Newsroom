@@ -288,7 +288,18 @@ services:
         limits:
           cpus: "1.0"
           memory: 512M
-    command: uv run python -m newsroom.service_status agent_reach_worker
+    command:
+      - uv
+      - run
+      - python
+      - -c
+      - |
+        import time
+        from newsroom.service_status import agent_reach_worker_status
+        interval = int(__import__("os").environ.get("AGENT_REACH_HEALTH_INTERVAL_SECONDS", "300"))
+        while True:
+            agent_reach_worker_status()
+            time.sleep(interval)
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "uv run python -m newsroom.service_status agent_reach_worker"]
