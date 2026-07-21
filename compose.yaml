@@ -48,19 +48,39 @@ services:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
+      # Native collectors (RSS, GitHub, Telegram MTProto, Reddit, web_page,
+      # YouTube RSS) run in this loop. Agent-Reach-backed collection is
+      # handled by the agent-reach-worker service.
+      COLLECT_LIMIT_PER_SOURCE: ${COLLECT_LIMIT_PER_SOURCE:-10}
+      COLLECT_CONCURRENCY: ${COLLECT_CONCURRENCY:-4}
+      COLLECTION_TIMEOUT_CONNECT: ${COLLECTION_TIMEOUT_CONNECT:-30}
+      COLLECTION_TIMEOUT_READ: ${COLLECTION_TIMEOUT_READ:-60}
+      COLLECTION_MAX_SIZE_MB: ${COLLECTION_MAX_SIZE_MB:-2}
+      COLLECTION_USER_AGENT: ${COLLECTION_USER_AGENT:-newsroom/2.0}
+      COLLECT_LOOP_SECONDS: ${COLLECT_LOOP_SECONDS:-900}
+      # Telegram MTProto config for the native telegram collector.
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELEGRAM_PHONE: ${TELEGRAM_PHONE:-}
+      TELEGRAM_SESSION_PATH: /data/sessions/newsroom_ingestor.session
+      TELEGRAM_INGESTOR_ENABLED: ${TELEGRAM_INGESTOR_ENABLED:-false}
+    volumes:
+      - telegram_sessions:/data/sessions
     command:
       - uv
       - run
       - python
       - -c
       - |
-        import asyncio, time
-        from argparse import Namespace
-        from newsroom.cli.commands.collect import collect_command
-        asyncio.run(collect_command(Namespace(source_type=None)))
-        open('/tmp/newsroom_collector_done','w').write('ok')
+        import asyncio, time, os
+        from newsroom.pipeline.collect import collect_sources
+        from newsroom.storage.database import get_db
+        loop_s = int(os.environ.get("COLLECT_LOOP_SECONDS", "900"))
         while True:
-            time.sleep(3600)
+            with get_db() as db:
+                asyncio.run(collect_sources(db, limit_per_source=int(os.environ.get("COLLECT_LIMIT_PER_SOURCE","10"))))
+            open('/tmp/newsroom_collector_done','w').write('ok')
+            time.sleep(loop_s)
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "uv run python -m newsroom.service_status collector"]
@@ -142,6 +162,20 @@ services:
       EDITORIAL_CONCURRENCY_LIMIT: ${EDITORIAL_CONCURRENCY_LIMIT:-1}
       EDITORIAL_SCHEDULED_RUN_BUDGET: ${EDITORIAL_SCHEDULED_RUN_BUDGET:-1}
       EDITORIAL_MANUAL_RUN_BUDGET: ${EDITORIAL_MANUAL_RUN_BUDGET:-3}
+      # Gate 6: scalable editorial + six-hour schedule + collection bounds.
+      EDITORIAL_MAX_STORIES_PER_SHARD: ${EDITORIAL_MAX_STORIES_PER_SHARD:-8}
+      EDITORIAL_MAX_MAP_CALLS_PER_REPORT: ${EDITORIAL_MAX_MAP_CALLS_PER_REPORT:-12}
+      EDITORIAL_MAX_REDUCTION_CALLS_PER_REPORT: ${EDITORIAL_MAX_REDUCTION_CALLS_PER_REPORT:-4}
+      EDITORIAL_MAX_HIERARCHY_DEPTH: ${EDITORIAL_MAX_HIERARCHY_DEPTH:-3}
+      EDITORIAL_MAX_CONCURRENT_MAP: ${EDITORIAL_MAX_CONCURRENT_MAP:-2}
+      EDITORIAL_MAX_TOTAL_INPUT_TOKENS_PER_REPORT: ${EDITORIAL_MAX_TOTAL_INPUT_TOKENS_PER_REPORT:-100000}
+      EDITORIAL_MAX_TOTAL_OUTPUT_TOKENS_PER_REPORT: ${EDITORIAL_MAX_TOTAL_OUTPUT_TOKENS_PER_REPORT:-30000}
+      EDITORIAL_SHARD_INPUT_TOKEN_LIMIT: ${EDITORIAL_SHARD_INPUT_TOKEN_LIMIT:-8000}
+      EDITORIAL_SHARD_OUTPUT_TOKEN_LIMIT: ${EDITORIAL_SHARD_OUTPUT_TOKEN_LIMIT:-4000}
+      EDITORIAL_MAX_PENDING_JOBS: ${EDITORIAL_MAX_PENDING_JOBS:-3}
+      EDITORIAL_STALE_JOB_TIMEOUT_SECONDS: ${EDITORIAL_STALE_JOB_TIMEOUT_SECONDS:-600}
+      TIMEZONE: ${TIMEZONE:-Asia/Tehran}
+      SCHEDULE_REPORT_HOURS: ${SCHEDULE_REPORT_HOURS:-0,6,12,18}
     command: uv run python -m newsroom.scheduler
     restart: unless-stopped
     healthcheck:
