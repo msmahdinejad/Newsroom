@@ -29,13 +29,15 @@ def build_evidence_set(
     db: Session,
     story_ids: list[int],
     report_mode: str = "scheduled",
+    *,
+    max_stories: int | None = None,
 ) -> EditorialEvidenceSet:
     """Build a bounded evidence set from persisted stories.
 
     Respects editorial cost controls: max stories per call, max evidence
     per story, max excerpt length.
     """
-    max_stories = settings.editorial_max_stories_per_call
+    max_stories = max_stories or settings.editorial_max_stories_per_call
     max_evidence = settings.editorial_max_evidence_per_story
     max_excerpt = settings.editorial_max_excerpt_length
 

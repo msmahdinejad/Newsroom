@@ -25,6 +25,22 @@ from newsroom.storage.models import EditorialHealth
 
 logger = get_logger(__name__)
 
+_ROUTED_PROVIDERS = {
+    "gemini",
+    "mistral",
+    "groq",
+    "nvidia",
+    "llm_router",
+    "multi_provider_router",
+}
+
+
+def cache_route_identity(provider: str, model: str) -> tuple[str, str]:
+    """Return a provider-neutral cache identity for accepted router output."""
+    if provider.strip().lower() in _ROUTED_PROVIDERS:
+        return "validated-editorial-artifact", "route-independent-v1"
+    return provider, model
+
 
 def compute_cache_key(
     report_mode: str,
@@ -155,8 +171,8 @@ def get_editorial_health(db: Session) -> dict[str, Any]:
     if not health:
         return {
             "enabled": settings.editorial_enabled,
-            "provider": settings.editorial_provider,
-            "model": settings.editorial_model or "",
+            "provider": "multi_provider_router",
+            "model": "dynamic-validated-route",
             "healthy": True,
             "status": "disabled",
         }

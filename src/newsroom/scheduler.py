@@ -9,7 +9,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from datetime import UTC, datetime
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -26,6 +27,12 @@ JOB_IDS = ("report_00", "report_06", "report_12", "report_18")
 SCHEDULE_HOURS: tuple[int, ...] = (0, 6, 12, 18)
 
 
+def scheduled_boundary_job_id(job_label: str, when: datetime | None = None) -> str:
+    """Stable Tehran reporting-window identity used across retries."""
+    tehran_now = when or datetime.now(ZoneInfo(settings.timezone or "Asia/Tehran"))
+    return f"scheduled_{tehran_now:%Y%m%d}_{job_label.replace(':', '')}"
+
+
 def scheduled_specs() -> list[tuple[str, int, int, str, str]]:
     """Return the (job_id, hour, minute, label, name) tuples for the four
     six-hour scheduled reports. Deterministic and testable without a DB."""
@@ -38,9 +45,10 @@ def scheduled_specs() -> list[tuple[str, int, int, str, str]]:
 async def run_scheduled_pipeline(job_label: str) -> None:
     """Invoke authoritative pipeline runner in-process (same lock/path as CLI)."""
     logger.info(f"Scheduled job triggered: {job_label}")
-    os.environ["NEWSROOM_JOB_ID"] = (
-        f"scheduled_{job_label}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
-    )
+    # A scheduled boundary keeps one durable identity across retries/restarts.
+    # This prevents a provider switch or delivery retry from creating another
+    # editorial job/report for the same Tehran reporting window.
+    os.environ["NEWSROOM_JOB_ID"] = scheduled_boundary_job_id(job_label)
     os.environ["NEWSROOM_SCHEDULE_LABEL"] = job_label
     os.environ.setdefault("NEWSROOM_REPORT_MODE", "scheduled")
 

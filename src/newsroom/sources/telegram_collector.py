@@ -8,9 +8,12 @@ the rest of the application.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from sqlalchemy.orm import Session
 
@@ -30,6 +33,63 @@ from newsroom.storage.models import (
 logger = get_logger(__name__)
 
 
+def telegram_transport_config() -> tuple[dict[str, Any], str]:
+    """Return bounded Telethon transport kwargs and a safe transport label.
+
+    Proxy endpoints and credentials are read only from local environment-backed
+    settings and are never returned in health output or persisted. MTProxy takes
+    precedence over a generic SOCKS/HTTP proxy when both are configured.
+    """
+    mt_host = settings.telegram_mtproxy_host.strip()
+    mt_secret = settings.telegram_mtproxy_secret.strip()
+    mt_port = int(settings.telegram_mtproxy_port or 0)
+    if mt_host or mt_secret or mt_port:
+        if not (mt_host and mt_secret and 1 <= mt_port <= 65535):
+            raise CollectionError(
+                "MTProxy configuration is incomplete",
+                "",
+                recoverable=False,
+            )
+        from telethon.network.connection.tcpmtproxy import (
+            ConnectionTcpMTProxyRandomizedIntermediate,
+        )
+
+        return {
+            "connection": ConnectionTcpMTProxyRandomizedIntermediate,
+            "proxy": (mt_host, mt_port, mt_secret),
+        }, "mtproxy"
+
+    proxy_url = settings.telegram_proxy_url.strip()
+    if not proxy_url:
+        return {}, "direct"
+
+    parsed = urlparse(proxy_url)
+    if parsed.scheme.lower() not in {"socks5", "socks4", "http"}:
+        raise CollectionError("unsupported Telegram proxy scheme", "", recoverable=False)
+    if not parsed.hostname or not parsed.port:
+        raise CollectionError("Telegram proxy host/port missing", "", recoverable=False)
+    try:
+        import socks
+    except ImportError as exc:
+        raise CollectionError("PySocks is required for Telegram proxy", "", recoverable=False) from exc
+
+    proxy_types = {
+        "socks5": socks.SOCKS5,
+        "socks4": socks.SOCKS4,
+        "http": socks.HTTP,
+    }
+    return {
+        "proxy": (
+            proxy_types[parsed.scheme.lower()],
+            parsed.hostname,
+            parsed.port,
+            True,
+            unquote(parsed.username or ""),
+            unquote(parsed.password or ""),
+        )
+    }, parsed.scheme.lower()
+
+
 class TelegramMTProtoCollector(SourceCollector):
     """Collect from public Telegram channels via MTProto user session.
 
@@ -45,15 +105,26 @@ class TelegramMTProtoCollector(SourceCollector):
         self._api_id = settings.telegram_api_id
         self._api_hash = settings.telegram_api_hash
         self._phone = settings.telegram_phone
+        self._transport_label = "direct"
 
     @property
     def configured(self) -> bool:
         return bool(self._api_id and self._api_hash and self._phone)
 
+    @property
+    def transport_label(self) -> str:
+        """Safe transport name; never includes an endpoint or credential."""
+        return self._transport_label
+
     async def _ensure_client(self) -> None:
         """Initialize or connect the Telethon client."""
         if self._client is not None:
-            return
+            is_connected = getattr(self._client, "is_connected", None)
+            if not callable(is_connected) or is_connected():
+                return
+            with contextlib.suppress(Exception):
+                await self._client.disconnect()
+            self._client = None
         if not self.configured:
             raise CollectionError(
                 "MTProto not configured — set TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_PHONE",
@@ -73,12 +144,32 @@ class TelegramMTProtoCollector(SourceCollector):
         if session_dir:
             os.makedirs(session_dir, exist_ok=True)
 
+        transport, self._transport_label = telegram_transport_config()
         self._client = TelegramClient(
             self._session_path,
             int(self._api_id),
             self._api_hash,
+            timeout=max(1, int(settings.telegram_connect_timeout_seconds)),
+            connection_retries=max(0, int(settings.telegram_connection_retries)),
+            retry_delay=max(0, int(settings.telegram_retry_delay_seconds)),
+            auto_reconnect=True,
+            **transport,
         )
-        await self._client.connect()
+        connect_deadline = max(5, int(settings.telegram_connect_timeout_seconds)) * (
+            max(0, int(settings.telegram_connection_retries)) + 1
+        ) + 5
+        try:
+            await asyncio.wait_for(self._client.connect(), timeout=connect_deadline)
+        except Exception as exc:
+            with contextlib.suppress(Exception):
+                await self._client.disconnect()
+            self._client = None
+            category = "connect_timeout" if isinstance(exc, TimeoutError) else "connect_failed"
+            raise CollectionError(
+                f"MTProto {category} ({type(exc).__name__})",
+                "",
+                recoverable=True,
+            ) from exc
         if not await self._client.is_user_authorized():
             raise CollectionError(
                 "MTProto session not authorized — run: newsroom authorize-telegram",
@@ -214,6 +305,12 @@ class TelegramMTProtoCollector(SourceCollector):
                 recoverable=False,
             )
 
+        detached_for_io = type(session).__module__.startswith("sqlalchemy.")
+        if detached_for_io:
+            session.expunge(source)
+            session.expunge(tg_channel)
+            session.commit()
+
         # Check FloodWait
         if tg_channel.floodwait_until and tg_channel.floodwait_until > datetime.now(UTC):
             wait = (tg_channel.floodwait_until - datetime.now(UTC)).total_seconds()
@@ -283,6 +380,8 @@ class TelegramMTProtoCollector(SourceCollector):
             tg_channel.source_state = "rate_limited"
             tg_channel.current_error = f"FloodWait: {wait_seconds}s"
             tg_channel.error_category = "floodwait"
+            if detached_for_io:
+                tg_channel = session.merge(tg_channel)
             session.flush()
             raise CollectionError(
                 f"FloodWait: {wait_seconds}s",
@@ -309,6 +408,8 @@ class TelegramMTProtoCollector(SourceCollector):
                 tg_channel.error_category = "collection_error"
 
             tg_channel.current_error = err_str[:500]
+            if detached_for_io:
+                tg_channel = session.merge(tg_channel)
             session.flush()
 
             raise CollectionError(

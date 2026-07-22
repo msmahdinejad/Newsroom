@@ -105,14 +105,15 @@ def telegram_ingestor_status() -> dict[str, Any]:
         import json as _json
         with open("/tmp/newsroom_ingestor_status.json", encoding="utf-8") as f:
             runtime = _json.load(f)
-        payload["authenticated"] = runtime.get("authenticated", False)
+        payload["authenticated"] = runtime.get("authenticated")
         payload["connection_status"] = runtime.get("connection_status", "disconnected")
         payload["last_update"] = runtime.get("last_update")
         payload["last_reconciliation"] = runtime.get("last_reconciliation")
         payload["last_persisted_message"] = runtime.get("last_persisted_message")
         payload["current_error_category"] = runtime.get("current_error_category")
+        payload["transport"] = runtime.get("transport", "direct")
     except Exception:
-        payload["authenticated"] = False
+        payload["authenticated"] = None
         payload["connection_status"] = "no_runtime_data"
 
     # Query channel states from DB
@@ -146,8 +147,12 @@ def telegram_ingestor_status() -> dict[str, Any]:
         payload["channels_configured"] = 0
 
     degraded = []
-    if not payload.get("authenticated"):
+    if payload.get("authenticated") is False:
         degraded.append("authentication-required")
+    elif payload.get("authenticated") is None:
+        degraded.append("authentication-unverified")
+    if payload.get("connection_status") != "connected":
+        degraded.append("connection")
     if not payload.get("session_exists"):
         degraded.append("session_missing")
     if payload.get("channels_inaccessible", 0) > 0:
@@ -219,6 +224,15 @@ def agent_reach_worker_status() -> dict[str, Any]:
         degraded.append("database")
     if not settings.agent_reach_pinned_version:
         degraded.append("no_pinned_version")
+    if settings.agent_reach_pinned_version != "1494c2ab239e7355a77e7cceaf3271453a1f34b5":
+        degraded.append("pinned_version_mismatch")
+
+    import shutil
+
+    if not shutil.which(settings.agent_reach_executable):
+        degraded.append("agent_reach_executable_absent")
+    if "x" in settings.agent_reach_allowed_channels_set() and not shutil.which("twitter"):
+        degraded.append("twitter_executable_absent")
 
     # Channel health from the backend_state table (safe fields only).
     try:
@@ -245,8 +259,27 @@ def agent_reach_worker_status() -> dict[str, Any]:
                     }
                 )
             payload["channels"] = channels
+            if not rows:
+                degraded.append("no_backend_state")
     except Exception:
         payload["channels"] = []
+        degraded.append("backend_state_unavailable")
+
+    try:
+        import json as _json
+
+        with open("/tmp/newsroom_agent_reach_status.json", encoding="utf-8") as file:
+            runtime = _json.load(file)
+        payload["worker_status"] = runtime.get("status")
+        payload["last_cycle_at"] = runtime.get("last_cycle_at")
+        payload["x_auth_configured"] = runtime.get("x_auth_configured", False)
+        payload["x_sources_attempted"] = runtime.get("x_sources_attempted", 0)
+        payload["x_failures"] = runtime.get("x_failures", 0)
+        if runtime.get("status") == "degraded":
+            degraded.append(runtime.get("failure_category") or "worker_degraded")
+    except Exception:
+        payload["worker_status"] = "starting"
+        degraded.append("no_worker_runtime")
 
     if degraded:
         payload["degraded"] = degraded
@@ -264,7 +297,7 @@ def main(argv: list[str] | None = None) -> int:
         ok = payload.get("healthy", False)
     elif kind == "ingestor":
         payload = telegram_ingestor_status()
-        ok = payload["status"] in ("disabled", "blocked_by_credentials", "enabled")
+        ok = payload.get("healthy", False)
     elif kind == "collector":
         payload = collector_status()
         ok = payload["status"] == "healthy"

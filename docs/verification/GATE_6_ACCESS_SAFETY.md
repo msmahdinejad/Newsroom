@@ -6,12 +6,18 @@ The following are **never** committed, printed in logs, or included in
 documentation/Telegram responses:
 
 - `.env` (gitignored)
+- `.env.providers.local` (locally excluded; canonical provider runtime source)
 - `.env.x.local` (gitignored)
 - Telegram session files (`data/sessions/`, `*.session*` — gitignored)
 - Agent-Reach local configuration (`data/agent-reach/` — gitignored)
 - browser session material
 - local Qwen configuration (`.qwen/` — untouched)
 - local Specify configuration (`.specify/` — untouched)
+
+Provider/model health, queue usage, circuit state, route attempts, and key-pool
+state contain only safe metadata. Provider keys are represented by one-way
+fingerprints; original values are absent from PostgreSQL, health output, logs,
+tracked files, and documentation.
 
 ## Log redaction
 

@@ -48,9 +48,9 @@ services:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
-      # Native collectors (RSS, GitHub, Telegram MTProto, Reddit, web_page,
-      # YouTube RSS) run in this loop. Agent-Reach-backed collection is
-      # handled by the agent-reach-worker service.
+      # Native stateless collectors (RSS, GitHub, Reddit, web_page, YouTube
+      # RSS) run here. Telegram MTProto is exclusively owned by the dedicated
+      # telegram-ingestor service; X is owned by agent-reach-worker.
       COLLECT_LIMIT_PER_SOURCE: ${COLLECT_LIMIT_PER_SOURCE:-10}
       COLLECT_CONCURRENCY: ${COLLECT_CONCURRENCY:-4}
       COLLECTION_TIMEOUT_CONNECT: ${COLLECTION_TIMEOUT_CONNECT:-30}
@@ -58,14 +58,6 @@ services:
       COLLECTION_MAX_SIZE_MB: ${COLLECTION_MAX_SIZE_MB:-2}
       COLLECTION_USER_AGENT: ${COLLECTION_USER_AGENT:-newsroom/2.0}
       COLLECT_LOOP_SECONDS: ${COLLECT_LOOP_SECONDS:-900}
-      # Telegram MTProto config for the native telegram collector.
-      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
-      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
-      TELEGRAM_PHONE: ${TELEGRAM_PHONE:-}
-      TELEGRAM_SESSION_PATH: /data/sessions/newsroom_ingestor.session
-      TELEGRAM_INGESTOR_ENABLED: ${TELEGRAM_INGESTOR_ENABLED:-false}
-    volumes:
-      - telegram_sessions:/data/sessions
     command:
       - uv
       - run
@@ -78,7 +70,11 @@ services:
         loop_s = int(os.environ.get("COLLECT_LOOP_SECONDS", "900"))
         while True:
             with get_db() as db:
-                asyncio.run(collect_sources(db, limit_per_source=int(os.environ.get("COLLECT_LIMIT_PER_SOURCE","10"))))
+                asyncio.run(collect_sources(
+                    db,
+                    limit_per_source=int(os.environ.get("COLLECT_LIMIT_PER_SOURCE","10")),
+                    exclude_source_types={"telegram", "x_timeline"},
+                ))
             open('/tmp/newsroom_collector_done','w').write('ok')
             time.sleep(loop_s)
     restart: unless-stopped
@@ -104,6 +100,9 @@ services:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
+      LLM_PROVIDER_ENV_FILE: /run/newsroom/.env.providers.local
+    volumes:
+      - ./.env.providers.local:/run/newsroom/.env.providers.local:ro
     command:
       - uv
       - run
@@ -146,10 +145,7 @@ services:
       TELEGRAM_BOT_ENABLED: ${TELEGRAM_BOT_ENABLED:-false}
       TELEGRAM_INGESTOR_ENABLED: ${TELEGRAM_INGESTOR_ENABLED:-false}
       EDITORIAL_ENABLED: ${EDITORIAL_ENABLED:-false}
-      EDITORIAL_PROVIDER: ${EDITORIAL_PROVIDER:-deterministic}
-      EDITORIAL_MODEL: ${EDITORIAL_MODEL:-}
-      EDITORIAL_API_BASE: ${EDITORIAL_API_BASE:-https://api.openai.com/v1}
-      EDITORIAL_API_KEY: ${EDITORIAL_API_KEY:-}
+      LLM_PROVIDER_ENV_FILE: /run/newsroom/.env.providers.local
       EDITORIAL_TIMEOUT_SECONDS: ${EDITORIAL_TIMEOUT_SECONDS:-60}
       EDITORIAL_MAX_RETRIES: ${EDITORIAL_MAX_RETRIES:-2}
       EDITORIAL_MAX_INPUT_TOKENS: ${EDITORIAL_MAX_INPUT_TOKENS:-12000}
@@ -176,6 +172,8 @@ services:
       EDITORIAL_STALE_JOB_TIMEOUT_SECONDS: ${EDITORIAL_STALE_JOB_TIMEOUT_SECONDS:-600}
       TIMEZONE: ${TIMEZONE:-Asia/Tehran}
       SCHEDULE_REPORT_HOURS: ${SCHEDULE_REPORT_HOURS:-0,6,12,18}
+    volumes:
+      - ./.env.providers.local:/run/newsroom/.env.providers.local:ro
     command: uv run python -m newsroom.scheduler
     restart: unless-stopped
     healthcheck:
@@ -204,6 +202,9 @@ services:
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       TELEGRAM_AUTHORIZED_USER_IDS: ${TELEGRAM_AUTHORIZED_USER_IDS:-}
       TELEGRAM_BOT_ENABLED: ${TELEGRAM_BOT_ENABLED:-false}
+      LLM_PROVIDER_ENV_FILE: /run/newsroom/.env.providers.local
+    volumes:
+      - ./.env.providers.local:/run/newsroom/.env.providers.local:ro
     command: uv run python -m newsroom.delivery.bot
     restart: unless-stopped
     healthcheck:
@@ -233,6 +234,16 @@ services:
       TELEGRAM_PHONE: ${TELEGRAM_PHONE:-}
       TELEGRAM_SESSION_PATH: /data/sessions/newsroom_ingestor.session
       TELEGRAM_INGESTOR_ENABLED: ${TELEGRAM_INGESTOR_ENABLED:-false}
+      TELEGRAM_CONNECT_TIMEOUT_SECONDS: ${TELEGRAM_CONNECT_TIMEOUT_SECONDS:-12}
+      TELEGRAM_CONNECTION_RETRIES: ${TELEGRAM_CONNECTION_RETRIES:-1}
+      TELEGRAM_RETRY_DELAY_SECONDS: ${TELEGRAM_RETRY_DELAY_SECONDS:-2}
+      TELEGRAM_RECONNECT_COOLDOWN_SECONDS: ${TELEGRAM_RECONNECT_COOLDOWN_SECONDS:-300}
+      TELEGRAM_MAX_SOURCES_PER_CYCLE: ${TELEGRAM_MAX_SOURCES_PER_CYCLE:-20}
+      TELEGRAM_SOURCE_SPACING_SECONDS: ${TELEGRAM_SOURCE_SPACING_SECONDS:-1}
+      TELEGRAM_PROXY_URL: ${TELEGRAM_PROXY_URL:-}
+      TELEGRAM_MTPROXY_HOST: ${TELEGRAM_MTPROXY_HOST:-}
+      TELEGRAM_MTPROXY_PORT: ${TELEGRAM_MTPROXY_PORT:-0}
+      TELEGRAM_MTPROXY_SECRET: ${TELEGRAM_MTPROXY_SECRET:-}
     volumes:
       - telegram_sessions:/data/sessions
     command: uv run python -m newsroom.sources.telegram_ingestor_service
@@ -263,19 +274,25 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    env_file:
+      - path: .env.x.local
+        required: false
     environment:
       DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
-      AGENT_REACH_ENABLED: ${AGENT_REACH_ENABLED:-false}
-      AGENT_REACH_EXECUTABLE: ${AGENT_REACH_EXECUTABLE:-agent-reach}
+      AGENT_REACH_ENABLED: "true"
+      AGENT_REACH_EXECUTABLE: agent-reach
       AGENT_REACH_CONFIG_DIR: /data/agent-reach
       AGENT_REACH_TIMEOUT_SECONDS: ${AGENT_REACH_TIMEOUT_SECONDS:-60}
       AGENT_REACH_MAX_OUTPUT_BYTES: ${AGENT_REACH_MAX_OUTPUT_BYTES:-2097152}
       AGENT_REACH_MAX_RETRIES: ${AGENT_REACH_MAX_RETRIES:-1}
       AGENT_REACH_CONCURRENCY_LIMIT: ${AGENT_REACH_CONCURRENCY_LIMIT:-2}
-      AGENT_REACH_ALLOWED_CHANNELS: ${AGENT_REACH_ALLOWED_CHANNELS:-web,rss,github,youtube}
-      AGENT_REACH_PINNED_VERSION: ${AGENT_REACH_PINNED_VERSION:-}
-      AGENT_REACH_ALLOW_AUTHENTICATED_CHANNELS: ${AGENT_REACH_ALLOW_AUTHENTICATED_CHANNELS:-false}
+      AGENT_REACH_ALLOWED_CHANNELS: ${AGENT_REACH_WORKER_ALLOWED_CHANNELS:-web,rss,github,youtube,x}
+      AGENT_REACH_PINNED_VERSION: 1494c2ab239e7355a77e7cceaf3271453a1f34b5
+      AGENT_REACH_ALLOW_AUTHENTICATED_CHANNELS: "true"
       AGENT_REACH_HEALTH_INTERVAL_SECONDS: ${AGENT_REACH_HEALTH_INTERVAL_SECONDS:-300}
+      X_WORKER_POLL_SECONDS: ${X_WORKER_POLL_SECONDS:-900}
+      X_WORKER_BATCH_SIZE: ${X_WORKER_BATCH_SIZE:-12}
+      X_WORKER_SPACING_SECONDS: ${X_WORKER_SPACING_SECONDS:-2}
       # Deliberately NOT passing TELEGRAM_BOT_TOKEN, TELEGRAM_API_HASH,
       # EDITORIAL_API_KEY, or any other application secret. The worker talks
       # to upstream platforms via the controlled runner only.
@@ -288,25 +305,14 @@ services:
         limits:
           cpus: "1.0"
           memory: 512M
-    command:
-      - uv
-      - run
-      - python
-      - -c
-      - |
-        import time
-        from newsroom.service_status import agent_reach_worker_status
-        interval = int(__import__("os").environ.get("AGENT_REACH_HEALTH_INTERVAL_SECONDS", "300"))
-        while True:
-            agent_reach_worker_status()
-            time.sleep(interval)
+    command: uv run python -m newsroom.sources.agent_reach.worker
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "uv run python -m newsroom.service_status agent_reach_worker"]
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 20s
+      start_period: 90s
     logging:
       driver: json-file
       options:
@@ -316,6 +322,7 @@ services:
   # One-time authorization — run with: docker compose run --rm telegram-authorize
   # Interactive: requires TTY for getpass login code and optional 2FA password
   telegram-authorize:
+    profiles: ["authorize"]
     build: .
     container_name: newsroom-telegram-authorize
     depends_on:
@@ -329,6 +336,13 @@ services:
       TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
       TELEGRAM_PHONE: ${TELEGRAM_PHONE:-}
       TELEGRAM_SESSION_PATH: /data/sessions/newsroom_ingestor.session
+      TELEGRAM_CONNECT_TIMEOUT_SECONDS: ${TELEGRAM_CONNECT_TIMEOUT_SECONDS:-12}
+      TELEGRAM_CONNECTION_RETRIES: ${TELEGRAM_CONNECTION_RETRIES:-1}
+      TELEGRAM_RETRY_DELAY_SECONDS: ${TELEGRAM_RETRY_DELAY_SECONDS:-2}
+      TELEGRAM_PROXY_URL: ${TELEGRAM_PROXY_URL:-}
+      TELEGRAM_MTPROXY_HOST: ${TELEGRAM_MTPROXY_HOST:-}
+      TELEGRAM_MTPROXY_PORT: ${TELEGRAM_MTPROXY_PORT:-0}
+      TELEGRAM_MTPROXY_SECRET: ${TELEGRAM_MTPROXY_SECRET:-}
     volumes:
       - telegram_sessions:/data/sessions
     command: uv run python -m newsroom.sources.authorize_telegram

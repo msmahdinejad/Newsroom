@@ -104,5 +104,6 @@ def test_alembic_at_gate2_revision():
         "0007_gate5_agent_reach",
         "0008_gate5x_x_ingestion",
         "0009_gate6_source_inventory",
+        "0010_gate6_router_reliability",
     )
     eng.dispose()

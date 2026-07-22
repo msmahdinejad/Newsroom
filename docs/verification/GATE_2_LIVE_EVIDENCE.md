@@ -1,106 +1,44 @@
 # Gate 2 — Live Telegram Evidence
 
 ## Date: 2026-07-16
-## Branch: gate-2-telegram-delivery
-## Commit: 0c83018 (pre-live) → live-verified
 
-## Bot Identity
+The output bot passed `getMe`, webhook cleanup, and conflict-free polling.
+Bot tokens, authorized user identifiers, and destination chat identifiers are
+redacted from this tracked evidence file.
 
-| Timestamp | Action | Result | Bot Username | Bot ID |
-|---|---|---|---|---|
-| 2026-07-16T17:41:20+0330 | getMe | passed | @newsroom_telegram_bot | 8836543935 |
-| 2026-07-16T17:41:20+0330 | deleteWebhook | passed | — | — |
-| 2026-07-16T17:41:20+0330 | getUpdates | passed (no 409) | — | — |
+## Commands and authorization
 
-Token display: [REDACTED]
+Authorized `/start` and `/help` commands succeeded. A synthetic unauthorized
+identity was denied without exposing infrastructure details. `/latest`,
+`/report`, `/report new`, `/report comprehensive`, and the Persian inline
+button callback completed through the canonical command path.
 
-## Authorization
+## Idempotency and locking
 
-| Timestamp | Update ID | User ID | Command | Result |
-|---|---|---|---|---|
-| 2026-07-16T14:14:18 | 489846381 | [REDACTED] | /start | ok (authorized) |
-| 2026-07-16T14:19:23 | 489846382 | [REDACTED] | /help | ok (authorized) |
-| 2026-07-16T14:28:34 | 999900099 | 777777777 | /help | denied (unauthorized) |
+- Replayed updates and callbacks were skipped.
+- The manual-new request created one report, one command request, and one
+  delivery.
+- Eight recorded update IDs were distinct.
+- A report request returned `busy` while the PostgreSQL pipeline lock was held
+  and succeeded after release.
 
-Unauthorized denial: no infrastructure details exposed.
+## Multi-chunk and partial recovery
 
-## Commands
+Report 75 delivered five ordered chunks with message IDs 23–27. Delivery 70
+failed after three of five chunks, resumed the same row, preserved message IDs
+28–30, and completed with message IDs 31–32. Failed and partial deliveries did
+not advance the scheduled cursor.
 
-| Timestamp | Update ID | Command | Result | Report ID | Delivery ID | Msg IDs |
-|---|---|---|---|---|---|---|
-| 2026-07-16T14:19:23 | 489846382 | /help | passed | — | — | — |
-| 2026-07-16T14:19:37 | 489846383 | /latest | passed | — | — | — |
-| 2026-07-16T14:20:28 | 489846384 | /report | passed | 71 | 66 | [11] |
-| 2026-07-16T14:34:44 | 999900100 | /report new | passed | 72 | 67 | [14] |
-| 2026-07-16T14:36:23 | 999900101 | /report comprehensive | passed | 73 | 68 | [17] |
-| 2026-07-16T14:34:46 | 999900102 | callback:latest | passed | — | — | — |
+## Cursor and restart behavior
 
-## Persian Inline Buttons
-
-Button `latest` (آخرین گزارش) dispatched as callback — result: ok.
-
-## Idempotency
-
-| Test | Update ID | Result |
-|---|---|---|
-| Replay /report new | 999900100 | skipped (already processed) |
-| Replay callback latest | 999900102 | skipped (already processed) |
-| No duplicate reports | — | True (report 72 has 1 delivery) |
-| No duplicate command requests | — | True (1 request for manual_new) |
-| All update_ids distinct | — | True (8 updates, 8 distinct IDs) |
-
-## PostgreSQL Pipeline Locking
-
-| Test | Lock State | Result |
-|---|---|---|
-| Lock held + /report | held by test | result=busy, cmd_status=busy |
-| Lock released + /report | free | result=ok |
-
-## Multi-chunk Delivery
-
-| Report ID | Chunks | Status | Message IDs |
-|---|---|---|---|
-| 75 | 5 | delivered | [23, 24, 25, 26, 27] |
-
-All chunks ordered 0→4, all status=sent.
-
-## Partial Delivery Recovery
-
-| Phase | Delivery ID | Status | Chunks | Message IDs |
-|---|---|---|---|---|
-| Initial (chunks 0-2 sent, 3 failed) | 70 | partial | 3/5 | [28, 29, 30] |
-| Retry (chunks 3-4 sent) | 70 | delivered | 5/5 | [28, 29, 30, 31, 32] |
-
-Early chunks preserved: True (msg_ids 28,29,30 unchanged).
-Full recovery: True.
-
-## Cursor Semantics
-
-| Test | Cursor Before | Cursor After | Result |
-|---|---|---|---|
-| Failed delivery | None | None | not advanced |
-| Partial delivery | None | None | not advanced |
-| Complete delivery | None | report_id=79 | advanced |
-| Double confirmation | report_id=79 | report_id=79 | not double-advanced |
-| Manual reports | None | None | never advanced |
-
-## Restart Recovery
-
-| Test | Result |
-|---|---|
-| Bot killed and restarted | polling resumed, no 409 |
-| Replayed update 489846382 | skipped (no duplicate) |
-| /latest after restart | ok |
-| Delivery state persisted | 7 deliveries with correct state |
+Complete delivery advanced the cursor to report 79; confirming it twice did not
+advance twice, and manual reports never moved the scheduled cursor. After the
+bot was killed and restarted, polling resumed without a 409 conflict, a replayed
+update was skipped, `/latest` succeeded, and all delivery state remained
+durable.
 
 ## Security
 
-| Surface | Token Found |
-|---|---|
-| Git history | only synthetic test fixtures |
-| Tracked files | only synthetic test fixtures |
-| .env tracked | False |
-| Database rows | 0 |
-| Logs | 0 |
-| Evidence docs | 0 |
-| .dockerignore | excludes .env |
+The live token was absent from Git history, tracked files, PostgreSQL, logs,
+and evidence output. Synthetic credential-like fixtures remain limited to
+tests. `.env` is excluded from both Git and Docker build context.

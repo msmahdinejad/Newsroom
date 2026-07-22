@@ -13,8 +13,10 @@ This is the single entry point for the pipeline runner. It:
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 
 from sqlalchemy.orm import Session
 
@@ -64,17 +66,52 @@ class EditorialAttempt:
     output: EditorialOutput | None = None
 
 
-def select_provider() -> EditorialProvider:
-    """Select the configured editorial provider."""
-    if settings.editorial_ready():
-        from newsroom.editorial.openai_provider import create_provider_from_settings
+@lru_cache(maxsize=1)
+def _production_router() -> EditorialProvider:
+    """Build one shared process-wide router from its canonical local file.
 
-        provider = create_provider_from_settings()
-        if provider:
-            return provider
-        # Fall through to deterministic if credentials not available
-        logger.warning("Editorial enabled but no provider credentials — using deterministic")
-    return DeterministicEditorialProvider()
+    Provider access values are deliberately absent from ``settings`` and the
+    process environment. PostgreSQL contributes safe validated-route, quota,
+    cooldown, and circuit state only.
+    """
+    from newsroom.editorial.router.factory import create_router_from_local_env
+    from newsroom.editorial.router_persistence import PostgresRouterStateSink
+
+    provider_file = os.environ.get("LLM_PROVIDER_ENV_FILE", ".env.providers.local")
+    sink = PostgresRouterStateSink()
+    restored = sink.load()
+    router = create_router_from_local_env(
+        provider_file,
+        state_sink=sink,
+        fallback=DeterministicEditorialProvider(),
+        validated_models=restored.validated_model_ids,
+        restored_snapshot=restored.snapshots,
+        timeout_seconds=float(settings.editorial_timeout_seconds),
+    )
+    if not router.config.enabled:
+        logger.warning("Editorial router disabled — using deterministic")
+        return DeterministicEditorialProvider()
+    if not any(provider.keys for provider in router.config.providers):
+        logger.warning("Editorial router has no configured provider access — using deterministic")
+        return DeterministicEditorialProvider()
+    if not any(route.enabled and route.validation_status == "validated" for route in router.routes):
+        logger.warning("Editorial router has no validated model route — using deterministic")
+        return DeterministicEditorialProvider()
+    return router
+
+
+def select_provider() -> EditorialProvider:
+    """Select the persistent multi-provider router or deterministic fallback."""
+    if not settings.editorial_enabled:
+        return DeterministicEditorialProvider()
+    try:
+        return _production_router()
+    except Exception as exc:
+        logger.warning(
+            "Editorial router initialization failed (%s) — using deterministic",
+            type(exc).__name__,
+        )
+        return DeterministicEditorialProvider()
 
 
 def generate_editorial(
@@ -83,6 +120,7 @@ def generate_editorial(
     report_mode: str = "scheduled",
     *,
     cache_check: bool = True,
+    job_id: str | None = None,
 ) -> tuple[str, EditorialAttempt]:
     """Generate an editorial report from persisted stories.
 
@@ -121,6 +159,10 @@ def generate_editorial(
     if cache_check:
         cached = _check_cache(db, evidence, report_mode, provider.name, provider.model_name)
         if cached:
+            attempt.provider = cached.provider or provider.name
+            attempt.model = cached.model or provider.model_name
+            attempt.usage = cached.usage
+            attempt.output = cached.output
             attempt.status = "ok"
             attempt.fallback_used = False
             attempt.completed_at = datetime.now(UTC).isoformat()
@@ -135,10 +177,20 @@ def generate_editorial(
         max_input_tokens=settings.editorial_max_input_tokens,
         max_output_tokens=settings.editorial_max_output_tokens,
         timeout_seconds=settings.editorial_timeout_seconds,
+        stage="editorial",
+        job_id=job_id or "",
     )
 
     try:
         response = provider.generate(request)
+        attempt.provider = response.provider or provider.name
+        attempt.model = response.model or provider.model_name
+        attempt.fallback_used = bool(
+            response.fallback_used
+            or (attempt.provider == "deterministic" and provider.name != "deterministic")
+        )
+        if attempt.fallback_used:
+            attempt.status = "fallback"
     except EditorialError as e:
         attempt.error_category = e.category.value
         attempt.error_summary = e.detail
@@ -150,6 +202,8 @@ def generate_editorial(
             )
             det_provider = DeterministicEditorialProvider()
             response = det_provider.generate(request)
+            attempt.provider = response.provider or det_provider.name
+            attempt.model = response.model or det_provider.model_name
             attempt.fallback_used = True
             attempt.status = "fallback"
         else:
@@ -162,7 +216,7 @@ def generate_editorial(
 
     # 4. Validate output (for AI providers; deterministic is already structured)
     output = response.output
-    if provider.name != "deterministic":
+    if attempt.provider != "deterministic":
         # Re-validate the structured output
         try:
             output = _validate_output(output, evidence, settings.editorial_max_output_tokens)
@@ -176,6 +230,8 @@ def generate_editorial(
                 det_provider = DeterministicEditorialProvider()
                 response = det_provider.generate(request)
                 output = response.output
+                attempt.provider = response.provider or det_provider.name
+                attempt.model = response.model or det_provider.model_name
                 attempt.fallback_used = True
                 attempt.status = "fallback"
             else:
@@ -184,7 +240,7 @@ def generate_editorial(
                 raise
 
     # 5. Grounding validation (for AI providers)
-    if provider.name != "deterministic" or attempt.fallback_used is False:
+    if attempt.provider != "deterministic":
         grounded_output, grounding_result = validate_grounding(evidence, output)
         attempt.grounding_result = "; ".join(grounding_result.issues) if grounding_result.issues else "ok"
 
@@ -193,6 +249,8 @@ def generate_editorial(
             det_provider = DeterministicEditorialProvider()
             response = det_provider.generate(request)
             grounded_output, grounding_result = validate_grounding(evidence, response.output)
+            attempt.provider = response.provider or det_provider.name
+            attempt.model = response.model or det_provider.model_name
             attempt.fallback_used = True
             attempt.status = "fallback"
             attempt.grounding_result = "; ".join(grounding_result.issues) if grounding_result.issues else "ok"
@@ -244,7 +302,13 @@ def _check_cache(
     model: str,
 ) -> EditorialResponse | None:
     """Check for cached editorial result by cache key. Returns None if no hit."""
-    from newsroom.editorial.persistence import compute_cache_key, find_cached_attempt
+    from newsroom.editorial.persistence import (
+        cache_route_identity,
+        compute_cache_key,
+        find_cached_attempt,
+    )
+
+    provider, model = cache_route_identity(provider, model)
 
     cache_key = compute_cache_key(
         report_mode,

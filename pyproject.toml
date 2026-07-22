@@ -28,6 +28,11 @@ dev = [
 ]
 telegram = [
     "telethon>=1.36.0",
+    "pysocks>=1.7.1",
+]
+external-sources = [
+    "agent-reach @ https://github.com/Panniantong/Agent-Reach/archive/1494c2ab239e7355a77e7cceaf3271453a1f34b5.zip",
+    "twitter-cli==0.8.5",
 ]
 
 [project.scripts]
@@ -40,9 +45,13 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/newsroom"]
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+exclude = [".diagnostics"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM"]

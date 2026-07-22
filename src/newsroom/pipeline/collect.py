@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 from datetime import UTC, datetime
 from typing import Any
@@ -24,6 +25,40 @@ from newsroom.sources.youtube_rss import NativeYouTubeRssCollector
 from newsroom.storage.models import CollectionRun, RawItem, Source
 
 logger = get_logger(__name__)
+
+
+def _release_attempt_transaction(
+    session: Session,
+    source: Source,
+    run: CollectionRun,
+) -> tuple[int, bool]:
+    """Commit the attempt start and detach stateless sources during I/O."""
+    is_real_session = type(session).__module__.startswith("sqlalchemy.")
+    if not is_real_session:
+        return 0, False
+    run_id = int(run.id)
+    if source.type != "telegram":
+        session.expunge(source)
+        session.commit()
+        return run_id, True
+    session.commit()
+    return run_id, False
+
+
+def _resume_attempt(
+    session: Session,
+    source: Source,
+    run: CollectionRun,
+    run_id: int,
+    detached: bool,
+) -> tuple[Source, CollectionRun]:
+    if not detached:
+        return source, run
+    attached_source = session.merge(source)
+    attached_run = session.get(CollectionRun, run_id)
+    if attached_run is None:
+        raise RuntimeError(f"collection run {run_id} disappeared")
+    return attached_source, attached_run
 
 # Native (Agent-Reach-free) source types handled by this module.
 NATIVE_SOURCE_TYPES: frozenset[str] = frozenset(
@@ -59,6 +94,7 @@ async def collect_sources(
     source_type: str | None = None,
     limit_per_source: int = 10,
     max_sources: int | None = None,
+    exclude_source_types: set[str] | frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Collect enabled sources, advance cursors only after persist success.
 
@@ -69,6 +105,8 @@ async def collect_sources(
     if source_type:
         query = query.filter(Source.type == source_type)
     sources = query.all()
+    if exclude_source_types:
+        sources = [source for source in sources if source.type not in exclude_source_types]
     if max_sources is not None:
         sources = sources[:max_sources]
 
@@ -84,13 +122,18 @@ async def collect_sources(
 
     try:
         for source in sources:
+            attempt_at = datetime.now(UTC)
+            source.last_attempt_at = attempt_at
+            source.validation_status = "attempting"
+            source.failure_category = None
             run = CollectionRun(
                 source_id=source.id,
-                started_at=datetime.now(UTC),
+                started_at=attempt_at,
                 status="running",
             )
             session.add(run)
             session.flush()
+            run_id, detached = _release_attempt_transaction(session, source, run)
 
             try:
                 if source.type == "rss":
@@ -108,9 +151,15 @@ async def collect_sources(
                         run.status = "ok"
                         run.items_collected = 0
                         run.finished_at = datetime.now(UTC)
+                        source.validation_status = "unavailable"
+                        source.failure_category = "mtproto_not_configured"
+                        source.no_cursor_reason = "mtproto_not_configured"
                         per_source.append({"source": source.name, "status": "skipped_mtproto_disabled"})
+                        session.commit()
                         continue
                     items = await tg.collect(source)
+                    if type(session).__module__.startswith("sqlalchemy."):
+                        source = session.merge(source)
                     # Telegram uses its own persist with edit handling
                     persist_stats = tg.persist_items(session, source, items)
                     # Gap detection
@@ -121,6 +170,9 @@ async def collect_sources(
                     source.last_success_at = datetime.now(UTC)
                     source.consecutive_failures = 0
                     source.health_status = "healthy"
+                    source.validation_status = "valid"
+                    source.failure_category = None
+                    source.no_cursor_reason = None
                     run.status = "ok"
                     run.items_collected = persist_stats["new"]
                     run.finished_at = datetime.now(UTC)
@@ -134,14 +186,21 @@ async def collect_sources(
                         "gaps": len(gaps),
                         "fetched": len(items),
                     })
+                    session.commit()
                     continue
                 else:
+                    source, run = _resume_attempt(session, source, run, run_id, detached)
                     run.status = "ok"
                     run.items_collected = 0
                     run.finished_at = datetime.now(UTC)
+                    source.validation_status = "failed"
+                    source.failure_category = "unsupported_source_type"
+                    source.no_cursor_reason = "unsupported_source_type"
                     per_source.append({"source": source.name, "status": "skipped_type"})
+                    session.commit()
                     continue
 
+                source, run = _resume_attempt(session, source, run, run_id, detached)
                 cursor = load_cursor(session, source.id)
                 candidates = filter_new_items(items, cursor, source_type=source.type)
                 # cap fetch window; overlap retained by cursor filter
@@ -184,6 +243,9 @@ async def collect_sources(
                 source.last_success_at = datetime.now(UTC)
                 source.consecutive_failures = 0
                 source.health_status = "healthy"
+                source.validation_status = "valid"
+                source.failure_category = None
+                source.no_cursor_reason = None
                 run.status = "ok"
                 run.items_collected = new_count
                 run.finished_at = datetime.now(UTC)
@@ -197,12 +259,20 @@ async def collect_sources(
                         "after_cursor": len(candidates),
                     }
                 )
+                session.commit()
             except Exception as e:
+                if type(session).__module__.startswith("sqlalchemy."):
+                    with contextlib.suppress(Exception):
+                        session.rollback()
+                source, run = _resume_attempt(session, source, run, run_id, detached)
                 logger.error(f"collect failed {source.name}: {e}")
                 failed.append(source.name)
                 source.last_error_at = datetime.now(UTC)
                 source.last_error = str(e)[:1000]
                 source.consecutive_failures = (source.consecutive_failures or 0) + 1
+                source.validation_status = "failed"
+                source.failure_category = type(e).__name__[:50]
+                source.no_cursor_reason = "collection_failed_before_cursor"
                 if source.consecutive_failures >= 3:
                     source.health_status = "degraded"
                 run.status = "error"
@@ -210,6 +280,7 @@ async def collect_sources(
                 run.finished_at = datetime.now(UTC)
                 # do not advance cursor
                 per_source.append({"source": source.name, "status": "error", "error": str(e)[:120]})
+                session.commit()
     finally:
         await rss.close()
         await gh.close()

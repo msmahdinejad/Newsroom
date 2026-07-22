@@ -268,3 +268,44 @@ def test_idempotent_delivery_no_duplicate(db_session):
     assert mock.send_count == first_send_count  # No re-send
 
     _cleanup(db_session, report.id, d1)
+
+
+def test_delivered_retry_repairs_missing_cursor_without_resend(db_session):
+    """A crash after delivery but before cursor commit is restart-safe."""
+    report = _make_long_report(db_session, content="short content")
+    mock = _SuccessClient(start_id=77600)
+    td = TelegramDelivery(client=mock)
+
+    delivery_id = asyncio.run(
+        td.deliver_report(db_session, report.id, chat_id="cursor_repair_chat")
+    )
+    first_send_count = mock.send_count
+    assert delivery_id is not None
+    assert (
+        db_session.query(ReportCursor)
+        .filter_by(cursor_key="cursor_repair_boundary")
+        .first()
+        is None
+    )
+
+    retried_id = asyncio.run(
+        td.deliver_report(
+            db_session,
+            report.id,
+            chat_id="cursor_repair_chat",
+            cursor_key="cursor_repair_boundary",
+        )
+    )
+
+    cursor = (
+        db_session.query(ReportCursor)
+        .filter_by(cursor_key="cursor_repair_boundary")
+        .one()
+    )
+    assert retried_id == delivery_id
+    assert mock.send_count == first_send_count
+    assert (cursor.report_id, cursor.delivery_id) == (report.id, delivery_id)
+
+    db_session.delete(cursor)
+    db_session.commit()
+    _cleanup(db_session, report.id, delivery_id)

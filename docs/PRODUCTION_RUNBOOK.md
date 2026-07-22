@@ -121,10 +121,12 @@ uv run newsroom pipeline run
 - **Telegram MTProto**: re-authorize with `docker compose run --rm telegram-authorize`
   (interactive login code + optional 2FA). Session lives in the
   `telegram_sessions` volume, never in the repo.
-- **Editorial AI key**: change `EDITORIAL_API_KEY` in `.env`, recreate the
-  scheduler service. Never committed or logged (redacting filter scrubs it).
+- **Editorial provider access**: rotate provider access only in the ignored
+  `.env.providers.local`, rerun the bounded router validation, then recreate
+  the scheduler/report-worker services. The application `.env` is not a
+  provider-access source.
 - **X / Twitter auth** (`TWITTER_AUTH_TOKEN`, `TWITTER_CT0`): rotate in the
-  host environment; stored only in env, never in the DB or logs.
+  ignored `.env.x.local`; never store the values in the DB, logs, or docs.
 
 ## Operational constraints (measured)
 

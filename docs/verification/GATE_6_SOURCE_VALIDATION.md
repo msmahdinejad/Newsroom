@@ -1,67 +1,56 @@
-# Gate 6 — Source Validation & Activation Verification
+# Gate 6 — Production Source Validation
 
-## Activation result (total 1344)
+## Durable source registry snapshot
 
-| State | Count |
-|---|---|
-| active | 1185 |
-| inactive | 155 |
-| invalid | 0 |
-| duplicate | 4 |
+The bounded production sweep and subsequent scheduled collectors leave no
+active source without a durable attempt or cursor accounting.
 
-## Per-platform operational state
+| Measure | Count |
+|---|---:|
+| Source rows | 1,371 |
+| Sources attempted | 1,369 |
+| Active | 1,270 |
+| Healthy active | 728 |
+| Degraded active | 542 |
+| Inactive | 101 |
+| Active without attempt | 0 |
+| Active without cursor or no-cursor reason | 0 |
 
-| Platform | active | inactive | duplicate | invalid |
-|---|---|---|---|---|
-| Telegram | 157 | 0 | 2 | 0 |
-| Reddit | 204 | 0 | 0 | 0 |
-| Community | 36 | 9 (access_required) | 0 | 0 |
-| Community / Forum | 19 | 0 | 0 | 0 |
-| X / Twitter | 0 | 144 (x_auth_not_configured) | 0 | 0 |
-| Website / Newsletter | 462 | 0 | 2 | 0 |
-| GitHub | 244 | 2 (not_a_repo) | 0 | 0 |
-| YouTube / Social | 63 | 0 | 0 | 0 |
+The two source rows without an attempt are inactive with explicit reasons. All
+1,344 workbook inventory rows are accounted for: 1,236 active, 104 inactive,
+and 4 duplicate identities.
 
-## Inactive sources and summarized reasons (evidence-based)
+| Platform | Total source rows | Active | Healthy | Degraded | Inactive |
+|---|---:|---:|---:|---:|---:|
+| Unclassified legacy | 42 | 34 | 27 | 7 | 8 |
+| Community | 36 | 33 | 33 | 0 | 3 |
+| Community / Forum | 19 | 16 | 16 | 0 | 3 |
+| GitHub | 244 | 234 | 58 | 176 | 10 |
+| Reddit | 204 | 203 | 5 | 198 | 1 |
+| Telegram | 157 | 157 | 0 | 157 | 0 |
+| Website / Newsletter | 462 | 398 | 394 | 4 | 64 |
+| X / Twitter | 144 | 138 | 138 | 0 | 6 |
+| YouTube / Social | 63 | 57 | 57 | 0 | 6 |
 
-| Reason | Count | Explanation |
-|---|---|---|
-| `x_auth_not_configured` | 144 | X/Twitter timeline ingestion requires owner-side auth (`TWITTER_AUTH_TOKEN` + `TWITTER_CT0`); not set in this environment. Sources remain registered; not attempted. |
-| `access_required` | 9 | Discord/Slack/Bot communities need membership/owner-side access. Only documented public endpoints are used; no alternate access attempted. |
-| `duplicate_identity` | 4 | Same source appears on multiple workbook rows; first occurrence retained, duplicates marked (no silent disappearance). |
-| `not_a_repo` | 2 | GitHub URLs that are not `owner/repo` (e.g. `github.com/trending`) — no release feed to poll. |
+Transient failures keep an already-approved source degraded and schedulable,
+but a source whose first bounded validation only failed is not activated. A
+permanent access/identity failure is inactive with a safe category.
 
-All inactive rows carry a concise `inactive_reason` using the repository's
-existing state vocabulary. No source is silently dropped.
+## X production restoration
 
-## Validation waves (progressive activation)
+All 144 workbook X accounts were attempted using the ignored `.env.x.local`.
+After cooldown recovery and normal worker cycles, 138 are validated, active,
+and healthy; 6 remain inactive with explicit upstream-client or inaccessible
+categories. No valid tested X source remains marked `x_auth_not_configured`.
 
-1. **Wave 1** — one representative source per supported platform:
-   `scripts/gate6_live_verification.py` (RSS, GitHub, Reddit, web_page,
-   YouTube, Telegram).
-2. **Wave 2** — reviewed Core sources.
-3. **Wave 3** — discovery + community sources.
-4. **Wave 4** — remaining valid review-tier sources.
+The production corpus contains 2,178 X posts, 2,178 distinct post IDs, and
+2,178 distinct content hashes. There are 138 durable X cursors and 6 explicit
+no-cursor reasons. A fresh-process reread produced zero new rows while
+preserving its cursor, and new post reads after the stack restart remained
+duplicate-free.
 
-Every enabled source receives at least one bounded collection attempt
-(`limit_per_source=10`). A failed source is recorded per-source
-(`last_error`, `consecutive_failures`, `health_status=degraded` after 3
-failures) and does **not** interrupt other collectors or scheduled reports.
+## Telegram
 
-## Per-source persisted state
-
-For every source: stable identity, validation state, `last_success_at`,
-`last_error_at`, durable cursor (`collection_cursors`), collected-item count
-(via `raw_items`), safe error category, retry time, and health state
-(`configured`/`healthy`/`degraded`/`unavailable`).
-
-## Platform collection results (live, measured)
-
-| Platform | Collector | Live result |
-|---|---|---|
-| RSS | native RSSCollector | ✓ 20 items fetched (AI Snake Oil), 30 releases (HelloGitHub) |
-| GitHub releases | native GitHubCollector | ✓ 30 releases fetched |
-| Reddit | native RedditSubredditCollector (.rss) | ✓ 10 new posts (r/3Dprinting) |
-| Website / Newsletter | native HtmlReader | ✓ 10 new links (01net) |
-| YouTube / Social | native YouTubeRssCollector | ✓ 10 new videos (3Blue1Brown) |
-| Telegram (MTProto) | native TelegramMTProtoCollector | ✗ connection refused at network level (DC 149.154.175.60) — recorded degraded, not a code failure |
+All 157 Telegram sources have bounded attempt records and explicit no-cursor
+accounting. They remain degraded because the external network path blocks the
+MTProto handshake; the registry does not claim successful Telegram ingestion.

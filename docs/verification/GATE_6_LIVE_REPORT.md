@@ -1,73 +1,46 @@
-# Gate 6 — Live Report Verification
+# Gate 6 — Live AI Report Evidence
 
-## Live AI report (non-fallback)
+## AI acceptance report
 
-A real scheduled-style report completed with `generation_method=ai`,
-produced by the configured OpenAI-compatible provider — **no fallback**.
+A real scheduled-style hierarchical report ran through the persistent router,
+completed without deterministic fallback, and was delivered through the live
+Telegram Bot API.
 
-| Field | Value |
+| Field | Persisted result |
 |---|---|
-| Report ID | 368 |
-| Report mode | `scheduled` |
+| Editorial job | 128 / `scheduled_20260722_1800` |
+| Report | 466 |
 | Generation method | `ai` |
-| Editorial provider | `openai_compatible` |
-| Editorial model | `gemini-3.1-flash-lite` |
-| Editorial status | `ok` |
-| `fallback_used` | `False` |
-| Hierarchical | `True` (shard_count=2) |
-| Total model calls | 3 |
-| Total input tokens | 29471 |
-| Total output tokens | 2223 |
+| Provider/model | Gemini / `gemini-3.5-flash-lite` |
+| Map artifacts | 36, 37, 38, 39 |
+| Final reduction artifact | 41 |
+| Model calls | 5 (4 map + 1 final reduction) |
+| Token usage | 47,964 input / 6,530 output |
 | Fallback shards | 0 |
-| Stories selected | 30 (of 100 candidates) |
-| Delivery ID | 337 |
-| Delivery status | `delivered` |
-| Telegram message IDs | `[43]` (1 chunk) |
-| Scheduled cursor advanced to | report 368, delivery 337 |
+| Delivery | 435 / `delivered` |
+| Telegram message IDs | `[56]` |
+| Scheduled cursor | report 466 / delivery 435 |
 
-## Pipeline stages (measured)
+Every provider-route attempt is linked to the editorial job, shard/reduction
+stage, accepted artifact, and report. The validated final-output story identity
+is persisted on the report; stories that were candidates but absent from the
+validated final synthesis are not falsely marked delivered.
 
-- collect: skipped (NEWSROOM_SKIP_COLLECT for the on-existing-items run)
-- normalize: 500 items
-- dedupe: 74 duplicates marked (9 url_match, 65 near_dup) — cross-source dedup ✓
-- cluster: 326 stories created, 426 items clustered — cross-source clustering ✓
-- evidence: 30 packets built
-- report: hierarchical editorial, 2 shards, 3 model calls, **0 fallback**
-- deliver: 1 chunk via Bot API (HTTP 200), cursor advanced after complete delivery
+An earlier acceptance report, 464, was re-delivered idempotently: it returned
+delivery 433 with message `[54]`, delivery row count stayed one, and no Telegram
+message was sent twice.
 
-## Telegram delivery & message IDs (persisted)
+## No-news path
 
-- Delivery 337: `delivered`, `message_ids=[43]`, `delivered_at` set.
-- The Telegram message ID **43** is persisted in `deliveries.message_ids`
-  and `delivery_chunks.telegram_message_id`.
-- The scheduled cursor `scheduled_delivery` advanced to (report 368,
-  delivery 337) **only after** `delivery.status='delivered'`.
+A controlled scheduled-mode empty selection produced report 465 and delivery
+434 with Telegram message `[55]`. Provider-route attempt count was identical
+before and after the run: zero provider calls. Because this verification run
+had no schedule label, it did not replace the scheduled cursor. The subsequent
+real 18:00 Tehran run advanced it to report 466 only after complete delivery.
 
-## Second window
+## Gate consequence
 
-- Report 369 (`generation_method=ai`) — additional new material from
-  leftover un-normalized items; delivery 338, message_id `[44]`, cursor
-  advanced to 369.
-
-## No-news path (verified live)
-
-- Report 370 (`generation_method=none`, `story_ids=[]`) — zero editorial
-  provider calls (`editorial_attempts` total unchanged at 2; 0 attempts for
-  report 370).
-- One short Persian no-news notice delivered via Telegram (delivery 339,
-  `message_ids=[45]`).
-- Cursor advanced to (370, 339); no unrelated stories marked delivered.
-
-## Editorial & grounding requirements (kept)
-
-- Evidence lineage: `editorial_artifact_lineage` traces final → reduction →
-  map → story → evidence_ref → source_url.
-- Source attribution: every rendered story links original source URLs.
-- Grounding validation: claims grounded against evidence (AI providers);
-  fallback to deterministic only on provider failure (not used here).
-- Hierarchical sharding: bounded shards with stable shard IDs.
-- Cross-platform deduplication: content_hash + url_hash dedup.
-- Persian rendering: `_render_persian_report` (headline/summary/why/impact,
-  ریزخبرها for low-priority items).
-- Provider usage records: `editorial_attempts.usage` (token counts),
-  `editorial_jobs`/`editorial_shards` token/call budgets.
+The AI report and Bot API delivery requirements pass. Gate 6 is still **NOT
+VERIFIED** because the mandatory native Telegram MTProto ingestion path cannot
+complete a handshake on the current external network route; see
+`GATE_6_TELEGRAM_MTPROTO.md`.

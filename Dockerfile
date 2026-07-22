@@ -16,7 +16,13 @@ COPY scripts/ ./scripts/
 COPY tests/ ./tests/
 COPY legacy/ ./legacy/
 COPY alembic.ini ./
-RUN uv sync --frozen --extra dev --extra telegram
+RUN uv sync --frozen --extra dev --extra telegram --extra external-sources
+
+# Gate 5 audited capability layer. The package URL in pyproject.toml is pinned
+# to this immutable upstream commit; twitter-cli is version-pinned separately.
+ARG AGENT_REACH_PINNED_SHA=1494c2ab239e7355a77e7cceaf3271453a1f34b5
+LABEL org.newsroom.agent-reach.revision=$AGENT_REACH_PINNED_SHA
+RUN uv run python -c "import importlib.metadata as m; assert m.version('agent-reach') == '1.5.0'; assert m.version('twitter-cli') == '0.8.5'"
 
 ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1

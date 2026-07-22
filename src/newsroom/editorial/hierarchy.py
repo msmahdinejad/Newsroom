@@ -56,6 +56,7 @@ from newsroom.storage.models import (
     EditorialArtifactLineage,
     EditorialJob,
     EditorialShard,
+    Report,
 )
 
 logger = get_logger(__name__)
@@ -74,6 +75,8 @@ class MapResult:
     usage: dict[str, int] | None
     from_cache: bool
     fallback_used: bool
+    provider: str = "deterministic"
+    model: str = "deterministic-v1"
 
 
 @dataclass
@@ -110,7 +113,15 @@ def run_hierarchical_editorial(
         job_id = f"ej_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{hashlib.sha256(str(story_ids).encode()).hexdigest()[:8]}"
 
     # 1. Build evidence set
-    evidence = build_evidence_set(db, story_ids, report_mode)
+    # The per-call story cap belongs to each shard, not the whole hierarchy.
+    # Build evidence for every selected story; sharding then enforces the
+    # per-request count/token and total map-call budgets.
+    evidence = build_evidence_set(
+        db,
+        story_ids,
+        report_mode,
+        max_stories=len(story_ids),
+    )
 
     if not evidence.stories:
         return _empty_hierarchical_result(db, job_id, report_mode)
@@ -122,6 +133,48 @@ def run_hierarchical_editorial(
     job = _create_job(
         db, job_id, report_mode, story_ids, sharding_result,
     )
+
+    # A delivery retry for the same scheduled boundary reuses the completed
+    # report and accepted artifacts without making any provider call.
+    if job.status == "completed" and job.report_id is not None:
+        report = db.get(Report, job.report_id)
+        final_artifact = (
+            db.query(EditorialArtifact)
+            .filter_by(job_db_id=job.id, artifact_type="reduction_final", status="validated")
+            .order_by(EditorialArtifact.id.desc())
+            .first()
+        )
+        if report is not None and final_artifact is not None:
+            cached_output = EditorialOutput.model_validate(final_artifact.output_json)
+            attempt = EditorialAttempt(
+                provider=final_artifact.provider or cached_output.metadata.provider,
+                model=final_artifact.model or cached_output.metadata.model_name,
+                prompt_version=evidence.prompt_version,
+                evidence_set_hash=evidence.evidence_hash(),
+                schema_version=evidence.schema_version,
+                report_mode=report_mode,
+                status="fallback" if job.fallback_used else "ok",
+                fallback_used=job.fallback_used,
+                usage=final_artifact.usage if isinstance(final_artifact.usage, dict) else None,
+                output=cached_output,
+            )
+            return HierarchicalResult(
+                content=report.content_fa,
+                attempt=attempt,
+                job=job,
+                map_results=[],
+                reduction_level=job.reduction_depth,
+                total_model_calls=0,
+                total_input_tokens=0,
+                total_output_tokens=0,
+                cache_hits=job.shard_count + 1,
+                fallback_shards=job.shard_count if job.fallback_used else 0,
+                selection_stats={
+                    "total_candidates": len(story_ids),
+                    "selected": len(story_ids),
+                    "shards": job.shard_count,
+                },
+            )
 
     # 4. Map stage: process each shard
     provider = select_provider()
@@ -159,6 +212,17 @@ def run_hierarchical_editorial(
         if result.fallback_used:
             fallback_shards += 1
 
+    if len(map_results) != len(sharding_result.shards):
+        from newsroom.editorial.schema import EditorialErrorCategory
+
+        job.status = "failed_retryable"
+        db.flush()
+        raise EditorialError(
+            EditorialErrorCategory.PROVIDER_UNAVAILABLE,
+            "required validated map artifacts are incomplete",
+            retryable=True,
+        )
+
     # 5. Reduction stage: merge map artifacts
     reduction_level = 0
     final_output: EditorialOutput
@@ -166,12 +230,25 @@ def run_hierarchical_editorial(
     if len(map_results) == 1:
         # Single shard — no reduction needed
         final_output = map_results[0].output
+        reduction_calls = 0
+        reduction_input_tokens = 0
+        reduction_output_tokens = 0
+        reduction_fallback = False
     else:
-        final_output, reduction_level = _reduce_artifacts(
+        (
+            final_output,
+            reduction_level,
+            reduction_calls,
+            reduction_input_tokens,
+            reduction_output_tokens,
+            reduction_fallback,
+        ) = _reduce_artifacts(
             db, job, map_results, evidence, provider,
             total_model_calls, total_input_tokens, total_output_tokens,
         )
-        total_model_calls += 1  # count the reduction call
+        total_model_calls += reduction_calls
+        total_input_tokens += reduction_input_tokens
+        total_output_tokens += reduction_output_tokens
 
     # 6. Update job status
     job.status = "completed"
@@ -180,27 +257,36 @@ def run_hierarchical_editorial(
     job.total_input_tokens = total_input_tokens
     job.total_output_tokens = total_output_tokens
     job.reduction_depth = reduction_level
-    job.fallback_used = fallback_shards > 0
-    job.partial_ai = fallback_shards > 0 and fallback_shards < len(map_results)
+    job.fallback_used = fallback_shards > 0 or reduction_fallback
+    job.partial_ai = job.fallback_used and fallback_shards < len(map_results)
     db.flush()
 
     # 7. Render Persian report
     content = _render_persian_report(final_output, report_mode)
 
     # 8. Build attempt metadata
+    used_providers = {result.provider for result in map_results}
+    used_models = {result.model for result in map_results}
+    final_provider = final_output.metadata.provider or (
+        next(iter(used_providers)) if len(used_providers) == 1 else "mixed"
+    )
+    final_model = final_output.metadata.model_name or (
+        next(iter(used_models)) if len(used_models) == 1 else "mixed"
+    )
     attempt = EditorialAttempt(
-        provider=provider.name,
-        model=provider.model_name,
+        provider=final_provider,
+        model=final_model,
         prompt_version=evidence.prompt_version,
         evidence_set_hash=evidence.evidence_hash(),
         schema_version=evidence.schema_version,
         report_mode=report_mode,
-        status="fallback" if fallback_shards > 0 else "ok",
+        status="fallback" if job.fallback_used else "ok",
         retry_count=0,
-        fallback_used=fallback_shards > 0,
+        fallback_used=job.fallback_used,
         latency_ms=int((time.monotonic() - start) * 1000),
         usage={"prompt_tokens": total_input_tokens, "completion_tokens": total_output_tokens,
                "total_tokens": total_input_tokens + total_output_tokens},
+        output=final_output,
     )
 
     return HierarchicalResult(
@@ -229,7 +315,10 @@ def _create_job(
     story_ids: list[int],
     sharding_result: ShardingResult,
 ) -> EditorialJob:
-    """Create a persistent editorial job record."""
+    """Create or resume a persistent editorial job record."""
+    existing = db.query(EditorialJob).filter_by(job_id=job_id).first()
+    if existing is not None:
+        return existing
     job = EditorialJob(
         job_id=job_id,
         report_mode=report_mode,
@@ -260,7 +349,7 @@ def _create_job(
             estimated_input_tokens=spec.estimated_input_tokens,
             effective_input_limit=spec.effective_input_limit,
             effective_output_limit=spec.effective_output_limit,
-            prompt_version=settings.editorial_model and "g4sp-v1",
+            prompt_version="g4sp-v1",
             schema_version=sharding_result.partition_version,
             partition_version=sharding_result.partition_version,
             status="pending",
@@ -294,8 +383,8 @@ def _process_shard(
         f"shard_{spec.shard_id}",
         shard_evidence.evidence_hash(),
         evidence.prompt_version,
-        provider.name,
-        provider.model_name,
+        "validated-editorial-artifact",
+        "route-independent-v1",
         temperature=settings.editorial_temperature,
         max_input_tokens=spec.effective_input_limit,
         max_output_tokens=spec.effective_output_limit,
@@ -315,6 +404,8 @@ def _process_shard(
             usage=existing.usage if isinstance(existing.usage, dict) else None,
             from_cache=True,
             fallback_used=False,
+            provider=existing.provider or "unknown",
+            model=existing.model or "unknown",
         )
 
     # Acquire lease
@@ -338,14 +429,22 @@ def _process_shard(
         max_input_tokens=spec.effective_input_limit,
         max_output_tokens=spec.effective_output_limit,
         timeout_seconds=settings.editorial_timeout_seconds,
+        stage="map",
+        job_id=job.job_id,
+        shard_id=spec.shard_id,
     )
 
     fallback_used = False
     start = time.monotonic()
 
+    actual_provider = provider.name
+    actual_model = provider.model_name
     try:
         response = provider.generate(request)
         output = response.output
+        actual_provider = response.provider or provider.name
+        actual_model = response.model or provider.model_name
+        fallback_used = response.fallback_used or actual_provider == "deterministic"
 
         # Validate and ground
         raw = output.model_dump_json(indent=2)
@@ -372,6 +471,8 @@ def _process_shard(
         det = DeterministicEditorialProvider()
         response = det.generate(request)
         output = response.output
+        actual_provider = response.provider or det.name
+        actual_model = response.model or det.model_name
         fallback_used = True
 
     latency_ms = int((time.monotonic() - start) * 1000)
@@ -390,14 +491,16 @@ def _process_shard(
         validation_result="valid",
         grounding_result="ok",
         cache_key=cache_key,
-        provider=provider.name,
-        model=provider.model_name,
+        provider=actual_provider,
+        model=actual_model,
         usage=response.usage if response.usage else None,
         latency_ms=latency_ms,
         status="validated",
     )
     db.add(artifact)
     db.flush()
+
+    _link_route_attempts(db, job.job_id, spec.shard_id, artifact.id)
 
     # Persist lineage
     _persist_lineage(db, artifact.id, output, shard_evidence)
@@ -408,6 +511,8 @@ def _process_shard(
         shard_record.artifact_id = artifact.id
         shard_record.latency_ms = latency_ms
         shard_record.usage = response.usage if response.usage else None
+        shard_record.provider = actual_provider
+        shard_record.model = actual_model
         if fallback_used:
             shard_record.error_category = "fallback"
         db.flush()
@@ -422,6 +527,8 @@ def _process_shard(
         usage=response.usage if response.usage else None,
         from_cache=False,
         fallback_used=fallback_used,
+        provider=actual_provider,
+        model=actual_model,
     )
 
 
@@ -458,7 +565,7 @@ def _reduce_artifacts(
     total_calls: int,
     total_in: int,
     total_out: int,
-) -> tuple[EditorialOutput, int]:
+) -> tuple[EditorialOutput, int, int, int, int, bool]:
     """Reduce map artifacts into a final editorial output.
 
     For small sets (< 3 shards), do a single reduction.
@@ -466,7 +573,8 @@ def _reduce_artifacts(
     Depth is bounded by settings.editorial_max_hierarchy_depth.
     """
     if len(map_results) <= 2:
-        return _single_reduction(db, job, map_results, evidence), 1
+        merged = _merge_outputs(map_results, evidence)
+        return _final_reduction(db, job, map_results, merged, evidence, provider, 1)
 
     # Topic-grouped reduction for 3+ shards
     max_depth = settings.editorial_max_hierarchy_depth
@@ -501,16 +609,133 @@ def _reduce_artifacts(
                 usage=None,
                 from_cache=False,
                 fallback_used=False,
+                provider=merged.metadata.provider or "deterministic_reducer",
+                model=merged.metadata.model_name or "deterministic-merge-v1",
             ))
 
         current_artifacts = reduced
         level += 1
 
-    # Final reduction
-    final = _merge_outputs(current_artifacts, evidence)
-    _persist_reduction(db, job, "reduction_final", final, evidence, "reduction_final", level + 1)
+    merged = _merge_outputs(current_artifacts, evidence)
+    return _final_reduction(
+        db,
+        job,
+        current_artifacts,
+        merged,
+        evidence,
+        provider,
+        level + 1,
+    )
 
-    return final, level + 1
+
+def _final_reduction(
+    db: Session,
+    job: EditorialJob,
+    children: list[MapResult],
+    merged: EditorialOutput,
+    evidence: EditorialEvidenceSet,
+    provider: EditorialProvider,
+    level: int,
+) -> tuple[EditorialOutput, int, int, int, int, bool]:
+    """Run one bounded AI final reduction, falling back to the safe merge."""
+    existing = (
+        db.query(EditorialArtifact)
+        .filter_by(
+            cache_key=_reduction_cache_key("reduction_final", evidence),
+            status="validated",
+        )
+        .first()
+    )
+    if existing is not None:
+        cached = EditorialOutput.model_validate(existing.output_json)
+        cached_provider = existing.provider or cached.metadata.provider
+        return (
+            cached,
+            level,
+            0,
+            0,
+            0,
+            cached_provider in {"deterministic", "deterministic_reducer"},
+        )
+
+    output = merged
+    actual_provider = "deterministic_reducer"
+    actual_model = "deterministic-merge-v1"
+    usage: dict[str, int] | None = None
+    latency_ms = 0
+    model_calls = 0
+    fallback_used = False
+
+    if provider.name != "deterministic":
+        request = EditorialRequest(
+            evidence=evidence,
+            model=provider.model_name,
+            temperature=settings.editorial_temperature,
+            max_input_tokens=settings.editorial_max_input_tokens,
+            max_output_tokens=settings.editorial_max_output_tokens,
+            timeout_seconds=settings.editorial_timeout_seconds,
+            stage="reduce",
+            job_id=job.job_id,
+            shard_id="reduction_final",
+        )
+        start = time.monotonic()
+        model_calls = 1
+        try:
+            response = provider.generate(request)
+            fallback_used = response.fallback_used or response.provider == "deterministic"
+            raw = response.output.model_dump_json(indent=2)
+            parsed, validation = parse_and_validate(
+                raw,
+                evidence,
+                settings.editorial_max_output_tokens,
+            )
+            if parsed is None or not validation.valid:
+                from newsroom.editorial.schema import EditorialErrorCategory
+
+                raise EditorialError(
+                    EditorialErrorCategory.SCHEMA_VALIDATION,
+                    "final reduction validation failed",
+                    False,
+                )
+            grounded, grounding = validate_grounding(evidence, parsed)
+            if not grounding.valid:
+                from newsroom.editorial.schema import EditorialErrorCategory
+
+                raise EditorialError(
+                    EditorialErrorCategory.UNSUPPORTED_CLAIMS,
+                    "final reduction grounding failed",
+                    False,
+                )
+            output = grounded
+            actual_provider = response.provider or provider.name
+            actual_model = response.model or provider.model_name
+            usage = response.usage
+        except EditorialError as exc:
+            logger.warning(
+                "Final AI reduction failed (%s); using validated deterministic merge",
+                exc.category.value,
+            )
+            fallback_used = True
+        latency_ms = int((time.monotonic() - start) * 1000)
+
+    artifact = _persist_reduction(
+        db,
+        job,
+        "reduction_final",
+        output,
+        evidence,
+        "reduction_final",
+        level,
+        provider=actual_provider,
+        model=actual_model,
+        usage=usage,
+        latency_ms=latency_ms,
+        child_artifact_ids=[child.artifact_id for child in children],
+    )
+    _link_route_attempts(db, job.job_id, "reduction_final", artifact.id)
+    prompt_tokens = usage.get("prompt_tokens", 0) if usage else 0
+    completion_tokens = usage.get("completion_tokens", 0) if usage else 0
+    return output, level, model_calls, prompt_tokens, completion_tokens, fallback_used
 
 
 def _merge_outputs(
@@ -545,13 +770,18 @@ def _merge_outputs(
     max_stories = settings.editorial_max_stories_per_call
     all_stories = all_stories[:max_stories]
 
+    providers = {result.provider for result in results}
+    models = {result.model for result in results}
+    merged_provider = next(iter(providers)) if len(providers) == 1 else "mixed"
+    merged_model = next(iter(models)) if len(models) == 1 else "mixed"
+
     return EditorialOutput(
         metadata=ReportMetadata(
             schema_version=results[0].output.metadata.schema_version,
             prompt_version=results[0].output.metadata.prompt_version,
             report_mode=results[0].output.metadata.report_mode,
-            model_name=results[0].output.metadata.model_name,
-            provider=results[0].output.metadata.provider,
+            model_name=merged_model,
+            provider=merged_provider,
             evidence_set_hash=evidence.evidence_hash(),
             editorial_status="ok",
         ),
@@ -567,11 +797,18 @@ def _persist_reduction(
     evidence: EditorialEvidenceSet,
     artifact_type: str,
     level: int,
+    *,
+    provider: str = "deterministic_reducer",
+    model: str = "deterministic-merge-v1",
+    usage: dict[str, int] | None = None,
+    latency_ms: int = 0,
+    child_artifact_ids: list[int] | None = None,
 ) -> EditorialArtifact:
     """Persist a reduction artifact."""
-    cache_key = hashlib.sha256(
-        f"reduction:{shard_id}:{evidence.evidence_hash()}".encode()
-    ).hexdigest()[:64]
+    cache_key = _reduction_cache_key(shard_id, evidence)
+    existing = db.query(EditorialArtifact).filter_by(cache_key=cache_key, status="validated").first()
+    if existing is not None:
+        return existing
 
     story_ids = [s.story_id for s in output.stories]
     ref_ids: list[str] = []
@@ -589,7 +826,11 @@ def _persist_reduction(
         schema_version=evidence.schema_version,
         prompt_version=evidence.prompt_version,
         cache_key=cache_key,
-        provider="reducer",
+        provider=provider,
+        model=model,
+        usage=usage,
+        latency_ms=latency_ms,
+        child_artifact_ids=child_artifact_ids,
         status="validated",
     )
     db.add(artifact)
@@ -597,6 +838,31 @@ def _persist_reduction(
 
     _persist_lineage(db, artifact.id, output, evidence)
     return artifact
+
+
+def _reduction_cache_key(shard_id: str, evidence: EditorialEvidenceSet) -> str:
+    return hashlib.sha256(
+        f"reduction:{shard_id}:{evidence.evidence_hash()}".encode()
+    ).hexdigest()[:64]
+
+
+def _link_route_attempts(
+    db: Session,
+    job_id: str,
+    shard_id: str,
+    artifact_id: int,
+) -> None:
+    """Attach safe independently persisted route attempts to their artifact."""
+    from newsroom.storage.models import ProviderRouteAttempt
+
+    db.query(ProviderRouteAttempt).filter(
+        ProviderRouteAttempt.editorial_job_id == job_id,
+        ProviderRouteAttempt.shard_id == shard_id,
+        ProviderRouteAttempt.artifact_id.is_(None),
+    ).update(
+        {ProviderRouteAttempt.artifact_id: artifact_id},
+        synchronize_session=False,
+    )
 
 
 def _single_reduction(

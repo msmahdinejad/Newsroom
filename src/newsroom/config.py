@@ -89,16 +89,23 @@ class Settings(BaseSettings):
     telegram_api_hash: str = ""
     telegram_phone: str = ""
     telegram_session_path: str = "./data/sessions/newsroom_ingestor.session"
+    # Bounded MTProto connection and optional owner-configured transport.
+    telegram_connect_timeout_seconds: int = 12
+    telegram_connection_retries: int = 1
+    telegram_retry_delay_seconds: int = 2
+    telegram_reconnect_cooldown_seconds: int = 300
+    telegram_max_sources_per_cycle: int = 20
+    telegram_source_spacing_seconds: float = 1.0
+    telegram_proxy_url: str = ""
+    telegram_mtproxy_host: str = ""
+    telegram_mtproxy_port: int = 0
+    telegram_mtproxy_secret: str = ""
 
     # Pipeline lock timeout (seconds) — advisory lock is session-held; timeout is soft doc
     pipeline_lock_timeout: int = 300
 
     # Gate 4: AI editorial layer
     editorial_enabled: bool = False
-    editorial_provider: str = "deterministic"  # deterministic | openai_compatible
-    editorial_model: str = ""
-    editorial_api_base: str = "https://api.openai.com/v1"
-    editorial_api_key: str = ""  # env: EDITORIAL_API_KEY — never logged
     editorial_timeout_seconds: int = 60
     editorial_max_retries: int = 2
     editorial_max_input_tokens: int = 12000
@@ -141,6 +148,9 @@ class Settings(BaseSettings):
     # Allow authenticated channels (cookies/tokens). Default false — owner must opt in.
     agent_reach_allow_authenticated_channels: bool = False
     agent_reach_health_interval_seconds: int = 300  # min seconds between doctor runs
+    x_worker_poll_seconds: int = 900
+    x_worker_batch_size: int = 12
+    x_worker_spacing_seconds: float = 2.0
 
     # Retention
     raw_retention_days: int = 30
@@ -188,13 +198,8 @@ class Settings(BaseSettings):
         )
 
     def editorial_ready(self) -> bool:
-        """True only when editorial is enabled AND a non-det. provider has credentials."""
-        return bool(
-            self.editorial_enabled
-            and self.editorial_provider != "deterministic"
-            and self.editorial_api_key
-            and self.editorial_model
-        )
+        """Return the non-secret feature flag; route readiness lives in PostgreSQL."""
+        return self.editorial_enabled
 
     def agent_reach_allowed_channels_set(self) -> set[str]:
         """Parse comma-separated channel allowlist. Empty entries skipped.

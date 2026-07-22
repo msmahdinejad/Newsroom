@@ -137,18 +137,29 @@ async def _async_main() -> int:
     with contextlib.suppress(OSError):
         os.chmod(session_dir, 0o700)
 
-    print(f"Creating MTProto session at: {session_path}")
+    print("Creating MTProto session at: [PROTECTED]")
     print("This is a one-time authorization. Do not run while ingestor is active.")
     print()
 
+    from newsroom.sources.telegram_collector import telegram_transport_config
+
+    transport, transport_label = telegram_transport_config()
     client = TelegramClient(
         session_path,
         int(settings.telegram_api_id),
         settings.telegram_api_hash,
+        timeout=max(1, int(settings.telegram_connect_timeout_seconds)),
+        connection_retries=max(0, int(settings.telegram_connection_retries)),
+        retry_delay=max(0, int(settings.telegram_retry_delay_seconds)),
+        **transport,
     )
+    print(f"MTProto transport: {transport_label}")
 
     try:
-        await client.connect()
+        connect_deadline = max(5, int(settings.telegram_connect_timeout_seconds)) * (
+            max(0, int(settings.telegram_connection_retries)) + 1
+        ) + 5
+        await asyncio.wait_for(client.connect(), timeout=connect_deadline)
 
         if await client.is_user_authorized():
             print("Session already authorized — verifying identity...")

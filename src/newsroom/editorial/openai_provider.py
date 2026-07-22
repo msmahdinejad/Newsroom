@@ -319,17 +319,10 @@ class OpenAICompatibleEditorialProvider(EditorialProvider):
 
 
 def create_provider_from_settings() -> OpenAICompatibleEditorialProvider | None:
-    """Factory: create provider from environment settings. Returns None if no key."""
-    from newsroom.config import settings
+    """Deprecated factory retained for compatibility.
 
-    if not settings.editorial_api_key or not settings.editorial_model:
-        return None
-    return OpenAICompatibleEditorialProvider(
-        api_base=settings.editorial_api_base,
-        api_key=settings.editorial_api_key,
-        model=settings.editorial_model,
-        timeout_seconds=settings.editorial_timeout_seconds,
-        max_retries=settings.editorial_max_retries,
-        temperature=settings.editorial_temperature,
-        max_output_tokens=settings.editorial_max_output_tokens,
-    )
+    Production access is loaded exclusively by the multi-provider router from
+    ``.env.providers.local``. The legacy single-provider settings factory is
+    intentionally unavailable.
+    """
+    return None

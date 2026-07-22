@@ -9,9 +9,11 @@ from datetime import UTC, datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -55,6 +57,14 @@ class Source(Base):
     inactive_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # Health tracking (denormalized for quick queries)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    validation_status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="untested", index=True
+    )
+    failure_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    no_cursor_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -251,6 +261,10 @@ class Delivery(Base):
     report: Mapped["Report"] = relationship(back_populates="deliveries")
     chunks: Mapped[list["DeliveryChunk"]] = relationship(
         back_populates="delivery", cascade="all, delete-orphan", order_by="DeliveryChunk.chunk_index"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("report_id", "chat_id", name="uq_delivery_report_chat"),
     )
 
 
@@ -483,7 +497,189 @@ class EditorialHealth(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
-# ── Gate 4 scalable: editorial jobs, shards, artifacts ───────────
+# Gate 6: multi-provider router reliability state.
+
+
+class ProviderModelHealth(Base):
+    """Safe validation and runtime health for one provider/model route."""
+
+    __tablename__ = "provider_model_health"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model: Mapped[str] = mapped_column(String(150), nullable=False)
+    validation_status: Mapped[str] = mapped_column(String(30), nullable=False, default="unavailable")
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_failure_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    supported_capabilities: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    __table_args__ = (
+        UniqueConstraint("provider", "model", name="uq_provider_model_health_route"),
+        CheckConstraint("latency_ms >= 0", name="ck_provider_model_health_nonnegative_latency"),
+        Index("ix_provider_model_health_validation", "validation_status", "enabled"),
+    )
+
+
+class ProviderKeyState(Base):
+    """Per-key runtime state identified only by a one-way SHA-256 fingerprint."""
+
+    __tablename__ = "provider_key_state"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    key_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_use_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_failure_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    __table_args__ = (
+        UniqueConstraint("provider", "key_fingerprint", name="uq_provider_key_fingerprint"),
+        CheckConstraint(
+            "key_fingerprint ~ '^[0-9a-f]{64}$'",
+            name="ck_provider_key_fingerprint_sha256",
+        ),
+        CheckConstraint(
+            "failure_count >= 0 AND success_count >= 0",
+            name="ck_provider_key_nonnegative_counts",
+        ),
+        Index("ix_provider_key_state_cooldown", "cooldown_until"),
+    )
+
+
+class ProviderQuotaState(Base):
+    """Durable project/model quota snapshot shared by every key in a scope."""
+
+    __tablename__ = "provider_quota_state"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model: Mapped[str] = mapped_column(String(150), nullable=False, default="")
+    scope_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    rpm_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tpm_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rpd_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reserved_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    window_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    day_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider", "model", "scope_fingerprint", name="uq_provider_model_quota_scope"
+        ),
+        CheckConstraint(
+            "scope_fingerprint ~ '^[0-9a-f]{64}$'",
+            name="ck_provider_quota_scope_sha256",
+        ),
+        CheckConstraint(
+            "rpm_used >= 0 AND tpm_used >= 0 AND rpd_used >= 0 AND reserved_tokens >= 0",
+            name="ck_provider_quota_nonnegative_counts",
+        ),
+        Index("ix_provider_quota_state_cooldown", "cooldown_until"),
+    )
+
+
+class ProviderCircuitState(Base):
+    """Provider-level circuit breaker state used across all model routes."""
+
+    __tablename__ = "provider_circuit_state"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
+    state: Mapped[str] = mapped_column(String(20), nullable=False, default="closed")
+    consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_failure_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    half_open_probe_in_flight: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('closed', 'open', 'half_open')",
+            name="ck_provider_circuit_state",
+        ),
+        CheckConstraint(
+            "consecutive_failures >= 0",
+            name="ck_provider_circuit_nonnegative_failures",
+        ),
+        Index("ix_provider_circuit_cooldown", "cooldown_until"),
+    )
+
+
+class ProviderRouteAttempt(Base):
+    """One safe, idempotent provider-route attempt with editorial lineage."""
+
+    __tablename__ = "provider_route_attempts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    editorial_job_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    shard_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    report_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    artifact_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    stage: Mapped[str] = mapped_column(String(30), nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model: Mapped[str] = mapped_column(String(150), nullable=False, default="")
+    key_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    failure_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    estimated_input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    actual_input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    actual_output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    retry_after_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    accepted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "key_fingerprint IS NULL OR key_fingerprint ~ '^[0-9a-f]{64}$'",
+            name="ck_provider_attempt_key_fingerprint_sha256",
+        ),
+        CheckConstraint(
+            "latency_ms >= 0 AND estimated_input_tokens >= 0 "
+            "AND actual_input_tokens >= 0 AND actual_output_tokens >= 0 "
+            "AND (retry_after_seconds IS NULL OR retry_after_seconds >= 0)",
+            name="ck_provider_attempt_nonnegative_usage",
+        ),
+        Index("ix_provider_route_attempt_event", "event_id", unique=True),
+        Index("ix_provider_route_attempt_job", "editorial_job_id"),
+        Index("ix_provider_route_attempt_shard", "shard_id"),
+        Index("ix_provider_route_attempt_report", "report_id"),
+        Index("ix_provider_route_attempt_artifact", "artifact_id"),
+        Index("ix_provider_route_attempt_stage", "stage"),
+        Index("ix_provider_route_attempt_provider", "provider"),
+    )
+
+
+# Gate 4 scalable: editorial jobs, shards, artifacts.
 
 
 class EditorialJob(Base):
@@ -636,6 +832,15 @@ class EditorialArtifactLineage(Base):
     evidence_ref_id: Mapped[str] = mapped_column(String(100), nullable=False)
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "artifact_id",
+            "story_id",
+            "evidence_ref_id",
+            name="uq_editorial_artifact_lineage_identity",
+        ),
+    )
 
 
 # ── Gate 5: Agent-Reach capability layer state ─────────────────────

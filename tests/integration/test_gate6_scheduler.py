@@ -12,7 +12,7 @@ import asyncio
 import os
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 
 pytestmark = pytest.mark.integration
 
@@ -27,8 +27,9 @@ def test_scheduler_registers_four_six_hour_jobs():
     # Clear stale job refs from ad-hoc `python -m` runs so the fresh scheduler
     # registers cleanly. In production the scheduler always runs as the same
     # module, so func_refs resolve across restarts.
-    with eng.begin() as conn:
-        conn.execute(text("DELETE FROM apscheduler_jobs"))
+    if inspect(eng).has_table("apscheduler_jobs"):
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM apscheduler_jobs"))
 
     asyncio.run(_run_scheduler_test(url))
     eng.dispose()

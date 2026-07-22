@@ -1062,6 +1062,13 @@ class XTimelineCollector(SourceCollector):
                 recoverable=True,
             )
 
+        # Cache only safe identity metadata. Assign a fresh dict so SQLAlchemy
+        # persists JSONB changes; access values remain process-local env vars.
+        updated_config = dict(cfg)
+        updated_config["account_id"] = account_id
+        updated_config["resolved_handle"] = resolved_handle
+        source.config = updated_config
+
         # Bounded timeline read.
         max_posts = int(cfg.get("max_posts") or X_DEFAULT_MAX_POSTS_PER_POLL)
         max_posts = max(1, min(max_posts, 50))

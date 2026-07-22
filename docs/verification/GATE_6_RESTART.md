@@ -1,63 +1,31 @@
-# Gate 6 — Restart & Recovery Verification
+# Gate 6 — Restart and Recovery Evidence
 
-## Test
+The full production Compose stack was rebuilt and force-recreated twice. The
+one-time `telegram-authorize` helper is profile-gated and absent from the
+default stack, leaving `telegram-ingestor` as the sole session owner.
 
-Restarted the PostgreSQL container (`docker restart newsroom-postgres`)
-while production data was present, then re-queried all durable state.
+After the final restart:
 
-## State before → after restart (identical)
+- PostgreSQL, collector, report worker, scheduler, Telegram output bot, and
+  Agent-Reach worker are healthy and running;
+- Telegram ingestor is running but truthfully unhealthy with
+  `connection_timeout`;
+- router provider/model validation, key/quota state, and the closed Gemini
+  circuit survived;
+- report 464, delivery 433, and Telegram message 54 survived; the next real
+  18:00 Tehran job then completed report 466, delivery 435, and message 56;
+- report 465/delivery 434/message 55 from the zero-provider no-news check
+  survived;
+- all active-source attempts and cursor/no-cursor accounting survived;
+- all X cursor/post identities survived, and later worker reads remained
+  duplicate-free;
+- Agent-Reach image label/package versions remained pinned to
+  `1494c2ab239e7355a77e7cceaf3271453a1f34b5`, Agent-Reach 1.5.0, and
+  twitter-cli 0.8.5;
+- the scheduler persisted exactly four Asia/Tehran cron jobs at
+  00:00, 06:00, 12:00, and 18:00;
+- PostgreSQL had zero idle-in-transaction connections.
 
-| State | Before | After |
-|---|---|---|
-| `source_inventory` rows | 1344 | 1344 |
-| `sources` enabled | 1224 | 1224 |
-| `raw_items` | 1000 | 1000 |
-| `normalized_items` | 996 | 996 |
-| `stories` | 1032 | 1032 |
-| `reports` | 5 | 5 |
-| `deliveries` | 4 | 4 |
-| `delivery_chunks` | 4 | 4 |
-| `collection_cursors` | 37 | 37 |
-| scheduled cursor | (370, 339) | (370, 339) |
-| last deliveries (msg IDs) | 339→[45], 338→[44], 337→[43] | identical |
-| last reports (gen_method) | 370 none, 369 ai, 368 ai | identical |
-
-## What survives a complete restart
-
-Per the acceptance criteria — all retained:
-
-- ✅ source registry (`sources` + `source_inventory`)
-- ✅ cursors (`collection_cursors`)
-- ✅ source health (`sources.health_status`, `last_success_at`, `consecutive_failures`)
-- ✅ scheduler state (`apscheduler_jobs` table; jobs re-register with
-  `replace_existing=True` on scheduler start)
-- ✅ X access state (`x_account_state`)
-- ✅ MTProto session (`telegram_sessions` named volume)
-- ✅ reports (`reports`)
-- ✅ delivery rows (`deliveries`, `delivery_chunks`)
-- ✅ Telegram message IDs (`deliveries.message_ids`,
-  `delivery_chunks.telegram_message_id`)
-
-## Cursor survival across fresh sessions
-
-Integration test `test_cursor_survives_fresh_session` writes a cursor in one
-session and reads it in a brand-new `sessionmaker` session (simulating a
-process restart) — values match exactly.
-
-## Scheduler state survival
-
-Integration test `test_gate6_scheduler` clears `apscheduler_jobs`, creates
-the scheduler, and verifies the four `report_00/06/12/18` jobs (with coalesce
-+ max_instances) persist in PostgreSQL. On scheduler restart, jobs
-re-register idempotently (`replace_existing=True`).
-
-## Post-restart Telegram commands
-
-After the restart, the owner-restricted commands were re-verified live via
-the Bot API (messages delivered to the chat):
-
-- `/status` → message_id 49
-- `/sources` → message_id 50
-- `/schedule` → message_id 51
-
-All produced correct Persian operational summaries (see GATE_6_TEST_RESULTS).
+Production services are left running. The unhealthy Telegram ingestor is an
+intentional honest signal for the external MTProto route blocker, not a restart
+or session-persistence failure.

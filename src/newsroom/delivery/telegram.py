@@ -70,6 +70,12 @@ class TelegramDelivery:
 
         if existing and existing.status == "delivered":
             logger.info(f"Report {report_id} already delivered (delivery {existing.id})")
+            # Recovery boundary: a process can stop after every Telegram chunk
+            # commits but before the scheduled cursor commit. Reconcile the
+            # cursor on retry without sending any message again.
+            if cursor_key:
+                self._advance_cursor(db, cursor_key, report_id, existing.id)
+                db.commit()
             return existing.id
 
         # Render chunks

@@ -29,6 +29,26 @@ EXIT_BUSY = 2
 EXIT_ERROR = 1
 
 
+def generation_method_for_attempt(attempt: Any) -> str:
+    """Truthful report label: any deterministic fallback is not an AI success."""
+    used_ai = (
+        attempt.provider != "deterministic"
+        and attempt.status == "ok"
+        and not attempt.fallback_used
+    )
+    return "ai" if used_ai else "deterministic"
+
+
+def report_story_ids_for_attempt(selected_story_ids: list[int], attempt: Any) -> list[int]:
+    """Persist only stories actually present in the validated final output."""
+    output = getattr(attempt, "output", None)
+    output_stories = getattr(output, "stories", None)
+    if not output_stories:
+        return selected_story_ids
+    selected = set(selected_story_ids)
+    return list(dict.fromkeys(story.story_id for story in output_stories if story.story_id in selected))
+
+
 def _correlation_id() -> str:
     env = os.environ.get("NEWSROOM_JOB_ID")
     if env:
@@ -56,7 +76,20 @@ async def _deliver(session: Session, report_id: int) -> int | None:
         cursor_key = None
         if os.environ.get("NEWSROOM_SCHEDULE_LABEL"):
             cursor_key = SCHEDULED_CURSOR_KEY
-        return await td.deliver_report(session, report_id, cursor_key=cursor_key)
+        delivery_id = await td.deliver_report(session, report_id, cursor_key=cursor_key)
+        if delivery_id is None:
+            return None
+
+        # ``deliver_report`` returns an ID for partial delivery so the same
+        # record can be resumed.  A pipeline boundary is successful only when
+        # every chunk is confirmed delivered; partial state must never be
+        # reported as success or advance the schedule.
+        from newsroom.storage.models import Delivery
+
+        delivery = session.get(Delivery, delivery_id)
+        if delivery is None or delivery.status != "delivered":
+            raise RuntimeError(f"telegram delivery {delivery_id} incomplete")
+        return delivery_id
     finally:
         await td.close()
 
@@ -222,7 +255,12 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
     if len(story_ids) > _cfg.editorial_max_stories_per_call:
         from newsroom.editorial.hierarchy import run_hierarchical_editorial
 
-        hier_result = run_hierarchical_editorial(session, story_ids, report_mode)
+        hier_result = run_hierarchical_editorial(
+            session,
+            story_ids,
+            report_mode,
+            job_id=result["job_id"],
+        )
         content = hier_result.content
         editorial_attempt = hier_result.attempt
         result["hierarchical"] = True
@@ -233,33 +271,75 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
         result["cache_hits"] = hier_result.cache_hits
         result["fallback_shards"] = hier_result.fallback_shards
     else:
-        content, editorial_attempt = generate_editorial(session, story_ids, report_mode)
+        content, editorial_attempt = generate_editorial(
+            session,
+            story_ids,
+            report_mode,
+            job_id=result["job_id"],
+        )
 
-    report = Report(
-        content_fa=content,
-        story_ids=story_ids,
-        report_mode=report_mode,
-        generation_method="ai" if editorial_attempt.provider != "deterministic" else "deterministic",
+    existing_report_id = (
+        hier_result.job.report_id if result.get("hierarchical") and hier_result.job else None
     )
-    session.add(report)
-    session.flush()
+    resumed_report = session.get(Report, existing_report_id) if existing_report_id else None
+    report_reused = resumed_report is not None
+    if resumed_report is None:
+        resumed_report = Report(
+            content_fa=content,
+            story_ids=report_story_ids_for_attempt(story_ids, editorial_attempt),
+            report_mode=report_mode,
+            generation_method=generation_method_for_attempt(editorial_attempt),
+        )
+        session.add(resumed_report)
+        session.flush()
+        if result.get("hierarchical"):
+            hier_result.job.report_id = resumed_report.id
+            session.flush()
+    report = resumed_report
     result["report_id"] = report.id
+
+    # Reconcile independently committed provider-route events to the report
+    # created at the durable editorial boundary. No prompt, response, or
+    # provider access value is copied into the lineage table.
+    from newsroom.storage.models import ProviderRouteAttempt
+
+    session.query(ProviderRouteAttempt).filter(
+        ProviderRouteAttempt.editorial_job_id == result["job_id"],
+        ProviderRouteAttempt.report_id.is_(None),
+    ).update({ProviderRouteAttempt.report_id: report.id}, synchronize_session=False)
 
     # Persist editorial attempt for audit
     from newsroom.config import settings as _settings
-    from newsroom.editorial.persistence import compute_cache_key, persist_attempt
+    from newsroom.editorial.persistence import (
+        cache_route_identity,
+        compute_cache_key,
+        persist_attempt,
+    )
+
+    cache_provider, cache_model = cache_route_identity(
+        editorial_attempt.provider,
+        editorial_attempt.model,
+    )
 
     cache_key = compute_cache_key(
         report_mode,
         editorial_attempt.evidence_set_hash,
         editorial_attempt.prompt_version,
-        editorial_attempt.provider,
-        editorial_attempt.model,
+        cache_provider,
+        cache_model,
         temperature=_settings.editorial_temperature,
         max_input_tokens=_settings.editorial_max_input_tokens,
         max_output_tokens=_settings.editorial_max_output_tokens,
     )
-    persist_attempt(session, editorial_attempt, report.id, cache_key)
+    from newsroom.storage.models import EditorialAttempt as EditorialAttemptModel
+
+    existing_attempt = (
+        session.query(EditorialAttemptModel).filter_by(report_id=report.id).first()
+        if report_reused
+        else None
+    )
+    if existing_attempt is None:
+        persist_attempt(session, editorial_attempt, report.id, cache_key)
 
     stage("report", "ok", f"report {report.id} ({editorial_attempt.provider}:{editorial_attempt.status})")
     result["selection_stats"] = {

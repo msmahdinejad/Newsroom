@@ -246,6 +246,11 @@ class EditorialRequest(BaseModel):
     max_input_tokens: int = 12000
     max_output_tokens: int = 4000
     timeout_seconds: int = 60
+    # Safe routing/audit context. These identifiers never contain access
+    # values and let the multi-provider router preserve stage lineage.
+    stage: str = "editorial"
+    job_id: str = ""
+    shard_id: str = ""
 
 
 class EditorialResponse(BaseModel):

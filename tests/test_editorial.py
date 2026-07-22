@@ -230,17 +230,14 @@ def test_editorial_disabled_defaults_to_deterministic():
         assert isinstance(provider, DeterministicEditorialProvider)
 
 
-def test_missing_provider_credentials_falls_back():
-    """Editorial enabled but no API key → deterministic fallback."""
-    with patch.multiple(
-        "newsroom.config.settings",
-        editorial_enabled=True,
-        editorial_provider="openai_compatible",
-        editorial_api_key="",
-        editorial_model="",
+def test_enabled_editorial_uses_production_router_seam():
+    """Enabled editorial delegates selection to the persistent router seam."""
+    routed = DeterministicEditorialProvider()
+    with (
+        patch("newsroom.config.settings.editorial_enabled", True),
+        patch("newsroom.editorial.orchestrator._production_router", return_value=routed),
     ):
-        provider = select_provider()
-        assert isinstance(provider, DeterministicEditorialProvider)
+        assert select_provider() is routed
 
 
 # ── 2. Deterministic fallback ──────────────────────────────────────
@@ -662,6 +659,26 @@ def test_provider_outage_triggers_fallback():
 
 
 # ── 23. Safety refusal ─────────────────────────────────────────────
+
+
+def test_router_internal_fallback_is_recorded_truthfully():
+    """A router response that used deterministic fallback is never labeled AI."""
+    evidence = make_evidence_set([1])
+    fallback = DeterministicEditorialProvider().generate(EditorialRequest(evidence=evidence))
+    fallback.fallback_used = True
+    router = FakeProvider(name="multi_provider_router", response=fallback)
+
+    with patch.multiple(
+        "newsroom.config.settings",
+        editorial_enabled=True,
+        editorial_fallback_enabled=True,
+    ), patch("newsroom.editorial.orchestrator.select_provider", return_value=router), \
+            patch("newsroom.editorial.orchestrator.build_evidence_set", return_value=evidence):
+        _, attempt = generate_editorial(MagicMock(), [1], "scheduled", cache_check=False)
+
+    assert attempt.provider == "deterministic"
+    assert attempt.fallback_used is True
+    assert attempt.status == "fallback"
 
 
 def test_safety_refusal_triggers_fallback():

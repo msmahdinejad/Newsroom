@@ -1,84 +1,45 @@
-# Gate 6 — Test Results
+# Gate 6 — Final Test Results
 
-## Summary
+## Regression suites
 
 | Suite | Result |
-|---|---|
-| Deterministic (non-integration) | 583 passed |
-| Integration (real PostgreSQL) | 131 passed |
-| **Full regression suite** | **714 passed** (0 failed, 3 warnings) |
+|---|---:|
+| Non-integration deterministic suite | 640 passed |
+| Real PostgreSQL integration tests | 144 passed |
+| Full regression suite | **784 passed** |
+| Warnings | 3 existing pytest fixture deprecations |
 
-Run: `uv run pytest tests/ -q` → `714 passed in 203s`.
+The full suite ran against a freshly created PostgreSQL database migrated from
+0001 through `0010_gate6_router_reliability`; the disposable database was
+removed afterward. Production state was not used for test cleanup.
 
-## Deterministic Gate 6 coverage
+The 41 deterministic router cases cover multiple keys, rotation/cooldown,
+shared project quota, RPM/TPM/RPD admission, queue backpressure, Gemini
+concurrency/spacing, `Retry-After`, invalid-key/model isolation, transient
+retry, all provider fallbacks, circuit half-open recovery, schema repair,
+idempotent artifacts/delivery, safe metadata, and Gemini sampling omission.
 
-- `test_workbook_inventory.py` (18): stable identity per platform, platform→type
-  mapping, row validation, synthetic-workbook parsing, expected constants.
-- `test_native_adapters.py` (11): HTML reader link/feed extraction + SSRF
-  rejection; Reddit RSS parsing + 429/403 recoverable + missing-subreddit;
-  YouTube RSS parsing + handle resolution + missing-handle.
-- `test_gate6_scheduler_and_commands.py` (12): six-hour schedule specs,
-  job IDs, help text, status/sources/schedule text (no secrets), bot dispatch
-  of `/status` `/collect` `/sources` `/schedule`.
-- `test_command_handlers.py` (13): dispatch routing, access control.
-- Existing suites (editorial, dedupe, cluster, normalize, evidence, delivery,
-  idempotency, security_redaction, cursors, x_timeline, agent_reach, etc.):
-  all green.
+The 11 router persistence integrations cover model/key/quota/circuit state,
+usage reconciliation, route/artifact/report lineage, mixed-provider lineage,
+restart recovery, delivery-boundary success, rollback, and absence of provider
+access values. Gate 5/5X PostgreSQL tests and the connector/X/Telegram focused
+suites also pass.
 
-## Integration (real PostgreSQL) Gate 6 coverage
+## Build and static checks
 
-- `test_gate6_source_inventory.py` (6): import 1344 + reconcile; idempotent
-  re-import; activation links sources + inactive reasons; disabling preserves
-  historical items; cursor survives a fresh session (restart); scheduled
-  boundary no-news selection.
-- `test_gate6_scheduler.py` (1): four six-hour jobs (00/06/12/18) persist in
-  `apscheduler_jobs` with coalesce + max_instances.
-- Updated gate2/3/5/5x alembic-revision tests accept the 0009 head.
+- Ruff: all repository paths pass (diagnostic scratch files are excluded).
+- MyPy: all 92 source files pass.
+- Docker Compose configuration: valid.
+- Frozen dependency lock/sync: pass.
+- Production image build: pass, including Agent-Reach/twitter-cli version
+  assertions.
+- Migration head: `0010_gate6_router_reliability`.
+- Exact protected-value scan: tracked files, docs, Docker logs, PostgreSQL, and
+  health output contain no provider or X access values.
 
-## Ruff
+## Status
 
-`uv run ruff check` → `All checks passed!` (line-length 100, py312 target).
-
-## MyPy
-
-`uv run mypy` on Gate 6 modules → `Success: no issues found`.
-
-## Migration validation
-
-`uv run alembic upgrade head` → `0008_gate5x_x_ingestion -> 0009_gate6_source_inventory`
-applied cleanly. `source_inventory` table + `sources` new columns present
-(verified via `inspect`). Downgrade path implemented.
-
-## Docker Compose validation
-
-`docker compose config --quiet` → exit 0 (valid). Services: postgres,
-migrate, collector, report-worker, scheduler, telegram-bot,
-telegram-ingestor, agent-reach-worker, telegram-authorize — with health
-checks, restart policies, and dependency ordering on health.
-
-## Configuration exposure checks
-
-- Bot token / API keys scrubbed from logs (RedactingFilter + httpx→WARNING).
-- `/status` `/sources` `/schedule` responses carry no secrets (deterministic
-  test `test_status_text_has_no_secrets`).
-- `.env`, sessions, Agent-Reach config, `.qwen/`, `.specify/` untracked /
-  unchanged (see GATE_6_ACCESS_SAFETY).
-- Test placeholders are synthetic and limited to tests.
-
-## Git status
-
-Working tree clean except the gitignored workbook + import copy (excluded
-locally). `.qwen/` and `.specify/` unchanged across all commits.
-
-## Soak test (bounded)
-
-`scripts/gate6_soak.py` — 3 cycles, RSS (8 sources):
-
-| Cycle | new | failed | healthy | degraded |
-|---|---|---|---|---|
-| 1 | 1 | 1 | 34 | 3 |
-| 2 | 0 | 1 | 34 | 3 |
-| 3 | 1 | 1 | 34 | 3 |
-
-Cycle 2 returned 0 new from the same sources → cursor idempotency confirmed
-(no full-history re-scan). Health stable (no error escalation).
+Software, routing, X ingestion, reporting, Bot API delivery, persistence, and
+restart checks pass. Gate 6 remains **NOT VERIFIED** solely because a real new
+Telegram MTProto item cannot be collected through the host's blocked external
+network path.

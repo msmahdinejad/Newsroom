@@ -20,6 +20,7 @@ deduplication, persistence, health state, auditability, and security policy.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 from datetime import UTC, datetime
@@ -49,11 +50,65 @@ from newsroom.sources.agent_reach.runner import RunnerError
 from newsroom.sources.base import CollectionError
 from newsroom.storage.models import (
     AgentReachSourceState,
+    CollectionRun,
     RawItem,
     Source,
+    XAccountState,
 )
 
 logger = get_logger(__name__)
+
+
+def _safe_collection_failure_category(error: CollectionError, source_type: str) -> str:
+    """Reduce adapter text to a bounded, credential-free operational category."""
+    if source_type != "x_timeline":
+        return "collection_error"
+    text = str(error).lower()
+    if "rate limit" in text or "429" in text:
+        return "x_rate_limit"
+    if "auth not configured" in text:
+        return "x_auth_not_configured"
+    if "401" in text or "authentication" in text:
+        return "x_auth_failure"
+    if "timeout" in text or "timed out" in text:
+        return "x_timeout"
+    if "not found" in text or "could not resolve" in text or "numeric account id" in text:
+        return "x_inaccessible"
+    if "non-json" in text or "non-object" in text or "no user data" in text:
+        return "x_malformed_response"
+    if "clienttransaction" in text:
+        return "x_upstream_client_error"
+    return "x_upstream_error"
+
+
+def _release_attempt_transaction(
+    session: Session,
+    source: Source,
+    run: CollectionRun,
+) -> tuple[int, bool]:
+    """Persist attempt start, then detach the source before network I/O."""
+    if not type(session).__module__.startswith("sqlalchemy."):
+        return 0, False
+    run_id = int(run.id)
+    session.expunge(source)
+    session.commit()
+    return run_id, True
+
+
+def _resume_attempt(
+    session: Session,
+    source: Source,
+    run: CollectionRun,
+    run_id: int,
+    detached: bool,
+) -> tuple[Source, CollectionRun]:
+    if not detached:
+        return source, run
+    attached_source = session.merge(source)
+    attached_run = session.get(CollectionRun, run_id)
+    if attached_run is None:
+        raise RuntimeError(f"collection run {run_id} disappeared")
+    return attached_source, attached_run
 
 
 # Source types managed by this module. The existing collect_sources() in
@@ -192,11 +247,25 @@ def _update_state_failure(
     state.last_error_category = error_category
 
 
+def _update_x_state_failure(session: Session, source: Source, error_category: str) -> None:
+    if source.type != "x_timeline":
+        return
+    state = session.query(XAccountState).filter_by(source_id=source.id).first()
+    if state is None:
+        return
+    state.health_status = "degraded"
+    state.last_error_category = error_category
+    state.consecutive_failures = (state.consecutive_failures or 0) + 1
+
+
 async def collect_agent_reach_sources(
     session: Session,
     *,
     source_type: str | None = None,
     limit_per_source: int = 10,
+    max_sources: int | None = None,
+    min_source_spacing_seconds: float = 0,
+    include_disabled: bool = False,
 ) -> dict[str, Any]:
     """Collect Agent-Reach-backed sources.
 
@@ -207,12 +276,33 @@ async def collect_agent_reach_sources(
     subprocess is launched. If disabled, this function is a no-op that
     returns ``status=disabled`` for every Agent-Reach source.
     """
-    query = session.query(Source).filter(Source.enabled.is_(True))
+    query = session.query(Source)
+    if not include_disabled:
+        query = query.filter(Source.enabled.is_(True))
     if source_type:
         query = query.filter(Source.type == source_type)
     sources = query.all()
 
     ar_sources = [s for s in sources if s.type in AGENT_REACH_SOURCE_TYPES]
+    if max_sources is not None:
+        ar_sources.sort(
+            key=lambda source: (
+                max(
+                    (
+                        stamp
+                        for stamp in (
+                            source.last_attempt_at,
+                            source.last_success_at,
+                            source.last_error_at,
+                        )
+                        if isinstance(stamp, datetime)
+                    ),
+                    default=datetime.min.replace(tzinfo=UTC),
+                ),
+                source.id,
+            )
+        )
+        ar_sources = ar_sources[:max_sources]
     if not ar_sources:
         return {
             "sources": 0,
@@ -242,13 +332,39 @@ async def collect_agent_reach_sources(
     # Channel allowlist — enforced before any subprocess launches.
     allowed_channels = settings.agent_reach_allowed_channels_set()
 
-    for source in ar_sources:
+    for index, source in enumerate(ar_sources):
+        if index and min_source_spacing_seconds > 0:
+            await asyncio.sleep(min_source_spacing_seconds)
+        attempt_at = datetime.now(UTC)
+        source.last_attempt_at = attempt_at
+        source.validation_status = "attempting"
+        source.failure_category = None
+        run = CollectionRun(source_id=source.id, started_at=attempt_at, status="running")
+        session.add(run)
+        session.flush()
+        run_id, detached = _release_attempt_transaction(session, source, run)
         # Map source.type -> Agent-Reach channel name.
         channel = _channel_for_source_type(source.type)
         if channel is None:
+            source, run = _resume_attempt(session, source, run, run_id, detached)
+            run.status = "error"
+            run.error = "unknown_source_type"
+            run.finished_at = datetime.now(UTC)
+            source.validation_status = "failed"
+            source.failure_category = "unknown_source_type"
+            source.no_cursor_reason = "collection_not_supported"
             per_source.append({"source": source.name, "status": "skipped_unknown_type"})
+            if detached:
+                session.commit()
             continue
         if channel not in allowed_channels:
+            source, run = _resume_attempt(session, source, run, run_id, detached)
+            run.status = "error"
+            run.error = "channel_not_allowed"
+            run.finished_at = datetime.now(UTC)
+            source.validation_status = "failed"
+            source.failure_category = "channel_not_allowed"
+            source.no_cursor_reason = "collection_not_authorized"
             per_source.append(
                 {
                     "source": source.name,
@@ -256,21 +372,46 @@ async def collect_agent_reach_sources(
                     "channel": channel,
                 }
             )
+            if detached:
+                session.commit()
             continue
 
         adapter = _adapter_for(source.type)
         try:
             items = await adapter.collect(source)
         except CollectionError as e:
+            source, run = _resume_attempt(session, source, run, run_id, detached)
             logger.error(f"agent_reach collect failed {source.name}: {e}")
             failed.append(source.name)
+            category = _safe_collection_failure_category(e, source.type)
             state = _ensure_source_state(session, source, channel=channel, backend="")
-            _update_state_failure(state, error_category=e.__class__.__name__)
+            _update_state_failure(state, error_category=category)
+            _update_x_state_failure(session, source, category)
             source.last_error_at = datetime.now(UTC)
             source.last_error = str(e)[:1000]
             source.consecutive_failures = (source.consecutive_failures or 0) + 1
+            source.validation_status = "failed"
+            source.failure_category = category
+            source.no_cursor_reason = "collection_failed_before_cursor"
+            if source.type == "x_timeline":
+                source.enabled = False
+                source.inactive_reason = category
+                source.health_status = (
+                    "unavailable"
+                    if category
+                    in {
+                        "x_auth_not_configured",
+                        "x_auth_failure",
+                        "x_inaccessible",
+                        "x_malformed_response",
+                    }
+                    else "degraded"
+                )
             if source.consecutive_failures >= 3:
                 source.health_status = "degraded"
+            run.status = "error"
+            run.error = category
+            run.finished_at = datetime.now(UTC)
             per_source.append(
                 {
                     "source": source.name,
@@ -279,12 +420,30 @@ async def collect_agent_reach_sources(
                     "channel": channel,
                 }
             )
+            if detached:
+                session.commit()
             continue
         except RunnerError as e:
+            source, run = _resume_attempt(session, source, run, run_id, detached)
             logger.error(f"agent_reach runner rejected {source.name}: {e}")
             failed.append(source.name)
             state = _ensure_source_state(session, source, channel=channel, backend="")
             _update_state_failure(state, error_category=e.category)
+            _update_x_state_failure(session, source, e.category)
+            source.last_error_at = datetime.now(UTC)
+            source.last_error = e.category
+            source.consecutive_failures = (source.consecutive_failures or 0) + 1
+            source.validation_status = "failed"
+            source.failure_category = e.category[:50]
+            source.no_cursor_reason = "collection_failed_before_cursor"
+            if source.type == "x_timeline":
+                source.enabled = False
+                source.inactive_reason = f"x_{e.category}"[:100]
+            if source.consecutive_failures >= 3:
+                source.health_status = "degraded"
+            run.status = "error"
+            run.error = e.category
+            run.finished_at = datetime.now(UTC)
             per_source.append(
                 {
                     "source": source.name,
@@ -293,12 +452,30 @@ async def collect_agent_reach_sources(
                     "channel": channel,
                 }
             )
+            if detached:
+                session.commit()
             continue
         except SSRFError as e:
+            source, run = _resume_attempt(session, source, run, run_id, detached)
             logger.warning(f"agent_reach SSRF rejected {source.name}: {e}")
             failed.append(source.name)
             state = _ensure_source_state(session, source, channel=channel, backend="")
             _update_state_failure(state, error_category="ssrf")
+            _update_x_state_failure(session, source, "ssrf")
+            source.last_error_at = datetime.now(UTC)
+            source.last_error = "ssrf"
+            source.consecutive_failures = (source.consecutive_failures or 0) + 1
+            source.validation_status = "failed"
+            source.failure_category = "ssrf"
+            source.no_cursor_reason = "collection_failed_before_cursor"
+            if source.type == "x_timeline":
+                source.enabled = False
+                source.inactive_reason = "x_ssrf"
+            if source.consecutive_failures >= 3:
+                source.health_status = "degraded"
+            run.status = "error"
+            run.error = "ssrf"
+            run.finished_at = datetime.now(UTC)
             per_source.append(
                 {
                     "source": source.name,
@@ -306,10 +483,14 @@ async def collect_agent_reach_sources(
                     "channel": channel,
                 }
             )
+            if detached:
+                session.commit()
             continue
         finally:
             with contextlib.suppress(Exception):
                 await adapter.close()
+
+        source, run = _resume_attempt(session, source, run, run_id, detached)
 
         # Cursor filter — drop items already covered by the cursor.
         cursor = load_cursor(session, source.id)
@@ -353,12 +534,54 @@ async def collect_agent_reach_sources(
 
         # Update source and Agent-Reach state.
         source.last_success_at = datetime.now(UTC)
+        source.last_error = None
         source.consecutive_failures = 0
         source.health_status = "healthy"
+        source.validation_status = "valid"
+        source.failure_category = None
+        source.no_cursor_reason = None
+        if source.type == "x_timeline":
+            source.enabled = True
+            source.inactive_reason = None
         state = _ensure_source_state(
             session, source, channel=channel, backend=_backend_for_source_type(source.type)
         )
         _update_state_success(state, persisted_payloads, backend=state.backend)
+
+        if source.type == "x_timeline":
+            config = dict(source.config or {})
+            account_id = str(
+                (persisted_payloads[0].get("account_id") if persisted_payloads else "")
+                or config.get("account_id")
+                or ""
+            )
+            configured_handle = str(config.get("handle") or config.get("screen_name") or "")
+            resolved_handle = str(
+                (persisted_payloads[0].get("handle") if persisted_payloads else "")
+                or config.get("resolved_handle")
+                or configured_handle
+            )
+            if account_id.isdigit() and configured_handle:
+                x_state = session.query(XAccountState).filter_by(source_id=source.id).first()
+                if x_state is None:
+                    x_state = XAccountState(
+                        source_id=source.id,
+                        account_id=account_id,
+                        configured_handle=configured_handle[:20],
+                    )
+                    session.add(x_state)
+                x_state.account_id = account_id
+                x_state.last_resolved_handle = resolved_handle[:20]
+                x_state.last_resolved_at = datetime.now(UTC)
+                x_state.health_status = "healthy"
+                x_state.cursor = next_cursor
+                x_state.last_error_category = None
+                x_state.consecutive_failures = 0
+                x_state.total_posts_collected = (x_state.total_posts_collected or 0) + new_count
+
+        run.status = "ok"
+        run.items_collected = new_count
+        run.finished_at = datetime.now(UTC)
 
         total_new += new_count
         per_source.append(
@@ -371,6 +594,8 @@ async def collect_agent_reach_sources(
                 "channel": channel,
             }
         )
+        if detached:
+            session.commit()
 
     return {
         "sources": len(ar_sources),

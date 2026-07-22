@@ -118,7 +118,11 @@ def last_collection(db: Session) -> dict[str, Any]:
 def editorial_state(db: Session) -> dict[str, Any]:
     h = db.query(EditorialHealth).first()
     if not h:
-        return {"enabled": settings.editorial_enabled, "provider": settings.editorial_provider, "model": bool(settings.editorial_model)}
+        return {
+            "enabled": settings.editorial_enabled,
+            "provider": "multi_provider_router",
+            "has_model": False,
+        }
     return {
         "enabled": h.enabled,
         "provider": h.provider,
