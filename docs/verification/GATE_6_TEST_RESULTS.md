@@ -40,6 +40,11 @@ suites also pass.
 ## Status
 
 Software, routing, X ingestion, reporting, Bot API delivery, persistence, and
-restart checks pass. Gate 6 remains **NOT VERIFIED** solely because a real new
-Telegram MTProto item cannot be collected through the host's blocked external
-network path.
+restart checks pass. The final Telegram MTProto network closure added 64
+passing focused deterministic tests and 15 passing tests on a freshly migrated
+disposable PostgreSQL database. Ruff, MyPy, and Compose validation pass.
+
+The preserved Telegram session completed an authenticated MTProto handshake,
+persisted real posts, survived restart with cursor continuation, and attempted
+all 157 configured Telegram sources with per-source failure isolation.
+Gate 6 is **VERIFIED**.

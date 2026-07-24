@@ -1,43 +1,45 @@
-# Gate 6 — Telegram MTProto Network Diagnosis
+# Gate 6 — Telegram MTProto Network Closure
 
-## Session and ownership
+## Session and transport
 
-The existing MTProto session was preserved throughout diagnosis. It was not
-deleted, reset, re-authorized, copied into another service, or mounted into the
-Agent-Reach worker. `telegram-ingestor` remains the sole session owner.
+The existing MTProto session remained the sole property of
+`telegram-ingestor`. It was not deleted, reset, copied, re-authorized, or
+mounted into another long-running service.
 
-## Bounded diagnosis
+The container-to-host probe classified the selected route as SOCKS5 by
+protocol negotiation and proved that it could open a tunnel to the session's
+Telegram DC. The other candidate host port was unreachable. The production
+runtime uses the ignored local environment for its endpoint and exposes only
+the safe transport label in health output.
 
-The production session identifies Telegram DC 1. Host and container probes
-were performed without mutating the session:
+The preserved Telethon session completed the MTProto handshake, reported
+authorized, and remained connected after restart.
 
-- host IPv4 direct TCP to the session DC timed out;
-- host IPv6 had no usable route;
-- the container completed a TCP connection to the DC, but the MTProto
-  handshake timed out or was closed;
-- Telethon abridged, intermediate, full, and obfuscated TCP modes all failed
-  with the same bounded connection-timeout category;
-- Windows firewall profiles were enabled but had no outbound deny rule for
-  this traffic;
-- WinHTTP was direct, and no active HTTP, SOCKS, MTProxy, VPN, or service-level
-  proxy route was configured;
-- restarting the ingestor preserved the session and reproduced the same
-  bounded result.
+## Collection and restart evidence
 
-All 157 configured Telegram sources have durable attempt records, safe failure
-categories, and explicit no-cursor reasons. The ingestor health remains
-truthfully degraded; it does not claim authentication failure or a healthy
-MTProto connection.
+One bounded cycle attempted all 157 configured Telegram sources:
 
-## External blocker
+- 149 completed successfully;
+- 8 were isolated as `channel_unresolvable`;
+- 8,852 new posts were persisted;
+- later sources continued after each failed source.
 
-The current host network path permits a container TCP SYN to the Telegram DC
-but drops or blocks the subsequent MTProto payload across every tested Telethon
-transport. Direct host TCP is also blocked and IPv6 is unavailable. With no
-working proxy/VPN/MTProxy route configured, the application cannot obtain the
-required successful connection or a newly collected Telegram post.
+The production ingestor then restarted, reconnected through the same safe
+transport mode, and completed a 20-source continuation cycle. That cycle
+persisted one new post, retained the existing cursor boundary for an unchanged
+source, advanced its cursor timestamp, and left zero duplicate
+channel/message identity pairs.
 
-Gate 6 therefore cannot be marked `VERIFIED` on this host until outbound
-MTProto reachability is restored or an owner-approved working proxy route is
-provided. The native audited collector remains in place and will recover using
-the preserved session when the external route becomes available.
+Production health after restart reports 149 configured, enabled, and healthy
+Telegram channels with an authenticated, connected MTProto session.
+
+## Safety
+
+Proxy endpoints and credentials are absent from tracked files, documentation,
+application logs, PostgreSQL, and health output. Only the proxy protocol and
+Telethon connection mode are retained as safe operational metadata.
+
+## Status
+
+Telegram MTProto ingestion is operational through the configured host proxy.
+The final external network blocker for Gate 6 is closed.

@@ -37,13 +37,17 @@ def telegram_transport_config() -> tuple[dict[str, Any], str]:
     """Return bounded Telethon transport kwargs and a safe transport label.
 
     Proxy endpoints and credentials are read only from local environment-backed
-    settings and are never returned in health output or persisted. MTProxy takes
-    precedence over a generic SOCKS/HTTP proxy when both are configured.
+    settings and are never returned in health output or persisted.
     """
+    mode = settings.telegram_connection_mode.strip().lower() or "direct"
+    supported_modes = {"direct", "abridged", "intermediate", "full", "obfuscated", "mtproxy"}
+    if mode not in supported_modes:
+        raise CollectionError("unsupported Telegram connection mode", "", recoverable=False)
+
     mt_host = settings.telegram_mtproxy_host.strip()
     mt_secret = settings.telegram_mtproxy_secret.strip()
     mt_port = int(settings.telegram_mtproxy_port or 0)
-    if mt_host or mt_secret or mt_port:
+    if mode == "mtproxy":
         if not (mt_host and mt_secret and 1 <= mt_port <= 65535):
             raise CollectionError(
                 "MTProxy configuration is incomplete",
@@ -59,13 +63,36 @@ def telegram_transport_config() -> tuple[dict[str, Any], str]:
             "proxy": (mt_host, mt_port, mt_secret),
         }, "mtproxy"
 
+    connection: type[Any] | None = None
+    if mode != "direct":
+        from telethon.network.connection.tcpabridged import ConnectionTcpAbridged
+        from telethon.network.connection.tcpfull import ConnectionTcpFull
+        from telethon.network.connection.tcpintermediate import ConnectionTcpIntermediate
+        from telethon.network.connection.tcpobfuscated import ConnectionTcpObfuscated
+
+        connections = {
+            "abridged": ConnectionTcpAbridged,
+            "intermediate": ConnectionTcpIntermediate,
+            "full": ConnectionTcpFull,
+            "obfuscated": ConnectionTcpObfuscated,
+        }
+        connection = connections[mode]
+
     proxy_url = settings.telegram_proxy_url.strip()
     if not proxy_url:
-        return {}, "direct"
+        return ({"connection": connection} if connection else {}), mode
 
-    parsed = urlparse(proxy_url)
-    if parsed.scheme.lower() not in {"socks5", "socks4", "http"}:
-        raise CollectionError("unsupported Telegram proxy scheme", "", recoverable=False)
+    proxy_type = settings.telegram_proxy_type.strip().lower()
+    if proxy_type == "auto":
+        proxy_type = ""
+    has_scheme = "://" in proxy_url
+    parsed = urlparse(proxy_url if has_scheme else f"//{proxy_url}")
+    url_type = parsed.scheme.lower() if has_scheme else ""
+    if proxy_type and url_type and proxy_type != url_type:
+        raise CollectionError("Telegram proxy type conflicts with URL", "", recoverable=False)
+    selected_type = proxy_type or url_type
+    if selected_type not in {"socks5", "http"}:
+        raise CollectionError("unsupported Telegram proxy type", "", recoverable=False)
     if not parsed.hostname or not parsed.port:
         raise CollectionError("Telegram proxy host/port missing", "", recoverable=False)
     try:
@@ -75,19 +102,22 @@ def telegram_transport_config() -> tuple[dict[str, Any], str]:
 
     proxy_types = {
         "socks5": socks.SOCKS5,
-        "socks4": socks.SOCKS4,
         "http": socks.HTTP,
     }
-    return {
+    transport: dict[str, Any] = {
         "proxy": (
-            proxy_types[parsed.scheme.lower()],
+            proxy_types[selected_type],
             parsed.hostname,
             parsed.port,
             True,
             unquote(parsed.username or ""),
             unquote(parsed.password or ""),
         )
-    }, parsed.scheme.lower()
+    }
+    if connection:
+        transport["connection"] = connection
+    label = selected_type if mode == "direct" else f"{mode}+{selected_type}"
+    return transport, label
 
 
 class TelegramMTProtoCollector(SourceCollector):

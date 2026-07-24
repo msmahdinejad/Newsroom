@@ -44,9 +44,11 @@ def test_external_source_dependencies_are_immutable() -> None:
 
 def _telegram_settings(**overrides):
     values = {
+        "telegram_connection_mode": "direct",
         "telegram_mtproxy_host": "",
         "telegram_mtproxy_secret": "",
         "telegram_mtproxy_port": 0,
+        "telegram_proxy_type": "",
         "telegram_proxy_url": "",
     }
     values.update(overrides)
@@ -74,13 +76,99 @@ def test_telegram_socks_transport_never_exposes_url_in_label() -> None:
     assert kwargs["proxy"][2] == 1080
 
 
+def test_telegram_explicit_socks_type_supports_host_port_url() -> None:
+    from newsroom.sources import telegram_collector
+
+    local = _telegram_settings(
+        telegram_proxy_type="socks5",
+        telegram_proxy_url="proxy.test:9443",
+    )
+    with patch.object(telegram_collector, "settings", local):
+        kwargs, label = telegram_collector.telegram_transport_config()
+    assert label == "socks5"
+    assert kwargs["proxy"][1:4] == ("proxy.test", 9443, True)
+
+
+def test_telegram_obfuscated_connection_supports_socks_proxy() -> None:
+    from telethon.network.connection.tcpobfuscated import ConnectionTcpObfuscated
+
+    from newsroom.sources import telegram_collector
+
+    local = _telegram_settings(
+        telegram_connection_mode="obfuscated",
+        telegram_proxy_type="socks5",
+        telegram_proxy_url="proxy.test:9443",
+    )
+    with patch.object(telegram_collector, "settings", local):
+        kwargs, label = telegram_collector.telegram_transport_config()
+    assert kwargs["connection"] is ConnectionTcpObfuscated
+    assert label == "obfuscated+socks5"
+
+
+def test_telegram_http_proxy_is_supported() -> None:
+    from newsroom.sources import telegram_collector
+
+    local = _telegram_settings(telegram_proxy_url="http://proxy.test:8080")
+    with patch.object(telegram_collector, "settings", local):
+        kwargs, label = telegram_collector.telegram_transport_config()
+    assert label == "http"
+    assert kwargs["proxy"][1:4] == ("proxy.test", 8080, True)
+
+
+def test_mtproxy_requires_explicit_connection_mode() -> None:
+    from newsroom.sources import telegram_collector
+
+    local = _telegram_settings(
+        telegram_connection_mode="direct",
+        telegram_mtproxy_host="proxy.invalid",
+        telegram_mtproxy_port=443,
+        telegram_mtproxy_secret="dd" + ("0" * 32),
+    )
+    with patch.object(telegram_collector, "settings", local):
+        kwargs, label = telegram_collector.telegram_transport_config()
+    assert kwargs == {}
+    assert label == "direct"
+
+
+def test_complete_mtproxy_uses_mtproxy_connection() -> None:
+    from telethon.network.connection.tcpmtproxy import (
+        ConnectionTcpMTProxyRandomizedIntermediate,
+    )
+
+    from newsroom.sources import telegram_collector
+
+    local = _telegram_settings(
+        telegram_connection_mode="mtproxy",
+        telegram_mtproxy_host="proxy.test",
+        telegram_mtproxy_port=443,
+        telegram_mtproxy_secret="dd" + ("0" * 32),
+    )
+    with patch.object(telegram_collector, "settings", local):
+        kwargs, label = telegram_collector.telegram_transport_config()
+    assert label == "mtproxy"
+    assert kwargs["connection"] is ConnectionTcpMTProxyRandomizedIntermediate
+    assert kwargs["proxy"][0:2] == ("proxy.test", 443)
+
+
 def test_incomplete_mtproxy_fails_closed() -> None:
     from newsroom.sources import telegram_collector
     from newsroom.sources.base import CollectionError
 
-    local = _telegram_settings(telegram_mtproxy_host="proxy.invalid")
+    local = _telegram_settings(
+        telegram_connection_mode="mtproxy",
+        telegram_mtproxy_host="proxy.invalid",
+    )
     with patch.object(telegram_collector, "settings", local), pytest.raises(CollectionError):
         telegram_collector.telegram_transport_config()
+
+
+def test_compose_passes_safe_telegram_transport_controls() -> None:
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    ingestor = compose.split("  telegram-ingestor:", 1)[1].split("  # Gate 5:", 1)[0]
+    authorize = compose.split("  telegram-authorize:", 1)[1].split("volumes:", 1)[0]
+    for service in (ingestor, authorize):
+        assert "TELEGRAM_PROXY_TYPE:" in service
+        assert "TELEGRAM_CONNECTION_MODE:" in service
 
 
 def test_telegram_handle_extraction_supports_public_links() -> None:
@@ -99,6 +187,118 @@ def test_ingestor_healthcheck_fails_when_enabled_but_disconnected(capsys) -> Non
     with patch.object(service_status, "telegram_ingestor_status", return_value=payload):
         assert service_status.main(["ingestor"]) == 1
     assert json.loads(capsys.readouterr().out)["healthy"] is False
+
+
+def test_ingestor_passes_attached_source_to_collector() -> None:
+    from contextlib import contextmanager
+    from datetime import UTC, datetime
+
+    from newsroom.sources import telegram_ingestor_service as service
+    from newsroom.storage.models import CollectionRun, Source, TelegramChannel
+
+    source = SimpleNamespace(
+        id=1,
+        type="telegram",
+        enabled=True,
+        config={"channel_username": "public_channel"},
+        url="https://t.me/public_channel",
+        last_attempt_at=None,
+        last_success_at=None,
+        last_error_at=None,
+        failure_category=None,
+        validation_status=None,
+        consecutive_failures=0,
+        health_status="configured",
+        last_error=None,
+        no_cursor_reason=None,
+    )
+    channel = SimpleNamespace(
+        source_id=1,
+        public_username="public_channel",
+        telegram_channel_id=123,
+        enabled=True,
+        last_message_id=0,
+    )
+
+    class _Query:
+        def __init__(self, model):
+            self.model = model
+
+        def filter(self, *_args):
+            return self
+
+        def filter_by(self, **_kwargs):
+            return self
+
+        def all(self):
+            return [source] if self.model is Source else []
+
+        def first(self):
+            return channel if self.model is TelegramChannel else None
+
+    class _SqlAlchemySession:
+        def __init__(self):
+            self.detached: set[int] = set()
+            self.runs: dict[int, object] = {}
+
+        def query(self, model):
+            return _Query(model)
+
+        def add(self, value):
+            if isinstance(value, CollectionRun):
+                value.id = len(self.runs) + 1
+                self.runs[value.id] = value
+
+        def flush(self):
+            return None
+
+        def commit(self):
+            return None
+
+        def expunge(self, value):
+            self.detached.add(id(value))
+
+        def merge(self, value):
+            return value
+
+        def get(self, model, value_id):
+            return self.runs.get(value_id) if model is CollectionRun else None
+
+    _SqlAlchemySession.__module__ = "sqlalchemy.testing"
+    db = _SqlAlchemySession()
+
+    class _Collector:
+        async def collect(self, value):
+            assert id(value) not in db.detached
+            return []
+
+        def persist_items(self, *_args):
+            return {"new": 0, "updated": 0, "skipped": 0}
+
+        def detect_gaps(self, *_args):
+            return []
+
+    @contextmanager
+    def _db():
+        yield db
+
+    local_settings = SimpleNamespace(
+        telegram_max_sources_per_cycle=1,
+        telegram_source_spacing_seconds=0,
+    )
+    with (
+        patch.object(service, "get_db", _db),
+        patch.object(service, "settings", local_settings),
+        patch.object(service, "load_cursor", return_value={}),
+        patch.object(service, "save_cursor"),
+    ):
+        result = asyncio.run(service._collect_all_channels(_Collector()))
+
+    assert result["failed"] == []
+    assert result["channels"] == [
+        {"source_id": 1, "new": 0, "updated": 0, "skipped": 0, "gaps": 0}
+    ]
+    assert source.last_success_at <= datetime.now(UTC)
 
 
 class _InventoryQuery:

@@ -8,8 +8,8 @@ After the final restart:
 
 - PostgreSQL, collector, report worker, scheduler, Telegram output bot, and
   Agent-Reach worker are healthy and running;
-- Telegram ingestor is running but truthfully unhealthy with
-  `connection_timeout`;
+- Telegram ingestor is authenticated, connected through the configured safe
+  proxy transport, and healthy after restart;
 - router provider/model validation, key/quota state, and the closed Gemini
   circuit survived;
 - report 464, delivery 433, and Telegram message 54 survived; the next real
@@ -26,6 +26,5 @@ After the final restart:
   00:00, 06:00, 12:00, and 18:00;
 - PostgreSQL had zero idle-in-transaction connections.
 
-Production services are left running. The unhealthy Telegram ingestor is an
-intentional honest signal for the external MTProto route blocker, not a restart
-or session-persistence failure.
+Production services are left running. The Telegram ingestor is an
+authenticated, healthy MTProto owner with durable cursor continuation.

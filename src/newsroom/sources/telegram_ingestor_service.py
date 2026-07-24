@@ -231,13 +231,6 @@ async def _collect_all_channels(collector: TelegramMTProtoCollector) -> dict[str
                 db.commit()
             try:
                 channel = await _ensure_channel(db, collector, source)
-                if type(db).__module__.startswith("sqlalchemy."):
-                    # Resolution/upsert may have opened a transaction. Flush it,
-                    # detach the fully loaded source, and end the transaction
-                    # before the potentially slow network collection.
-                    db.flush()
-                    db.expunge(source)
-                    db.commit()
                 items = await collector.collect(source)
                 if type(db).__module__.startswith("sqlalchemy."):
                     source = db.merge(source)

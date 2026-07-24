@@ -97,6 +97,8 @@ class Settings(BaseSettings):
     telegram_max_sources_per_cycle: int = 20
     telegram_source_spacing_seconds: float = 1.0
     telegram_proxy_url: str = ""
+    telegram_proxy_type: str = ""
+    telegram_connection_mode: str = "direct"
     telegram_mtproxy_host: str = ""
     telegram_mtproxy_port: int = 0
     telegram_mtproxy_secret: str = ""
