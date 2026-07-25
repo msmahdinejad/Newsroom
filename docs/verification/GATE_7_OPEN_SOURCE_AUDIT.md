@@ -11,6 +11,12 @@ backups, and Agent-Reach state are ignored and excluded from Docker context.
 The repository ships a synthetic two-row source-inventory example and schema
 documentation instead of the private workbook.
 
+An isolated clean clone was exercised with only `.env.example` and
+`.env.providers.example`: frozen dependency installation, an empty PostgreSQL
+migration, the complete 695-test deterministic suite, Compose validation, and
+full safe development-stack startup all passed. Its optional X worker correctly
+reported `x_auth_not_configured` rather than using production access.
+
 An exact-value exposure scanner read ignored local configuration without
 printing values, then checked tracked files, all reachable Git history,
 Compose logs, and a PostgreSQL data dump. Final result: zero matches in every

@@ -12,6 +12,7 @@
 | Compose validation | `docker compose config --quiet` passed |
 | Production image | `newsroom:gate7-rc` built successfully |
 | Router and no-news behavior | deterministic queue/fallback suite passed; no-news pipeline test asserts zero editorial provider calls |
+| Isolated clean clone | safe examples, frozen install, empty-db migration, full 695 deterministic suite, Compose validation, and safe full dev stack start passed |
 
 The fresh PostgreSQL run initially exposed three stale assertions that excluded
 the new Gate 7 migration head. They were corrected; the rerun passed all 152
