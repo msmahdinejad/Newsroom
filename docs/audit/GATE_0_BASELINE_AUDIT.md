@@ -4,7 +4,7 @@
 
 - **Date**: 2026-07-14
 - **Auditor**: Independent senior software auditor (Hermes Agent)
-- **Repository**: [REDACTED]\OneDrive\Desktop\newsroom
+- **Repository**: project repository root
 - **Original branch**: newsroom-v2-rebuild
 - **Original commit**: 57a0028bb39375d13a1b647bb0b1c4eea6a2c0f5
 - **Safety tag**: baseline-before-resume (at 57a0028)
@@ -115,8 +115,7 @@ Every claim in PROJECT_REPORT.md and VERIFICATION_REPORT.md was traced to source
 3. **Report cursor advancement tied to delivery** — No logic advances cursors after confirmed delivery.
 4. **LLM editorial synthesis** — PersianEditorial is deterministic-only. HermesEditorial is dead V1 code. No LLM API integration.
 5. **Agent-Reach** — No code, no references (correctly stated as "not evaluated")
-6. **WorldMonitor** — No code, no references (correctly stated as "not integrated")
-7. **True scheduler persistence** — Jobs are re-created from code, not restored from persistent store
+6. **True scheduler persistence** — Jobs are re-created from code, not restored from persistent store
 
 ## Dead Code (V1 Remnants)
 

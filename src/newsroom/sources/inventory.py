@@ -74,11 +74,7 @@ COL_COVERAGE = "Coverage Score"
 
 # Workbook search paths (relative to repo root or absolute).
 WORKBOOK_GLOB = "tech_ai_programming_source_radar_global_2026*.xlsx"
-WORKBOOK_SEARCH_DIRS: tuple[str, ...] = (
-    ".",  # repository root
-    "config/import",
-    os.path.expanduser("~/OneDrive/Desktop"),
-)
+SOURCE_WORKBOOK_ENV = "NEWSROOM_SOURCE_WORKBOOK"
 IMPORT_DEST = Path("config/import/source-radar.xlsx")
 
 
@@ -200,6 +196,9 @@ def stable_identity_for(platform: str, handle: str | None, url: str) -> str:
 ACCESS_REQUIRED_TYPES: frozenset[str] = frozenset(
     {"Discord", "Slack", "Bot"}
 )
+PERMANENT_RUNTIME_INACTIVE_REASONS: frozenset[str] = frozenset(
+    {"channel_private", "channel_unresolvable", "duplicate_identity", "handle_missing"}
+)
 
 
 def mapped_type_for(platform: str, workbook_type: str, url: str) -> tuple[str, str | None]:
@@ -281,10 +280,25 @@ def _review_level(verification: str) -> str:
 # ── Workbook location ─────────────────────────────────────────────
 
 
-def find_workbook(repo_root: str = ".") -> Path | None:
-    """Locate the workbook in the searched paths. Returns absolute path or None."""
+def find_workbook(
+    repo_root: str | Path = ".",
+    workbook_path: str | Path | None = None,
+) -> Path | None:
+    """Locate an explicit, environment-configured, or repo-local workbook."""
     root = Path(repo_root).resolve()
-    search: list[Path] = [root, root / "config/import", Path.home() / "OneDrive/Desktop"]
+    configured = workbook_path or os.environ.get(SOURCE_WORKBOOK_ENV, "").strip()
+    if configured:
+        candidate = Path(configured).expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        candidate = candidate.resolve()
+        return candidate if candidate.is_file() else None
+
+    canonical = (root / IMPORT_DEST).resolve()
+    if canonical.is_file():
+        return canonical
+
+    search: list[Path] = [root, root / "config/import"]
     for d in search:
         if not d.exists():
             continue
@@ -294,12 +308,14 @@ def find_workbook(repo_root: str = ".") -> Path | None:
     return None
 
 
-def copy_workbook_to_import_dir(src: Path, repo_root: str = ".") -> Path:
+def copy_workbook_to_import_dir(src: Path, repo_root: str | Path = ".") -> Path:
     """Copy the workbook to config/import/source-radar.xlsx without changing
     the original. Returns the destination path."""
     dest_dir = Path(repo_root) / "config/import"
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / "source-radar.xlsx"
+    if src.resolve() == dest.resolve():
+        return dest
     shutil.copy2(src, dest)
     return dest
 
@@ -447,7 +463,7 @@ def import_workbook(session: Session, path: Path) -> ImportReport:
     """
     rows = _load_workbook_rows(path)
     parsed = _parse_rows(rows)
-    report = ImportReport(workbook_path=str(path), total_rows=len(parsed))
+    report = ImportReport(workbook_path=path.name, total_rows=len(parsed))
 
     seen_identities: set[str] = set()
     platform_counts: dict[str, int] = {}
@@ -587,6 +603,11 @@ def _activation_reason(
     telegram_mtproto_available: bool,
 ) -> str | None:
     """Return an inactive_reason if the row must be inactive, else None."""
+    if (
+        inventory.operational_state == "inactive"
+        and inventory.inactive_reason in PERMANENT_RUNTIME_INACTIVE_REASONS
+    ):
+        return inventory.inactive_reason
     if inventory.validation_result == "duplicate":
         return "duplicate_identity"
     if inventory.validation_result != "ok":
@@ -753,6 +774,7 @@ __all__ = [
     "EXPECTED_PLATFORM_COUNTS",
     "EXPECTED_TOTAL",
     "IMPORT_DEST",
+    "SOURCE_WORKBOOK_ENV",
     "ActivationReport",
     "ImportReport",
     "ParsedRow",

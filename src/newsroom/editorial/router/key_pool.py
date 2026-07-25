@@ -67,6 +67,10 @@ class KeyPool:
     def __repr__(self) -> str:
         return f"KeyPool(provider={self.provider!r}, key_count={len(self._records)})"
 
+    @property
+    def key_count(self) -> int:
+        return len(self._records)
+
     def reset_rotation(self) -> None:
         with self._lock:
             self._cursor = 0
@@ -94,6 +98,9 @@ class KeyPool:
     def success(self, lease: KeyLease) -> None:
         with self._lock:
             record = self._find(lease)
+            # A bounded live validation may prove that an access value which
+            # was previously rejected has been corrected provider-side.
+            record.enabled = True
             record.successful_request_count += 1
             record.failure_count = 0
             record.last_failure_category = None
@@ -127,6 +134,19 @@ class KeyPool:
     def snapshot(self) -> tuple[KeyStateSnapshot, ...]:
         with self._lock:
             return tuple(self._snapshot(record) for record in self._records)
+
+    def validation_leases(self) -> tuple[KeyLease, ...]:
+        """Return every configured value for an explicit bounded validation.
+
+        Normal routing never selects a disabled value. This separate seam lets
+        the operator recheck a value after correcting an owner/provider-side
+        condition without deleting durable health history first.
+        """
+        with self._lock:
+            return tuple(
+                KeyLease(record.provider, record.safe_id, record.fingerprint, record.value)
+                for record in self._records
+            )
 
     def has_healthy_key(self) -> bool:
         with self._lock:

@@ -182,7 +182,11 @@ class QuotaController:
                     state.cooldown_until_monotonic = now_mono + (
                         cooldown - now_utc
                     ).total_seconds()
-                    state.cooldown_category = RouteFailureCategory.RATE_LIMIT
+                    state.cooldown_category = (
+                        RouteFailureCategory.DAILY_QUOTA
+                        if state.daily_count >= route.limits.rpd
+                        else RouteFailureCategory.RATE_LIMIT
+                    )
                 self._states[key] = state
                 self._routes[key] = route
 

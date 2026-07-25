@@ -1,4 +1,7 @@
 $ErrorActionPreference = "Stop"
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $RepoRoot
+
 Write-Host "Processing collected items..." -ForegroundColor Cyan
-Write-Host "⚠ Not implemented yet (M2)" -ForegroundColor Yellow
-exit 1
+uv run newsroom process all
+exit $LASTEXITCODE

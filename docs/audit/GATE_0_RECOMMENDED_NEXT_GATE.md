@@ -67,7 +67,6 @@ Add tests that run against a real PostgreSQL:
 - **Telegram MTProto collection** — Requires credentials, one-time auth flow
 - **Telegram live delivery** — Requires bot token, end-to-end test
 - **Agent-Reach evaluation** — No code exists yet
-- **WorldMonitor integration** — No code exists yet
 - **Data retention enforcement** — Config exists, no enforcement code
 
 ## Gate 1 Success Criteria

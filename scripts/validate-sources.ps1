@@ -1,4 +1,7 @@
 $ErrorActionPreference = "Stop"
-Write-Host "Validating sources..." -ForegroundColor Cyan
-Write-Host "⚠ Not implemented yet (M2)" -ForegroundColor Yellow
-exit 1
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $RepoRoot
+
+Write-Host "Checking source inventory reconciliation..." -ForegroundColor Cyan
+uv run newsroom sources status
+exit $LASTEXITCODE

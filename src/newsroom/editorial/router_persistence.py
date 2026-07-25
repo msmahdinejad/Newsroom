@@ -40,7 +40,7 @@ class ModelHealthSnapshot:
     provider: str
     model: str
     validation_status: str
-    latency_ms: int
+    latency_ms: int | None
     last_success_at: datetime | None
     last_failure_category: str | None
     supported_capabilities: tuple[str, ...]
@@ -162,7 +162,7 @@ class PostgresRouterStateSink:
                 provider=snapshot.provider,
                 model=snapshot.model,
                 validation_status=snapshot.validation_status,
-                latency_ms=snapshot.latency_ms or 0,
+                latency_ms=snapshot.latency_ms,
                 last_success_at=snapshot.last_success_at,
                 last_failure_category=snapshot.last_failure_category,
                 supported_capabilities=snapshot.supported_capabilities,
@@ -294,7 +294,11 @@ def persist_router_snapshot(
             "provider": snapshot.provider,
             "model": snapshot.model,
             "validation_status": snapshot.validation_status,
-            "latency_ms": snapshot.latency_ms,
+            "latency_ms": (
+                snapshot.latency_ms
+                if snapshot.latency_ms is not None
+                else (existing.latency_ms if existing is not None else 0)
+            ),
             "last_success_at": snapshot.last_success_at
             or (existing.last_success_at if existing is not None else None),
             "last_failure_at": snapshot.last_failure_at
@@ -559,7 +563,8 @@ def _validate_model_health(snapshot: ModelHealthSnapshot) -> None:
     _identifier(snapshot.provider, "provider", 50)
     _identifier(snapshot.model, "model", 150)
     _identifier(snapshot.validation_status, "validation status", 30)
-    _nonnegative(snapshot.latency_ms, "latency")
+    if snapshot.latency_ms is not None:
+        _nonnegative(snapshot.latency_ms, "latency")
     _optional_identifier(snapshot.last_failure_category, "failure category", 50)
     for capability in snapshot.supported_capabilities:
         _identifier(capability, "supported capability", 50)

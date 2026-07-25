@@ -17,7 +17,7 @@ When a user sends any of these commands, respond with the appropriate action:
 
 Run the newsroom pipeline and deliver a fresh report.
 
-Execute: `python [REDACTED]\OneDrive\Desktop\newsroom\scripts\run_pipeline.py`
+From the repository root, execute: `python scripts/run_pipeline.py`
 
 If the output contains `"status": "ok"` and a `report_id`, the report was delivered.
 If `"status": "ok_empty"`, respond: "خبر جدیدی در این دوره یافت نشد."

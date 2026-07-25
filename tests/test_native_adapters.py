@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from newsroom.sources.base import CollectionError
@@ -69,11 +70,46 @@ async def test_html_reader_extracts_links_and_feed():
 
 
 @pytest.mark.asyncio
+async def test_html_reader_emits_one_identity_for_source_page():
+    c = NativeHtmlReader()
+    page = '<html><title>Home</title><a href="/">Home link</a></html>'
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.content = page.encode()
+    resp.text = page
+    resp.raise_for_status = MagicMock()
+    with patch.object(c.client, "get", new_callable=AsyncMock) as get:
+        get.return_value = resp
+        items = await c.collect(_src("https://example.com/"))
+
+    links = [item["link"] for item in items]
+    assert links.count("https://example.com/") == 1
+    await c.close()
+
+
+@pytest.mark.asyncio
 async def test_html_reader_rejects_private_ip():
     c = NativeHtmlReader()
     with pytest.raises(CollectionError) as exc:
         await c.collect(_src("http://127.0.0.1/"))
     assert exc.value.recoverable is False
+    await c.close()
+
+
+@pytest.mark.asyncio
+async def test_html_reader_rejects_redirect_to_private_ip():
+    """A private redirect target must be rejected before the second request."""
+    c = NativeHtmlReader()
+    resp = MagicMock()
+    resp.status_code = 302
+    resp.url = httpx.URL("https://example.com/redirect")
+    resp.headers = {"location": "http://127.0.0.1/admin"}
+    with patch.object(c.client, "get", new_callable=AsyncMock) as mg:
+        mg.return_value = resp
+        with pytest.raises(CollectionError) as exc:
+            await c.collect(_src("https://example.com/redirect"))
+    assert exc.value.recoverable is False
+    assert mg.await_count == 1
     await c.close()
 
 

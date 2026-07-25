@@ -8,6 +8,7 @@ import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -63,11 +64,20 @@ class HttpEditorialTransport:
         providers: tuple[ProviderConfig, ...],
         *,
         timeout_seconds: float = 45.0,
+        proxy_url: str | None = None,
         client_factory: Callable[..., httpx.Client] = httpx.Client,
     ) -> None:
         self._providers = {provider.name: provider for provider in providers}
         self._timeout_seconds = max(1.0, timeout_seconds)
+        self._proxy_url = proxy_url
         self._client_factory = client_factory
+
+    @property
+    def transport_label(self) -> str:
+        """Credential-safe aggregate transport label."""
+        if self._proxy_url is None:
+            return "direct"
+        return f"{urlparse(self._proxy_url).scheme.lower()}_proxy"
 
     def execute(
         self,
@@ -92,9 +102,15 @@ class HttpEditorialTransport:
                 },
             ]
         try:
-            with self._client_factory(
-                timeout=httpx.Timeout(self._timeout_seconds, connect=min(15.0, self._timeout_seconds))
-            ) as client:
+            client_kwargs: dict[str, Any] = {
+                "timeout": httpx.Timeout(
+                    self._timeout_seconds,
+                    connect=min(15.0, self._timeout_seconds),
+                )
+            }
+            if self._proxy_url is not None:
+                client_kwargs["proxy"] = self._proxy_url
+            with self._client_factory(**client_kwargs) as client:
                 response = client.post(
                     url,
                     json=payload,
@@ -189,6 +205,17 @@ class HttpEditorialTransport:
                 raise RouteFailure(RouteFailureCategory.UNSUPPORTED_PARAMETER, "provider rejected request parameter")
             if any(marker in body for marker in ("context length", "too many tokens", "maximum context")):
                 raise RouteFailure(RouteFailureCategory.CONTEXT_LENGTH, "provider context limit exceeded")
+            if any(
+                marker in body
+                for marker in (
+                    "user location is not supported",
+                    "location is not supported for the api use",
+                )
+            ):
+                raise RouteFailure(
+                    RouteFailureCategory.POLICY_REJECTION,
+                    "provider location policy rejected request",
+                )
             raise RouteFailure(RouteFailureCategory.UNKNOWN, "provider rejected bounded request")
         if status in {409, 422, 451}:
             raise RouteFailure(RouteFailureCategory.POLICY_REJECTION, "provider policy rejection")

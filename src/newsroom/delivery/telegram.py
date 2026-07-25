@@ -128,20 +128,19 @@ class TelegramDelivery:
                 chunk_records.append(dc)
         db.flush()
 
-        # Resume from first non-sent chunk
-        start_idx = 0
+        # DeliveryChunk is authoritative. Preserve positional message IDs so
+        # a restart can repair a non-contiguous gap without re-sending a later
+        # chunk Telegram already confirmed.
+        message_ids: list[int | None] = list(delivery.message_ids or [])
+        if len(message_ids) < len(chunks):
+            message_ids.extend([None] * (len(chunks) - len(message_ids)))
         for dc in chunk_records:
+            if dc.status == "sent" and dc.telegram_message_id is not None:
+                message_ids[dc.chunk_index] = dc.telegram_message_id
+
+        for i, dc in enumerate(chunk_records):
             if dc.status == "sent":
-                start_idx = dc.chunk_index + 1
-            else:
-                start_idx = dc.chunk_index
-                break
-
-        # Send chunks from start_idx
-        message_ids: list[int] = list(delivery.message_ids or [])
-
-        for i in range(start_idx, len(chunks)):
-            dc = chunk_records[i]
+                continue
             dc.attempt_count += 1
             dc.status = "pending"
             db.flush()
@@ -160,15 +159,18 @@ class TelegramDelivery:
                 dc.error_detail = None
 
                 # Update delivery-level state
-                if len(message_ids) <= i:
-                    message_ids.append(tg_msg_id)
-                else:
-                    message_ids[i] = tg_msg_id
+                message_ids[i] = tg_msg_id
 
-                delivery.delivered_chunks = i + 1
+                delivery.delivered_chunks = sum(
+                    chunk.status == "sent" for chunk in chunk_records
+                )
                 delivery.message_ids = message_ids
                 delivery.last_send_at = datetime.now(UTC)
-                delivery.status = "partial" if i < len(chunks) - 1 else "delivered"
+                delivery.status = (
+                    "delivered"
+                    if delivery.delivered_chunks == len(chunks)
+                    else "partial"
+                )
                 delivery.error = None
                 delivery.error_category = None
                 db.commit()
@@ -179,7 +181,11 @@ class TelegramDelivery:
                 dc.error_detail = e.detail[:500]
                 delivery.error = f"Chunk {i + 1}/{len(chunks)}: {e.category.value}"
                 delivery.error_category = e.category.value
-                delivery.status = "failed" if i == 0 else "partial"
+                delivery.status = (
+                    "partial"
+                    if any(chunk.status == "sent" for chunk in chunk_records)
+                    else "failed"
+                )
                 db.commit()
                 logger.error(f"Delivery chunk {i + 1} failed: {e.category.value} — {e.detail[:100]}")
                 if delivery.status == "failed":
@@ -193,7 +199,11 @@ class TelegramDelivery:
                 dc.error_detail = str(e)[:500]
                 delivery.error = f"Chunk {i + 1}/{len(chunks)}: {str(e)[:200]}"
                 delivery.error_category = ErrorCategory.UNKNOWN.value
-                delivery.status = "failed" if i == 0 else "partial"
+                delivery.status = (
+                    "partial"
+                    if any(chunk.status == "sent" for chunk in chunk_records)
+                    else "failed"
+                )
                 db.commit()
                 logger.error(f"Delivery chunk {i + 1} error: {e}")
                 if delivery.status == "failed":
@@ -202,6 +212,11 @@ class TelegramDelivery:
 
         # All chunks sent successfully
         if delivery.status == "delivered":
+            delivery.message_ids = [
+                int(message_id)
+                for message_id in message_ids
+                if message_id is not None
+            ]
             delivery.delivered_at = datetime.now(UTC)
             delivery.error = None
             delivery.error_category = None

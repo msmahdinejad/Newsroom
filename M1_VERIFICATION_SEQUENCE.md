@@ -12,7 +12,7 @@ Execute this exact sequence after incident repairs complete.
 
 ### Gate 1: Environment Setup
 ```powershell
-cd [REDACTED]\OneDrive\Desktop\newsroom
+Set-Location <repository-root>
 
 # Verify dependencies
 uv sync --extra dev

@@ -1,7 +1,7 @@
-# Persian AI Newsroom — production source inventory (EXAMPLE, no credentials)
+# Persian AI Newsroom — illustrative source configuration (no credentials).
 #
-# This file is a placeholder template for Gate 6 bulk source onboarding.
-# Gate 5 prepares the connectors; Gate 6 fills in the curated source lists.
+# The private workbook is the authoritative production inventory. This file is
+# an optional local experiment; production services do not load it.
 #
 # Rules:
 # - NEVER put cookies, tokens, API keys, browser-profile paths, or
@@ -9,19 +9,19 @@
 # - Authenticated channels (X, Reddit) require explicit owner opt-in via
 #   AGENT_REACH_ALLOW_AUTHENTICATED_CHANNELS=true and dedicated operational
 #   accounts configured locally in the isolated agent_reach_config volume.
-# - The curated channel lists below are PLACEHOLDERS — replace with the
-#   actual production list during Gate 6 onboarding.
+# - Add only sources you have the right to monitor. Keep production source
+#   lists in the private workbook, not this public example.
 
-# ── Telegram (existing native MTProto ingestion, Gate 3) ───────────
+# ── Telegram (native MTProto ingestion) ────────────────────────────
 telegram:
   enabled: true
   # Telegram collection uses the existing MTProto ingestor service.
   # Channels are curated via the Telegram API (chat IDs are stored hashed
   # in the database, never in this file).
   # See: docs/verification/GATE_3_*.md
-  channels: []  # placeholder — fill in Gate 6
+  channels: []  # intentionally empty public example
 
-# ── RSS (existing native feedparser collector, Gate 1) ─────────────
+# ── RSS (native feedparser collector) ──────────────────────────────
 rss:
   enabled: true
   # The existing native RSS collector (src/newsroom/sources/rss.py) is
@@ -31,9 +31,9 @@ rss:
     - name: "Hacker News (frontpage)"
       url: "https://hnrss.org/frontpage"
       poll_interval_minutes: 30
-    # placeholder — add curated Persian AI / tech RSS feeds in Gate 6
+    # Add local experimental feeds here only when needed.
 
-# ── Websites (Agent-Reach Jina Reader, Gate 5) ──────────────────────
+# ── Websites (bounded reader) ──────────────────────────────────────
 websites:
   enabled: true
   # Allowlisted public domains only. SSRF protection enforced.
@@ -63,9 +63,9 @@ websites:
       url: "https://ai.meta.com/blog/"
       allowed_domains: ["ai.meta.com"]
       poll_interval_minutes: 60
-    # placeholder — add curated Persian AI / tech websites in Gate 6
+    # Add local experimental sites here only when needed.
 
-# ── GitHub (existing native release collector, Gate 1) ──────────────
+# ── GitHub (native release collector) ───────────────────────────────
 github:
   enabled: true
   # The existing native GitHub release collector (src/newsroom/sources/github.py)
@@ -88,7 +88,7 @@ github:
       owner: "Panniantong"
       repo: "Agent-Reach"
       poll_interval_minutes: 240
-    # placeholder — add curated AI / ML repositories in Gate 6
+    # Add local experimental repositories here only when needed.
 
   # Optional: Agent-Reach discovery queries (gh search repos)
   discovery:
@@ -99,7 +99,7 @@ github:
     limit_per_query: 10
     poll_interval_minutes: 1440  # daily
 
-# ── YouTube (Agent-Reach yt-dlp, Gate 5) ────────────────────────────
+# ── YouTube (native RSS or bounded capability adapter) ──────────────
 youtube:
   enabled: true
   # Curated public channel allowlist only. Metadata-only collection.
@@ -107,7 +107,7 @@ youtube:
   channels:
     - name: "Yannic Kilcher"
       channel_handle: "YannicKilcher"
-      # channel_id: "UCcHgLr9OT9IdODkQ3OHI0Mw"  # fill in Gate 6 for stability
+      # channel_id may be supplied locally for a stable source identity.
       max_items_per_poll: 25
       poll_interval_minutes: 120
     - name: "Two Minute Papers"
@@ -118,7 +118,7 @@ youtube:
       channel_handle: "AICoffeeBreak"
       max_items_per_poll: 25
       poll_interval_minutes: 120
-    # placeholder — add curated Persian AI / tech YouTube channels in Gate 6
+    # Add local experimental channels here only when needed.
 
   # Subtitle text (optional, bounded)
   subtitles:
@@ -127,9 +127,9 @@ youtube:
     max_chars: 8000
     timeout_seconds: 30
 
-# ── X / Twitter (OPTIONAL — manual discovery only in Gate 5) ───────
+# ── X / Twitter (optional authenticated production collector) ───────
 x:
-  enabled: false  # Gate 5: manual discovery only; flip to true in a future gate
+  enabled: false  # Enable only after local authenticated-route validation.
   # Production integration requires:
   # - AGENT_REACH_ALLOW_AUTHENTICATED_CHANNELS=true (owner opt-in)
   # - dedicated non-primary X account
@@ -137,13 +137,13 @@ x:
   # - explicit curated account list
   # - durable cursors implemented
   # - bounded real-read test of monitoring succeeds
-  accounts: []  # placeholder — fill in a future gate
+  accounts: []  # intentionally empty public example
   # Public-page reading (manual discovery, no auth) is always available
   # via the XPublicReadCollector for one-off research URLs.
 
-# ── Reddit (OPTIONAL — manual research only in Gate 5) ──────────────
+# ── Reddit (optional public or authenticated collector) ─────────────
 reddit:
-  enabled: false  # Gate 5: manual research only; flip to true in a future gate
+  enabled: false  # Enable only after local route validation.
   # Production integration requires:
   # - AGENT_REACH_ALLOW_AUTHENTICATED_CHANNELS=true (owner opt-in)
   # - dedicated Reddit account
@@ -151,13 +151,12 @@ reddit:
   # - explicit curated subreddit list
   # - bounded comment depth and result count
   # - bounded real-read test of subreddit monitoring succeeds
-  subreddits: []  # placeholder — fill in a future gate
+  subreddits: []  # intentionally empty public example
   # Public-page reading (manual research, no login) is always available
   # via the RedditPublicReadCollector for one-off research URLs.
 
-# ── Deferred channels (not enabled in Gate 5) ──────────────────────
-# The following channels are deferred per GATE_5_SOCIAL_NETWORK_DECISIONS.md:
+# ── Deferred channels ──────────────────────────────────────────────
+# The following channels are not production collectors in this release:
 #   linkedin, instagram, facebook, tiktok, bilibili, xiaohongshu, v2ex,
 #   xiaoyuzhou (podcast), xueqiu, search (Exa)
-# They may be revisited in a future gate with a documented unique-value
-# case and owner approval.
+# Add one only after a documented use case and owner approval.

@@ -1,4 +1,4 @@
-"""Hermes-powered editorial digest generation."""
+"""Archived legacy digest adapter; production uses the persistent router."""
 
 from datetime import datetime
 from typing import Any
@@ -38,11 +38,8 @@ class HermesEditorial:
                 return self._empty_digest()
 
             # Build context for Hermes
-            # ponytail: Will use for delegation when Hermes integration ready
-            # context = self._build_context(stories)
-
-            # ponytail: delegate to Hermes with editorial skill
-            # For now, return deterministic preview until Hermes integration ready
+            # Kept only for historical compatibility. Production commands use
+            # newsroom.editorial and never invoke this adapter.
             return self._generate_preview(stories)
 
         finally:
@@ -74,7 +71,7 @@ class HermesEditorial:
         return context
 
     def _generate_preview(self, stories: list[Story]) -> str:
-        """Generate deterministic preview (temporary until Hermes ready).
+        """Generate a legacy deterministic preview.
 
         Args:
             stories: List of stories

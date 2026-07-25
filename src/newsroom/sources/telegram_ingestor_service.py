@@ -21,7 +21,7 @@ from newsroom.service_status import telegram_ingestor_status
 from newsroom.sources.base import CollectionError
 from newsroom.sources.telegram_collector import TelegramMTProtoCollector
 from newsroom.storage.database import get_db
-from newsroom.storage.models import CollectionRun, Source, TelegramChannel
+from newsroom.storage.models import CollectionRun, Source, SourceInventory, TelegramChannel
 
 logger = get_logger(__name__)
 
@@ -179,6 +179,8 @@ def _safe_failure_category(exc: Exception) -> str:
         return "channel_private"
     if "unresolvable" in text or "not occupied" in text:
         return "channel_unresolvable"
+    if "duplicate_identity" in text:
+        return "duplicate_identity"
     if "handle_missing" in text:
         return "handle_missing"
     if "auth" in text or "unauthorized" in text:
@@ -188,6 +190,47 @@ def _safe_failure_category(exc: Exception) -> str:
     if "connect" in text:
         return "connection_error"
     return "collection_error"
+
+
+_PERMANENT_CHANNEL_FAILURES: frozenset[str] = frozenset(
+    {"channel_private", "channel_unresolvable", "duplicate_identity", "handle_missing"}
+)
+
+
+def _record_channel_failure(db: Any, source: Source, category: str) -> None:
+    """Apply safe source/inventory state for one Telegram channel failure."""
+    if category not in _PERMANENT_CHANNEL_FAILURES:
+        source.health_status = "degraded"
+        source.no_cursor_reason = "mtproto_connection_failed"
+        return
+
+    source.enabled = False
+    source.health_status = "unavailable"
+    source.inactive_reason = category
+    source.no_cursor_reason = category
+    inventory = db.query(SourceInventory).filter_by(source_id=source.id).first()
+    if inventory is not None:
+        inventory.operational_state = "inactive"
+        inventory.inactive_reason = category
+
+
+def _reconcile_permanent_channel_failures() -> int:
+    """Apply previously recorded permanent failures after a service restart."""
+    reconciled = 0
+    with get_db() as db:
+        sources = (
+            db.query(Source)
+            .filter(
+                Source.type == "telegram",
+                Source.enabled.is_(True),
+                Source.failure_category.in_(_PERMANENT_CHANNEL_FAILURES),
+            )
+            .all()
+        )
+        for source in sources:
+            _record_channel_failure(db, source, str(source.failure_category))
+            reconciled += 1
+    return reconciled
 
 
 def _source_activity(source: Source) -> tuple[datetime, int]:
@@ -284,9 +327,7 @@ async def _collect_all_channels(collector: TelegramMTProtoCollector) -> dict[str
                 source.consecutive_failures = (source.consecutive_failures or 0) + 1
                 source.validation_status = "failed"
                 source.failure_category = category
-                source.no_cursor_reason = "mtproto_connection_failed"
-                if source.consecutive_failures >= 3:
-                    source.health_status = "degraded"
+                _record_channel_failure(db, source, category)
                 run.status = "error"
                 run.error = category
                 run.finished_at = datetime.now(UTC)
@@ -350,6 +391,12 @@ async def _run_ingestor() -> None:
             await asyncio.sleep(3600)
 
     collector = TelegramMTProtoCollector()
+    reconciled = _reconcile_permanent_channel_failures()
+    if reconciled:
+        logger.info(
+            "Telegram permanent source failures reconciled",
+            extra={"source_count": reconciled},
+        )
     runtime: dict[str, Any] = {"status": "enabled", "authenticated": None}
     while True:
         try:

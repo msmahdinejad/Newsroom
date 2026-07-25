@@ -50,9 +50,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -567,6 +568,22 @@ def test_terminate_calls_kill_on_timeout(monkeypatch):
 # ── 15. Oversized stdout / stderr ────────────────────────────────
 
 
+def test_posix_subprocess_starts_in_isolated_process_group():
+    """Timeout cleanup must never signal the worker's own process group."""
+    runner = ControlledRunner(allow_disabled=True, timeout_seconds=1, max_output_bytes=4096)
+    with (
+        patch("newsroom.sources.agent_reach.runner.os.name", "posix"),
+        patch("newsroom.sources.agent_reach.runner.subprocess.Popen") as mock_popen,
+    ):
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.communicate.return_value = (b"", b"")
+        mock_popen.return_value = proc
+        runner.run("agent-reach", "doctor", [])
+
+    assert mock_popen.call_args.kwargs["start_new_session"] is True
+
+
 def test_oversized_stdout_truncated():
     runner = ControlledRunner(allow_disabled=True, timeout_seconds=5, max_output_bytes=100)
     with patch("newsroom.sources.agent_reach.runner.subprocess.Popen") as mock_popen:
@@ -594,6 +611,24 @@ def test_oversized_stderr_truncated():
 
 
 # ── 16. Non-zero exit ────────────────────────────────────────────
+
+
+def test_real_subprocess_output_is_bounded_while_running():
+    """The runner must not buffer unlimited child output before truncating it."""
+    runner = ControlledRunner(allow_disabled=True, timeout_seconds=5, max_output_bytes=1024)
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdout.write('x' * 10000000)"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=os.name == "posix",
+    )
+
+    stdout, stderr, truncated, killed = runner._communicate_bounded(proc)
+
+    assert len(stdout) <= 1024
+    assert len(stderr) <= 1024
+    assert truncated is True
+    assert killed is True
 
 
 def test_nonzero_exit_recorded_in_result():
@@ -1216,6 +1251,50 @@ def test_source_failure_does_not_stop_other_sources():
 
 
 # ── 33. Prompt injection remains inert ──────────────────────────
+
+
+def test_ssrf_failure_uses_dedicated_safe_path():
+    """SSRFError must not be swallowed by the generic CollectionError handler."""
+    import asyncio
+
+    from newsroom.pipeline.gate5_collect import collect_agent_reach_sources
+    from newsroom.sources.agent_reach.adapters import SSRFError
+
+    source = _make_source(
+        source_id=1,
+        name="web_source",
+        source_type="web_page",
+        url="https://example.com/redirect",
+    )
+    session = MagicMock()
+    query = MagicMock()
+    query.filter.return_value = query
+    query.all.return_value = [source]
+    query.first.return_value = None
+    session.query.return_value = query
+
+    async def reject_ssrf(_source):
+        raise SSRFError("private redirect rejected", _source.url, recoverable=False)
+
+    with (
+        patch("newsroom.pipeline.gate5_collect.settings") as mock_settings,
+        patch("newsroom.pipeline.gate5_collect.WebPageReader") as reader_cls,
+        patch("newsroom.pipeline.gate5_collect._ensure_source_state") as ensure_state,
+        patch("newsroom.pipeline.gate5_collect._update_state_failure"),
+        patch("newsroom.pipeline.gate5_collect._update_x_state_failure"),
+    ):
+        mock_settings.agent_reach_ready.return_value = True
+        mock_settings.agent_reach_allowed_channels_set.return_value = {"web"}
+        reader = MagicMock()
+        reader.collect = reject_ssrf
+        reader.close = AsyncMock()
+        reader_cls.return_value = reader
+        ensure_state.return_value = MagicMock()
+        result = asyncio.run(collect_agent_reach_sources(session))
+
+    assert result["detail"][0]["status"] == "ssrf_rejected"
+    assert source.failure_category == "ssrf"
+    assert source.last_error == "ssrf"
 
 
 def test_prompt_injection_in_source_content_does_not_affect_command():

@@ -81,6 +81,7 @@ class RouterConfig:
     providers: tuple[ProviderConfig, ...]
     enabled: bool = True
     provider_order: tuple[str, ...] = ("gemini", "mistral", "groq", "nvidia")
+    proxy_url: str | None = field(default=None, repr=False)
     queue_size: int = 32
     provider_cooldown_seconds: float = 300.0
     key_cooldown_seconds: float = 60.0

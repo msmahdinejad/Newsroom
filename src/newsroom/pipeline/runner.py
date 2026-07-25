@@ -20,7 +20,7 @@ from newsroom.logging import get_logger, setup_logging
 from newsroom.pipeline.collect import collect_sources
 from newsroom.pipeline.lock import PipelineBusyError, PipelineLock
 from newsroom.storage.database import engine
-from newsroom.storage.models import JobRun, NormalizedItem, RawItem, Report, Story
+from newsroom.storage.models import Delivery, JobRun, NormalizedItem, RawItem, Report
 
 logger = get_logger(__name__)
 
@@ -59,6 +59,56 @@ def _correlation_id() -> str:
 def _emit(obj: dict[str, Any]) -> None:
     print(json.dumps(obj, ensure_ascii=False, default=str))
     sys.stdout.flush()
+
+
+def _collection_kwargs() -> dict[str, Any]:
+    """Bound scheduled native collection and keep dedicated owners exclusive."""
+    from newsroom.config import settings
+
+    return {
+        "limit_per_source": settings.collect_limit_per_source,
+        "max_sources": settings.collect_max_sources_per_cycle,
+        "source_spacing_seconds": settings.collect_source_spacing_seconds,
+        "exclude_source_types": {"telegram", "x_timeline"},
+    }
+
+
+def _agent_reach_collection_kwargs() -> dict[str, Any]:
+    """Bound optional Agent-Reach work to the same fair cycle budget."""
+    from newsroom.config import settings
+
+    return {
+        "limit_per_source": settings.collect_limit_per_source,
+        "max_sources": settings.collect_max_sources_per_cycle,
+        "min_source_spacing_seconds": settings.collect_source_spacing_seconds,
+    }
+
+
+def _completed_scheduled_run(
+    session: Session,
+    job_id: str,
+    schedule_label: str,
+) -> JobRun | None:
+    """Return a fully delivered run for the same durable Tehran boundary."""
+    if not schedule_label:
+        return None
+    existing = (
+        session.query(JobRun)
+        .filter_by(job_id=job_id, trigger="scheduled")
+        .order_by(JobRun.id.desc())
+        .first()
+    )
+    if (
+        existing is None
+        or existing.status != "ok"
+        or existing.report_id is None
+        or existing.delivery_id is None
+    ):
+        return None
+    delivery = session.get(Delivery, existing.delivery_id)
+    if delivery is None or delivery.status != "delivered":
+        return None
+    return existing
 
 
 async def _deliver(session: Session, report_id: int) -> int | None:
@@ -111,7 +161,7 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
         stage("collect", "skipped", "NEWSROOM_SKIP_COLLECT set")
     else:
         stage("collect", "starting")
-        coll = await collect_sources(session)
+        coll = await collect_sources(session, **_collection_kwargs())
         session.commit()
         stage("collect", "ok", f"{coll['new_items']} new / {coll['sources']} sources")
 
@@ -123,7 +173,10 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
         stage("collect_agent_reach", "skipped", "NEWSROOM_SKIP_COLLECT set")
     else:
         stage("collect_agent_reach", "starting")
-        ar_coll = await collect_agent_reach_sources(session)
+        ar_coll = await collect_agent_reach_sources(
+            session,
+            **_agent_reach_collection_kwargs(),
+        )
         session.commit()
         if ar_coll.get("disabled"):
             stage("collect_agent_reach", "skipped", "agent_reach_disabled")
@@ -193,24 +246,22 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
     else:
         stage("cluster", "ok", "no items")
 
-    stage("evidence", "starting")
-    from newsroom.processing.evidence import EvidenceBuilder
-
-    evidence_builder = EvidenceBuilder()
-    stories = session.query(Story).order_by(Story.created_at.desc()).limit(30).all()
-    if stories:
-        estats = evidence_builder.build_for_stories(session, [s.id for s in stories])
-        session.commit()
-        stage("evidence", "ok", str(estats))
-    else:
-        stage("evidence", "skipped", "no stories")
-
     stage("report", "starting")
     from newsroom.editorial.selection import select_stories_for_report
 
     report_mode = result["report_mode"]
     selection = select_stories_for_report(session, report_mode)
     story_ids = selection.story_ids
+
+    stage("evidence", "starting")
+    if story_ids:
+        from newsroom.processing.evidence import EvidenceBuilder
+
+        estats = EvidenceBuilder().build_for_stories(session, story_ids)
+        session.commit()
+        stage("evidence", "ok", str(estats))
+    else:
+        stage("evidence", "skipped", "no selected stories")
 
     if not story_ids or selection.no_new_items:
         stage("report", "skipped", f"no new items (excluded {selection.excluded_as_delivered} delivered)")
@@ -382,6 +433,20 @@ def run_pipeline(*, blocking_lock: bool = False) -> dict[str, Any]:
         with PipelineLock(blocking=blocking_lock) as lock:
             result["lock_owner"] = lock.owner
             session = Session(engine)
+            completed = _completed_scheduled_run(
+                session,
+                job_id,
+                result["schedule_label"],
+            )
+            if completed is not None:
+                result["status"] = "ok"
+                result["report_id"] = completed.report_id
+                result["delivery_id"] = completed.delivery_id
+                result["deduplicated"] = True
+                result["finish_time"] = datetime.now(UTC).isoformat()
+                session.close()
+                _emit(result)
+                return result
             job_run = JobRun(
                 job_type="scheduled" if result["schedule_label"] else "manual",
                 job_id=job_id,

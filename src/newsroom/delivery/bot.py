@@ -12,12 +12,13 @@ import asyncio
 import contextlib
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from newsroom.config import settings
 from newsroom.delivery.access import deny_message, is_authorized
 from newsroom.delivery.client import TelegramBotClient, redact_token
+from newsroom.delivery.identity import command_request_key, identity_fingerprint
 from newsroom.delivery.telegram import TelegramDelivery
 from newsroom.logging import get_logger, setup_logging
 from newsroom.storage.database import get_db
@@ -221,8 +222,8 @@ class TelegramBot:
                 db.add(TelegramUpdate(
                     update_id=update_id,
                     update_type=update_type,
-                    user_id=user_id,
-                    chat_id=str(chat_id) if chat_id else None,
+                    user_fingerprint=identity_fingerprint("user", user_id),
+                    chat_fingerprint=identity_fingerprint("chat", chat_id),
                     command=command[:100],
                     result=result,
                 ))
@@ -376,7 +377,15 @@ class TelegramBot:
             from newsroom.pipeline.collect import collect_sources
 
             with get_db() as db:
-                result = await collect_sources(db)
+                result = await collect_sources(
+                    db,
+                    limit_per_source=max(1, settings.collect_limit_per_source),
+                    max_sources=max(1, settings.collect_max_sources_per_cycle),
+                    source_spacing_seconds=max(
+                        0.0,
+                        settings.collect_source_spacing_seconds,
+                    ),
+                )
             await self._send_text(
                 chat_id,
                 f"✅ جمع‌آوری: {result.get('new_items', 0)} آیتم از {result.get('sources', 0)} منبع"
@@ -396,9 +405,11 @@ class TelegramBot:
         update_id: int,
     ) -> str:
         """Run pipeline under PostgreSQL lock with command idempotency."""
-        # Build request key for idempotency
-        # Same command from same user within active window = busy/idempotent
-        request_key = f"{mode}_{user_id}_{chat_id}"
+        # Same command from the same identities remains idempotent without
+        # persisting the raw Telegram identifiers.
+        user_fingerprint = identity_fingerprint("user", user_id)
+        chat_fingerprint = identity_fingerprint("chat", chat_id)
+        request_key = command_request_key(mode, user_id, chat_id, update_id)
 
         with get_db() as db:
             existing_req = db.query(CommandRequest).filter_by(request_key=request_key).first()
@@ -411,6 +422,27 @@ class TelegramBot:
                 db.close()
                 await self._send_text(chat_id, f"✅ گزارش شماره {report_id} از قبل تولید شده است.")
                 return "ok"
+            cooldown_seconds = max(0, settings.manual_cooldown_seconds)
+            if cooldown_seconds:
+                cutoff = datetime.now(UTC) - timedelta(seconds=cooldown_seconds)
+                recent_req = (
+                    db.query(CommandRequest)
+                    .filter(
+                        CommandRequest.request_key != request_key,
+                        CommandRequest.user_fingerprint == user_fingerprint,
+                        CommandRequest.chat_fingerprint == chat_fingerprint,
+                        CommandRequest.status.in_(("running", "ok")),
+                        CommandRequest.created_at >= cutoff,
+                    )
+                    .order_by(CommandRequest.created_at.desc())
+                    .first()
+                )
+                if recent_req:
+                    await self._send_text(
+                        chat_id,
+                        "⏳ برای جلوگیری از اجرای تکراری، کمی بعد دوباره تلاش کنید.",
+                    )
+                    return "busy"
             # Create or update request
             if existing_req:
                 existing_req.status = "running"
@@ -419,8 +451,8 @@ class TelegramBot:
                 req = CommandRequest(
                     request_key=request_key,
                     command=mode,
-                    user_id=user_id,
-                    chat_id=str(chat_id),
+                    user_fingerprint=user_fingerprint,
+                    chat_fingerprint=chat_fingerprint,
                     status="running",
                 )
                 db.add(req)

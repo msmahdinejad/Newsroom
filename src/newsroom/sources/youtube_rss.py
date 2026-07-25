@@ -30,6 +30,7 @@ import httpx
 from newsroom.config import settings
 from newsroom.logging import get_logger
 from newsroom.sources.base import CollectionError, SourceCollector
+from newsroom.sources.http_client import build_collection_client
 from newsroom.storage.models import Source
 
 logger = get_logger(__name__)
@@ -44,7 +45,7 @@ class NativeYouTubeRssCollector(SourceCollector):
     """Collect recent videos from a public YouTube channel via RSS."""
 
     def __init__(self) -> None:
-        self.client = httpx.AsyncClient(
+        self.client = build_collection_client(
             timeout=httpx.Timeout(
                 connect=settings.collection_timeout_connect,
                 read=settings.collection_timeout_read,

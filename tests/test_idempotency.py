@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock
 
+from newsroom.delivery.identity import command_request_key, identity_fingerprint
 from newsroom.storage.models import CommandRequest, TelegramUpdate
 
 
@@ -16,6 +17,20 @@ def test_telegram_update_index():
     assert hasattr(TelegramUpdate, "update_id")
     assert hasattr(TelegramUpdate, "update_type")
     assert hasattr(TelegramUpdate, "result")
+
+
+def test_persisted_telegram_identities_use_fingerprints_only():
+    """Durable Telegram audit rows must not contain raw owner/chat IDs."""
+    telegram_columns = TelegramUpdate.__table__.c
+    command_columns = CommandRequest.__table__.c
+    assert "user_id" not in telegram_columns
+    assert "chat_id" not in telegram_columns
+    assert "user_fingerprint" in telegram_columns
+    assert "chat_fingerprint" in telegram_columns
+    assert "user_id" not in command_columns
+    assert "chat_id" not in command_columns
+    assert "user_fingerprint" in command_columns
+    assert "chat_fingerprint" in command_columns
 
 
 def test_command_request_unique_constraint():
@@ -55,23 +70,26 @@ def test_idempotency_logic_new_update_processed():
     assert existing is None  # New → process
 
 
-def test_command_request_key_format():
-    """Request key encodes mode + user + chat for dedup."""
-    # Same command from same user/chat = same key = idempotent
-    key1 = "manual_123_456"
-    key2 = "manual_123_456"
-    assert key1 == key2  # Duplicate tap = same key
+def test_identity_fingerprint_is_stable_and_contains_no_raw_identifier():
+    fingerprint = identity_fingerprint("user", 123456789)
+    assert fingerprint == identity_fingerprint("user", 123456789)
+    assert fingerprint is not None
+    assert len(fingerprint) == 64
+    assert "123456789" not in fingerprint
 
 
-def test_command_request_key_different_users():
-    """Different users have different keys."""
-    key1 = "manual_123_456"
-    key2 = "manual_789_456"
-    assert key1 != key2
+def test_command_request_key_is_stable_without_persisting_identifiers():
+    key1 = command_request_key("manual", 123456789, 987654321, 111)
+    key2 = command_request_key("manual", 123456789, 987654321, 111)
+    assert key1 == key2
+    assert "123456789" not in key1
+    assert "987654321" not in key1
+    assert len(key1.split(":", 1)[1]) == 64
 
 
-def test_command_request_key_different_modes():
-    """Different modes have different keys."""
-    key1 = "manual_123_456"
-    key2 = "manual_new_123_456"
-    assert key1 != key2
+def test_command_request_key_separates_update_user_chat_and_mode():
+    baseline = command_request_key("manual", 123, 456, 1001)
+    assert baseline != command_request_key("manual", 789, 456, 1001)
+    assert baseline != command_request_key("manual", 123, 789, 1001)
+    assert baseline != command_request_key("manual_new", 123, 456, 1001)
+    assert baseline != command_request_key("manual", 123, 456, 1002)

@@ -1,4 +1,7 @@
 $ErrorActionPreference = "Stop"
-Write-Host "Generating Persian digest..." -ForegroundColor Cyan
-Write-Host "⚠ Not implemented yet (M2)" -ForegroundColor Yellow
-exit 1
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $RepoRoot
+
+Write-Host "Generating Persian report..." -ForegroundColor Cyan
+uv run newsroom report generate
+exit $LASTEXITCODE

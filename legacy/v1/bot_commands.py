@@ -10,9 +10,10 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 # Project paths
-PROJECT_DIR = r"[REDACTED]\OneDrive\Desktop\newsroom"
+PROJECT_DIR = str(Path(__file__).resolve().parents[2])
 sys.path.insert(0, os.path.join(PROJECT_DIR, "src"))
 
 # Pipeline lock file

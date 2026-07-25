@@ -26,7 +26,11 @@ from newsroom.editorial.router.types import (
     SystemClock,
     Usage,
 )
-from newsroom.editorial.router.validation import ModelValidationResult, ModelValidator
+from newsroom.editorial.router.validation import (
+    AccessValidationResult,
+    ModelValidationResult,
+    ModelValidator,
+)
 from newsroom.editorial.schema import EditorialRequest, EditorialResponse
 
 
@@ -168,6 +172,16 @@ class MultiProviderRouter(EditorialProvider):
         )
         return validator.validate_all(self.routes)
 
+    def validate_access_values(self) -> list[AccessValidationResult]:
+        validator = ModelValidator(
+            transport=self.transport,
+            dispatcher=self.dispatcher,
+            key_pools=self.key_pools,
+            clock=self.clock,
+            sink=self.state_sink,
+        )
+        return validator.validate_access_values(self.routes)
+
     def key_pool(self, provider: str) -> KeyPool:
         return self.key_pools[provider]
 
@@ -212,7 +226,11 @@ class MultiProviderRouter(EditorialProvider):
                     if route.provider == provider
                 },
             }
-        return {"providers": providers, "queue_depth": self.dispatcher.queued_count}
+        return {
+            "providers": providers,
+            "queue_depth": self.dispatcher.queued_count,
+            "transport": getattr(self.transport, "transport_label", "custom"),
+        }
 
     def restore(self, persistence_snapshot: object) -> None:
         """Rehydrate persisted safe cooldown/usage state after restart."""
@@ -223,6 +241,8 @@ class MultiProviderRouter(EditorialProvider):
             pool.restore(key_snapshots)
         self.dispatcher.quota.restore(quota_snapshots, self.routes)
         for provider, circuit in self.circuits.items():
+            if self.key_pools[provider].key_count == 0:
+                continue
             snapshot = next(
                 (
                     item
@@ -243,7 +263,9 @@ class MultiProviderRouter(EditorialProvider):
         for provider in self.config.provider_order:
             pool = self.key_pools.get(provider)
             circuit = self.circuits.get(provider)
-            if pool is None or circuit is None or not circuit.allow_request():
+            if pool is None or circuit is None or pool.key_count == 0:
+                continue
+            if not circuit.allow_request():
                 continue
             provider_routes = [
                 route for route in self.routes
@@ -398,43 +420,86 @@ class MultiProviderRouter(EditorialProvider):
                 except LookupError:
                     continue
                 started = self.clock.monotonic()
-                try:
-                    def execute_alternate(
-                        selected_route: ModelRoute = route,
-                        selected_lease: KeyLease = lease,
-                    ) -> EditorialResponse:
-                        return self.transport.execute(
-                            selected_route, selected_lease.value, request, context
-                        )
+                transient_retry_used = False
+                while True:
+                    try:
+                        def execute_alternate(
+                            selected_route: ModelRoute = route,
+                            selected_lease: KeyLease = lease,
+                        ) -> EditorialResponse:
+                            return self.transport.execute(
+                                selected_route, selected_lease.value, request, context
+                            )
 
-                    response = self.dispatcher.dispatch(
-                        route,
-                        self._estimate_input_tokens(request),
-                        execute_alternate,
-                        key_fingerprint=lease.fingerprint,
-                    )
-                    self._force_actual_identity(response, route)
-                    pool.success(lease)
-                    circuit.success()
-                    self._record_attempt(
-                        context, route, lease, "success", None, started,
-                        self._estimate_input_tokens(request), Usage.from_response(response), None,
-                    )
-                    return response
-                except RouteFailure as failure:
-                    self._record_attempt(
-                        context, route, lease, "failed", failure.category, started,
-                        self._estimate_input_tokens(request), None, failure.retry_after_seconds,
-                    )
-                    if failure.provider_level:
-                        circuit.failure(failure.category)
-                    if failure.category is RouteFailureCategory.INVALID_KEY:
-                        pool.invalid(lease)
-                    elif failure.category is RouteFailureCategory.RATE_LIMIT:
-                        pool.rate_limited(lease, retry_after_seconds=failure.retry_after_seconds)
-                    else:
-                        pool.failure(lease, failure.category)
-                    return None
+                        response = self.dispatcher.dispatch(
+                            route,
+                            self._estimate_input_tokens(request),
+                            execute_alternate,
+                            key_fingerprint=lease.fingerprint,
+                        )
+                        self._force_actual_identity(response, route)
+                        pool.success(lease)
+                        circuit.success()
+                        route.last_failure_category = None
+                        self._record_attempt(
+                            context, route, lease, "success", None, started,
+                            self._estimate_input_tokens(request), Usage.from_response(response), None,
+                        )
+                        self.state_sink.record_snapshot(
+                            self._model_snapshot(route, self.clock, success=True)
+                        )
+                        return response
+                    except RouteFailure as failure:
+                        self._record_attempt(
+                            context, route, lease, "failed", failure.category, started,
+                            self._estimate_input_tokens(request), None, failure.retry_after_seconds,
+                        )
+                        route.last_failure_category = failure.category.value
+                        if failure.provider_level:
+                            circuit.failure(failure.category)
+                        if (
+                            failure.category
+                            in {
+                                RouteFailureCategory.TIMEOUT,
+                                RouteFailureCategory.SERVER_ERROR,
+                                RouteFailureCategory.NETWORK_ERROR,
+                            }
+                            and not transient_retry_used
+                            and circuit.state is not CircuitState.OPEN
+                        ):
+                            transient_retry_used = True
+                            self.clock.sleep(self._retry_jitter(lease))
+                            continue
+                        if failure.category is RouteFailureCategory.INVALID_KEY:
+                            pool.invalid(lease)
+                        elif failure.category is RouteFailureCategory.RATE_LIMIT:
+                            if route.provider == "gemini":
+                                self.dispatcher.quota.cool_down(
+                                    route,
+                                    failure.retry_after_seconds,
+                                )
+                            else:
+                                pool.rate_limited(
+                                    lease,
+                                    retry_after_seconds=failure.retry_after_seconds,
+                                )
+                        elif failure.category is RouteFailureCategory.DAILY_QUOTA:
+                            self.dispatcher.quota.exhaust_daily(
+                                route,
+                                failure.daily_reset_at,
+                            )
+                        elif failure.category in {
+                            RouteFailureCategory.INVALID_MODEL,
+                            RouteFailureCategory.UNSUPPORTED_PARAMETER,
+                        }:
+                            route.enabled = False
+                            route.validation_status = "disabled"
+                            self.state_sink.record_snapshot(
+                                self._model_snapshot(route, self.clock)
+                            )
+                        else:
+                            pool.failure(lease, failure.category)
+                        return None
         return None
 
     def _record_attempt(

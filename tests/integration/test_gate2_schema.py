@@ -105,5 +105,30 @@ def test_alembic_at_gate2_revision():
         "0008_gate5x_x_ingestion",
         "0009_gate6_source_inventory",
         "0010_gate6_router_reliability",
+        "0011_gate7_identity_privacy",
     )
+    eng.dispose()
+
+
+def test_gate7_telegram_audit_state_contains_only_fingerprints():
+    """Durable bot audit rows must not expose raw Telegram identities."""
+    url = os.environ.get("DATABASE_URL", DEFAULT_URL)
+    eng = create_engine(url, pool_pre_ping=True)
+    insp = inspect(eng)
+
+    for table_name in ("telegram_updates", "command_requests"):
+        columns = {column["name"] for column in insp.get_columns(table_name)}
+        assert "user_id" not in columns
+        assert "chat_id" not in columns
+        assert "user_fingerprint" in columns
+        assert "chat_fingerprint" in columns
+
+    with eng.connect() as conn:
+        legacy_keys = conn.execute(
+            text(
+                "SELECT count(*) FROM command_requests "
+                "WHERE request_key !~ '^(legacy-[0-9]+|[^:]+:[0-9a-f]{64})$'"
+            )
+        ).scalar_one()
+    assert legacy_keys == 0
     eng.dispose()

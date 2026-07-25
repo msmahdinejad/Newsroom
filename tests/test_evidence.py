@@ -164,10 +164,15 @@ def test_extract_facts_short_description_skipped(builder):
 def test_build_for_story_persists_evidence(builder, story, mock_db):
     """build_for_story creates Evidence and returns its ID."""
     items = [_make_item(1, "Python 3.13 Released", "Description")]
-    q = mock_db.query.return_value
-    q.join.return_value = q
-    q.filter.return_value = q
-    q.all.return_value = items
+    items_query = MagicMock()
+    items_query.join.return_value = items_query
+    items_query.filter.return_value = items_query
+    items_query.all.return_value = items
+    evidence_query = MagicMock()
+    evidence_query.filter_by.return_value = evidence_query
+    evidence_query.order_by.return_value = evidence_query
+    evidence_query.first.return_value = None
+    mock_db.query.side_effect = [items_query, evidence_query]
 
     # db.flush() should set an id on the Evidence
     def flush_side_effect():
@@ -179,6 +184,30 @@ def test_build_for_story_persists_evidence(builder, story, mock_db):
     # Evidence was added
     assert mock_db.add.called
     assert mock_db.flush.called
+
+
+def test_build_for_story_updates_stable_evidence(builder, story, mock_db):
+    """Rebuilding a story updates its current packet without changing evidence ID."""
+    items = [_make_item(1, "Updated title", "Updated description")]
+    items_query = MagicMock()
+    items_query.join.return_value = items_query
+    items_query.filter.return_value = items_query
+    items_query.all.return_value = items
+    evidence_query = MagicMock()
+    evidence_query.filter_by.return_value = evidence_query
+    evidence_query.order_by.return_value = evidence_query
+    existing = MagicMock()
+    existing.id = 42
+    existing.packet = {"headline": "old"}
+    evidence_query.first.return_value = existing
+    mock_db.query.side_effect = [items_query, evidence_query]
+
+    evidence_id = builder.build_for_story(mock_db, story)
+
+    assert evidence_id == 42
+    assert existing.packet["facts"][0] == "Updated title"
+    mock_db.add.assert_not_called()
+    mock_db.flush.assert_called_once()
 
 
 def test_build_for_stories_stats(builder, mock_db):
@@ -196,7 +225,12 @@ def test_build_for_stories_stats(builder, mock_db):
     items_query.filter.return_value = items_query
     items_query.all.return_value = [_make_item(1, "Title", "Desc")]
 
-    mock_db.query.side_effect = [story_query, items_query]
+    evidence_query = MagicMock()
+    evidence_query.filter_by.return_value = evidence_query
+    evidence_query.order_by.return_value = evidence_query
+    evidence_query.first.return_value = None
+
+    mock_db.query.side_effect = [story_query, items_query, evidence_query]
 
     stats = builder.build_for_stories(mock_db, [2])
     assert stats["packets_built"] == 1

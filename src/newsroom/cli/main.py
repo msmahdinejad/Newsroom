@@ -67,9 +67,17 @@ def main() -> int:
 
     sources_parser = subparsers.add_parser("sources", help="Source inventory management")
     sources_sub = sources_parser.add_subparsers(dest="sources_command")
-    sources_sub.add_parser("import", help="Import source workbook")
+    sources_import = sources_sub.add_parser("import", help="Import source workbook")
+    sources_import.add_argument(
+        "--workbook",
+        help="Workbook path (or set NEWSROOM_SOURCE_WORKBOOK)",
+    )
     sources_sub.add_parser("activate", help="Activate accessible sources")
-    sources_sub.add_parser("reconcile", help="Import + activate in one step")
+    sources_reconcile = sources_sub.add_parser("reconcile", help="Import + activate in one step")
+    sources_reconcile.add_argument(
+        "--workbook",
+        help="Workbook path (or set NEWSROOM_SOURCE_WORKBOOK)",
+    )
     sources_sub.add_parser("status", help="Print reconciliation summary")
 
     args = parser.parse_args()

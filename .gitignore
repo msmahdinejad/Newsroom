@@ -16,6 +16,9 @@ build/
 .env
 .env.local
 .env.x.local
+.env.providers.local
+!.env.example
+!.env.providers.example
 
 # IDE
 .vscode/

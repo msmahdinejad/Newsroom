@@ -1,248 +1,325 @@
 # Persian AI Newsroom
 
-Local-first automated newsroom for Persian technology and AI updates.
+A production-oriented, local-first newsroom that collects global AI and
+developer news, preserves evidence and source history, creates grounded Persian
+reports, and delivers them to Telegram.
 
-## Quick Start (Windows)
+## معرفی فارسی
 
-### Prerequisites
-- Windows 10/11
-- Docker Desktop installed and running
-- Python 3.12
-- uv installed: `pip install uv`
-- PowerShell 5.1 or PowerShell 7
+«اتاق خبر فارسی هوش مصنوعی» خبرهای حوزهٔ هوش مصنوعی، برنامه‌نویسی، ابزارهای
+توسعه و متن‌باز را از منابع عمومی گردآوری می‌کند. سامانه هویت منبع، نشانگر
+ادامهٔ دریافت، شواهد و سابقهٔ سلامت را نگه می‌دارد؛ خبرهای تکراری را ادغام
+می‌کند؛ و گزارش فارسی مستند می‌سازد. در صورت اختلال یک منبع یا ارائه‌دهندهٔ
+مدل، سایر مسیرها به کار ادامه می‌دهند.
 
-### Setup
+## Overview
 
-```powershell
-# Install dependencies
-uv sync --extra dev
+The application runs as a set of bounded Python workers backed by PostgreSQL.
+Collectors ingest source items incrementally. A deterministic processing
+pipeline normalizes, deduplicates, clusters, ranks, and packages evidence.
+A persistent multi-provider LLM router can perform hierarchical map/reduce
+editing, with a deterministic editorial implementation as the terminal
+fallback. APScheduler creates reports at 00:00, 06:00, 12:00, and 18:00 in
+`Asia/Tehran`; delivery state prevents duplicate Telegram messages.
 
-# Start PostgreSQL (fresh install)
-docker compose up -d
+### Key features
 
-# Wait for database ready (~10 seconds)
-Start-Sleep 10
+- Stable source, item, cursor, story, evidence, report, and delivery identities
+- Source-specific retries, cooldowns, failure isolation, and durable health
+- Native bounded collectors plus an audited, revision-pinned Agent-Reach layer
+- Hierarchical Persian editorial generation for large evidence sets
+- Gemini, Mistral, Groq, and NVIDIA routes with key pools, quotas, model
+  fallback, provider circuit breakers, and safe persisted attempt metadata
+- Deterministic operation when no editorial provider is available
+- Idempotent scheduled and manual Telegram delivery
+- Docker Compose production stack with persistent volumes and health checks
 
-# Run migrations
-uv run alembic upgrade head
+### Supported source platforms
 
-# Verify system health
-uv run newsroom health
-```
+| Platform | Production path |
+| --- | --- |
+| RSS and Atom | Native feed collector |
+| Websites and public newsletter pages | Bounded native HTML reader |
+| GitHub repositories/releases | Native GitHub collector |
+| YouTube channels | Native YouTube RSS collector |
+| Reddit communities | Native public RSS collector |
+| Telegram channels | Telethon MTProto user session |
+| X account timelines | Isolated Agent-Reach worker using local X access state |
+| Other public communities | Bounded web or audited Agent-Reach capability when supported |
 
-**Known Issue**: If you see password authentication errors, the Docker volume has stale credentials. Fix:
-
-```powershell
-docker compose down
-docker volume rm newsroom_postgres_data
-docker compose up -d
-Start-Sleep 10
-uv run alembic upgrade head
-```
-
-### Basic Usage
-
-```powershell
-# Validate sources without collecting
-.\scripts\validate-sources.ps1
-
-# Collect from all enabled sources
-.\scripts\collect.ps1
-
-# Process collected items (normalize, deduplicate, cluster, digest)
-.\scripts\process.ps1
-
-# Or run the complete pipeline
-.\scripts\run-all.ps1
-
-# View logs
-.\scripts\logs.ps1
-
-# Reset test data
-.\scripts\reset-test-data.ps1
-```
-
-### Development
-
-```powershell
-# Run tests
-.\scripts\test.ps1
-
-# Run linters
-.\scripts\lint.ps1
-
-# Database management
-.\scripts\db-up.ps1      # Start PostgreSQL
-.\scripts\db-down.ps1    # Stop PostgreSQL
-.\scripts\migrate.ps1    # Apply migrations
-```
+Some platforms require owner-supplied credentials, a reachable network route,
+or acceptance of the upstream platform's terms. Unsupported or inaccessible
+inventory rows remain accounted for but inactive with an explicit reason.
 
 ## Architecture
 
-```
-External Sources → Collection → Normalization → Deduplication
-                                                      ↓
-Persian Digest ← Digest Generation ← Event Clustering
-```
-
-See `docs/architecture/ARCHITECTURE.md` for details.
-
-## Project Structure
-
-```
-newsroom/
-├── newsroom/              # Python package
-│   ├── sources/          # RSS/Atom/GitHub collectors
-│   ├── storage/          # Database models and migrations
-│   ├── processing/       # Normalization, deduplication, clustering
-│   ├── digest/           # Persian digest generation
-│   └── cli/              # Command-line interface
-├── scripts/              # PowerShell automation scripts
-├── docs/                 # Documentation
-│   ├── architecture/    # Technical design
-│   ├── security/        # Threat model
-│   ├── policies/        # Source and data retention policies
-│   ├── milestones/      # Project plan
-│   └── acceptance/      # Acceptance tests
-├── docker-compose.yml   # PostgreSQL container
-├── CONSTITUTION.md      # Project principles
-├── CONTEXT.md          # Domain glossary
-├── TASKS.md            # Implementation tasks
-└── STATUS.md           # Project status
+```text
+Source inventory
+      |
+      v
+bounded collectors --> raw items + cursors + source health
+      |
+      v
+normalize --> deduplicate --> cluster --> rank --> evidence packets
+                                                   |
+                                                   v
+                                    queued multi-provider router
+                                    (deterministic fallback)
+                                                   |
+                                                   v
+                                Persian report --> Telegram delivery
 ```
 
-## Key Features
+PostgreSQL is the durable coordination boundary. Separate workers own native
+collection, X/Agent-Reach, Telegram MTProto ingestion, scheduling/editorial
+work, and Telegram Bot API delivery. See
+[the final architecture](docs/FINAL_ARCHITECTURE.md) and the
+[architecture records](docs/adr/).
 
-✅ **Collection Without AI**: Continues working when LLMs unavailable  
-✅ **Source Isolation**: Failed sources don't break others  
-✅ **Evidence Preservation**: Every claim links to original source  
-✅ **Deterministic First**: Hash-based deduplication, keyword clustering  
-✅ **Windows Native**: PowerShell scripts, native Python via uv  
-✅ **Persian Output**: Digest candidates with source attribution  
+## Prerequisites
+
+- Git
+- Docker Engine with Docker Compose v2 (Docker Desktop is supported)
+- Python 3.12 or newer
+- [`uv`](https://docs.astral.sh/uv/)
+- PowerShell 7 on Windows for the repository helper scripts
+
+Linux and macOS users can run the equivalent `uv` and `docker compose`
+commands shown below. Live Telegram, X, and editorial integrations are
+optional for deterministic development and CI.
+
+## Quick start
+
+### Windows PowerShell
+
+```powershell
+git clone <repository-url>
+Set-Location newsroom
+Copy-Item .env.example .env
+Copy-Item .env.providers.example .env.providers.local
+uv sync --frozen --extra dev --extra telegram
+docker compose up -d postgres
+uv run alembic upgrade head
+uv run pytest tests -m "not integration"
+```
+
+### Linux or macOS
+
+```bash
+git clone <repository-url>
+cd newsroom
+cp .env.example .env
+cp .env.providers.example .env.providers.local
+uv sync --frozen --extra dev --extra telegram
+docker compose up -d postgres
+uv run alembic upgrade head
+uv run pytest tests -m "not integration"
+```
+
+The example configuration disables integrations that require private access.
+Use a strong `POSTGRES_PASSWORD` before production deployment. The Compose
+database is bound to loopback by default.
 
 ## Configuration
 
-Create `.env` from `.env.example`:
+- `.env` contains application and service settings. It is ignored by Git.
+- `.env.providers.local` is the **only** runtime source for editorial provider
+  access values. It is ignored by Git and mounted only into services that need
+  router configuration.
+- `.env.x.local` contains local X access state. It is ignored by Git and is
+  mounted only into the isolated Agent-Reach worker.
+- The Telethon session is stored in the `telegram_sessions` Docker volume, not
+  in the repository.
 
-```bash
-cp .env.example .env
-# Edit .env with your settings
+Copy the supplied examples and fill only the integrations you intend to use.
+Never commit local environment files, proxy credentials, cookies, access
+tokens, or Telethon session files. Provider-specific setup is documented in
+[LLM provider setup](docs/LLM_PROVIDER_SETUP.md).
+
+## LLM routing and fallback
+
+Editorial map and reduction calls enter one bounded queue. The router tries a
+healthy key for the preferred validated model, then another key, another
+validated model on the same provider, and the next provider after a circuit
+breaker opens. The final route is deterministic editorial generation.
+
+Default provider preference is Gemini, Mistral, Groq, then NVIDIA. Models are
+not production-enabled merely because they appear in configuration: a bounded
+live validation must prove Persian output, structured schema compatibility,
+grounding-compatible parsing, and output limits. Health and attempt records
+contain safe labels and fingerprints, never provider access values.
+
+## Telegram setup
+
+Telegram ingestion and Telegram delivery use separate identities.
+
+### Output bot
+
+1. Create a bot with BotFather.
+2. Set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and the numeric
+   `TELEGRAM_AUTHORIZED_USER_IDS` in `.env`.
+3. Set `TELEGRAM_BOT_ENABLED=true`.
+
+The owner-restricted bot supports `/status`, `/latest`, `/report`,
+`/report new`, `/report comprehensive`, `/collect`, `/sources`, and
+`/schedule`.
+
+### MTProto ingestion
+
+1. Obtain `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` for a dedicated account.
+2. Set them with `TELEGRAM_PHONE` in `.env`.
+3. Configure a network route if direct MTProto is unavailable. Supported
+   modes are `direct`, `abridged`, `intermediate`, `full`, `obfuscated`, and
+   explicitly configured `mtproxy`; regular proxies may be SOCKS5 or HTTP.
+4. Authorize once:
+
+   ```powershell
+   docker compose --profile authorize run --rm telegram-authorize
+   ```
+
+5. Set `TELEGRAM_INGESTOR_ENABLED=true` and start the ingestor.
+
+Do not delete or share the session volume. Login codes and two-factor
+passwords are entered interactively and are never stored in `.env`.
+
+## Source inventory
+
+The full production workbook is private source data and is intentionally
+excluded from Git and Docker build contexts. Supply a workbook locally as
+`config/import/source-radar.xlsx`, using the schema described in
+[source inventory documentation](docs/SOURCE_INVENTORY.md), then run:
+
+```powershell
+uv run newsroom sources reconcile
+uv run newsroom sources status
 ```
 
-See `.env.example` for required variables.
+Import is idempotent. Original workbook row IDs and inactive rows remain
+represented; disabling a source does not delete collected evidence.
 
-## Adding Sources
+## Local development
 
-### RSS/Atom Feed
-```sql
-INSERT INTO sources (name, type, url, language, priority)
-VALUES ('Python Blog', 'rss', 'https://blog.python.org/feeds/posts/default', 'en', 'high');
+```powershell
+uv sync --frozen --extra dev --extra telegram
+docker compose up -d postgres
+uv run alembic upgrade head
+uv run ruff check src tests
+uv run mypy src/newsroom
+uv run pytest tests -m "not integration"
+uv run pytest tests/integration
+docker compose config --quiet
 ```
 
-### GitHub Releases
-```sql
-INSERT INTO sources (name, type, url, language, priority)
-VALUES ('PyTorch', 'github_releases', 'pytorch/pytorch', 'en', 'high');
+PostgreSQL integration tests default to the loopback Compose database on port
+`55432`; set `DATABASE_URL` to use an isolated test database. Live integration
+checks are deliberately opt-in and are not part of public CI.
+
+## Production deployment
+
+1. Copy both environment examples to their ignored local counterparts.
+2. Set a strong database password and only the integrations you need.
+3. Supply the private source inventory and reconcile it.
+4. Start the complete stack:
+
+   ```powershell
+   .\scripts\up-production.ps1
+   ```
+
+   Or on a POSIX host:
+
+   ```bash
+   docker compose up -d --wait
+   ```
+
+5. Confirm service and application health:
+
+   ```powershell
+   docker compose ps
+   uv run newsroom health
+   ```
+
+Migrations run through the one-shot `migrate` service before dependent workers
+start. Named volumes retain PostgreSQL data, Agent-Reach state, and the
+Telethon session across restarts. See the
+[final production runbook](docs/FINAL_PRODUCTION_RUNBOOK.md) before enabling
+live access.
+
+## Operating commands
+
+```powershell
+uv run newsroom health                     # safe application health
+uv run newsroom sources status             # inventory reconciliation
+uv run newsroom collect                    # bounded collection pass
+uv run newsroom collect --source-type rss  # one source type
+uv run newsroom pipeline run               # process, report, and deliver
+docker compose logs --tail 200              # recent service logs
+docker compose restart                      # restart, preserving volumes
+docker compose down                         # stop, preserving volumes
 ```
 
-See `docs/policies/SOURCE_POLICY.md` for guidelines.
+The production schedule is `00,06,12,18` in `Asia/Tehran`. A failed generation
+or partial delivery does not advance the scheduled delivery boundary.
+
+## Database migrations
+
+```powershell
+docker compose up -d postgres
+uv run alembic upgrade head
+uv run alembic current
+```
+
+Back up production data before an upgrade. Never run test cleanup commands
+against a production database.
 
 ## Testing
 
 ```powershell
-# Run all tests
-.\scripts\test.ps1
+# Fast deterministic suite; no live access required
+uv run pytest tests -m "not integration"
 
-# Run specific test file
-uv run pytest tests/test_rss.py
+# Real PostgreSQL suite
+uv run pytest tests/integration
 
-# Run with coverage
-uv run pytest --cov=newsroom --cov-report=html
+# Full local regression suite
+uv run pytest tests
+
+# Quality and packaging checks
+uv run ruff check src tests
+uv run mypy src/newsroom
+docker compose config --quiet
+docker build --tag newsroom:local .
 ```
 
-## Documentation
+Tests that use real provider, Telegram, X, or other upstream access must remain
+explicitly opt-in and must load only ignored local configuration.
 
-- **CONSTITUTION.md** - Project principles and constraints
-- **CONTEXT.md** - Domain glossary (ubiquitous language)
-- **docs/PRODUCT_SPEC.md** - Product requirements
-- **docs/architecture/** - Technical design and database schema
-- **docs/security/THREAT_MODEL.md** - Security analysis
-- **docs/policies/** - Source and retention policies
-- **docs/acceptance/** - Acceptance test criteria
+## Known limitations
 
-## Deployment (Future)
+- The production source workbook and collected third-party content are not
+  redistributed with the project.
+- Telegram MTProto may require a host proxy in networks that block Telegram.
+- X and some community platforms require local owner access and remain disabled
+  without it.
+- Upstream sites can change markup, rate limits, or access policies.
+- LLM availability and quota are provider/account dependent; deterministic
+  editorial remains available but is not equivalent to AI generation.
+- The project is designed for a single trusted operator, not as a public
+  multi-tenant service.
 
-MVP runs locally. For VPS deployment:
+## Contributing and support
 
-```bash
-# On Linux server
-docker compose up -d
-docker compose exec app python -m newsroom.cli collect
-```
+Read [CONTRIBUTING.md](CONTRIBUTING.md), the
+[Code of Conduct](CODE_OF_CONDUCT.md), and [SUPPORT.md](SUPPORT.md) before
+opening a contribution. Report security issues using the private process in
+[SECURITY.md](SECURITY.md), not a public issue.
 
-See deployment guide (future) for production setup.
+## License and content rights
 
-## Troubleshooting
+Project code and original documentation are licensed under the
+[MIT License](LICENSE). Dependencies retain their own licenses; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-### Database won't start
-```powershell
-# Check Docker Desktop is running
-docker ps
-
-# Check port 5432 not in use
-netstat -an | findstr :5432
-
-# Restart
-.\scripts\db-down.ps1
-.\scripts\db-up.ps1
-```
-
-### Collection fails
-```powershell
-# Validate sources first
-.\scripts\validate-sources.ps1
-
-# Check health status
-.\scripts\health.ps1
-
-# Review logs
-.\scripts\logs.ps1
-```
-
-### Tests fail
-```powershell
-# Reset test database
-.\scripts\reset-test-data.ps1
-
-# Run tests with verbose output
-uv run pytest -v
-```
-
-## Contributing
-
-See `CONSTITUTION.md` for project principles.
-
-1. All changes require tests
-2. Run linters before commit: `.\scripts\lint.ps1`
-3. Update CONTEXT.md if adding domain terms
-4. Document ADRs for architectural decisions
-5. Update STATUS.md with progress
-
-## Security
-
-- Never commit `.env`, credentials, or session files
-- All external content sanitized on input
-- Source URLs preserved for attribution
-- See `docs/security/THREAT_MODEL.md` for details
-
-## License
-
-[To be determined]
-
-## Status
-
-**Phase**: M1 Foundation Complete (verification blocked by Docker volume issue)  
-**Commit**: `17dd65f` - feat: M1 foundation  
-**Next**: User must reset Docker volume, then verify M1, then proceed to M2
-
-See `M1_COMPLETE.md` for details and fix instructions.
+The license does **not** relicense collected articles, posts, media, the private
+source inventory, provider output, platform data, or any other third-party
+content. Operators are responsible for complying with upstream terms,
+copyright, privacy, and applicable law.

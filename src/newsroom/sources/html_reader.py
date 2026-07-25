@@ -34,15 +34,18 @@ import httpx
 from newsroom.config import settings
 from newsroom.logging import get_logger
 from newsroom.sources.base import CollectionError, SourceCollector
+from newsroom.sources.http_client import build_collection_client
 from newsroom.storage.models import Source
 
 logger = get_logger(__name__)
 
 MAX_LINKS = 25
+MAX_REDIRECTS = 5
 MAX_ANCHOR_LEN = 300
 MAX_DESC_LEN = 2000
 
 ALLOWED_SCHEMES: frozenset[str] = frozenset({"http", "https"})
+REDIRECT_STATUSES: frozenset[int] = frozenset({301, 302, 303, 307, 308})
 
 
 def _is_private_ip(ip_str: str) -> bool:
@@ -163,23 +166,24 @@ class NativeHtmlReader(SourceCollector):
     """Read a public web page once, bounded, and extract recent links."""
 
     def __init__(self) -> None:
-        self.client = httpx.AsyncClient(
+        self.client = build_collection_client(
             timeout=httpx.Timeout(
                 connect=settings.collection_timeout_connect,
                 read=settings.collection_timeout_read,
                 write=30,
                 pool=30,
             ),
-            follow_redirects=True,
+            # Redirects are followed manually so each target receives the
+            # public-address check before any request is sent.
+            follow_redirects=False,
             limits=httpx.Limits(max_connections=10),
             headers={"User-Agent": settings.collection_user_agent, "Accept": "text/html"},
         )
 
     async def collect(self, source: Source) -> list[dict[str, Any]]:
         url = source.url
-        _validate_public_url(url)
         try:
-            response = await self.client.get(url)
+            response = await self._get_public(url)
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
             raise CollectionError(f"HTTP {e.response.status_code}", url, recoverable=True) from e
@@ -200,7 +204,10 @@ class NativeHtmlReader(SourceCollector):
 
         items: list[dict[str, Any]] = []
         now = datetime.now(UTC).isoformat()
-        seen: set[str] = set()
+        # The page-level item below owns the source URL identity. Ignore a
+        # navigation link back to the same page so one poll cannot emit two
+        # raw candidates for the same stable URL.
+        seen: set[str] = {url}
         for anchor_text, href in parser.links:
             if href in seen:
                 continue
@@ -244,6 +251,22 @@ class NativeHtmlReader(SourceCollector):
         logger.info(f"HTML reader {source.name}: {len(items)} items, feeds={parser.feed_urls}")
         return items
 
+    async def _get_public(self, url: str) -> httpx.Response:
+        """Fetch a public URL while validating each redirect before use."""
+        current_url = url
+        for redirect_count in range(MAX_REDIRECTS + 1):
+            _validate_public_url(current_url)
+            response = await self.client.get(current_url)
+            if response.status_code not in REDIRECT_STATUSES:
+                return response
+            location = response.headers.get("location")
+            if not location:
+                raise CollectionError("redirect missing location", url, recoverable=False)
+            if redirect_count >= MAX_REDIRECTS:
+                raise CollectionError("too many redirects", url, recoverable=False)
+            current_url = urljoin(str(response.url or current_url), location)
+        raise CollectionError("too many redirects", url, recoverable=False)
+
     def validate_url(self, source_url: str) -> bool:
         try:
             _validate_public_url(source_url)
@@ -255,4 +278,4 @@ class NativeHtmlReader(SourceCollector):
         await self.client.aclose()
 
 
-__all__ = ["MAX_LINKS", "NativeHtmlReader"]
+__all__ = ["MAX_LINKS", "MAX_REDIRECTS", "NativeHtmlReader"]

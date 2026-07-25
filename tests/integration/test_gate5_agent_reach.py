@@ -167,9 +167,10 @@ def test_alembic_at_gate5_revision(engine):
     assert row[0] in (
         "0007_gate5_agent_reach",
         "0008_gate5x_x_ingestion",
-        "0009_gate6_source_inventory",
-        "0010_gate6_router_reliability",
-    )
+            "0009_gate6_source_inventory",
+            "0010_gate6_router_reliability",
+            "0011_gate7_identity_privacy",
+        )
 
 
 # ── 2. Agent-Reach source registration ─────────────────────────

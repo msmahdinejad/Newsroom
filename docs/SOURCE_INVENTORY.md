@@ -1,54 +1,41 @@
-# Source Inventory
+# Source Inventory Schema
 
-## RSS (26 enabled, 23 verified, 3 failed)
+The production source workbook is private operational data. It is intentionally
+excluded from Git, the Docker context, packages, and release archives. This
+document describes its portable interface only.
 
-| Source | URL | Status |
-|--------|-----|--------|
-| Hacker News | news.ycombinator.com/rss | verified |
-| Python Insider | blog.python.org/feeds/posts/default | verified |
-| The Verge | theverge.com/rss/index.xml | verified |
-| TechCrunch AI | techcrunch.com/category/artificial-intelligence/feed/ | verified |
-| VentureBeat AI | venturebeat.com/category/ai/feed/ | verified |
-| Ars Technica | feeds.arstechnica.com/arstechnica/index.xml | verified |
-| Krebs on Security | krebsonsecurity.com/feed/ | verified |
-| Google AI Blog | blog.research.google/feeds/posts/default | verified |
-| OpenAI Blog | openai.com/blog/rss.xml | verified |
-| Anthropic Blog | anthropic.com/news/rss.xml | failed (404) |
-| Meta AI Blog | ai.meta.com/blog/rss/ | disabled (404) |
-| Microsoft Blog | blogs.microsoft.com/feed/ | verified |
-| GitHub Blog | github.blog/feed/ | verified |
-| Vercel Blog | vercel.com/atom.xml | failed (parse) |
-| Cloudflare Blog | blog.cloudflare.com/rss/ | verified |
-| AWS News Blog | aws.amazon.com/blogs/aws/feed/ | verified |
-| Rust Blog | blog.rust-lang.org/feed.xml | verified |
-| Node.js Blog | nodejs.org/en/feed/blog.xml | verified |
-| The Register | theregister.com/headlines.atom | verified |
-| BleepingComputer | bleepingcomputer.com/feed/ | verified |
-| Dark Reading | darkreading.com/rss.xml | verified |
-| Hugging Face Blog | huggingface.co/blog/feed.xml | verified |
-| AI Snake Oil | aisnakeoil.substack.com/feed | failed (too large) |
-| Simon Willison | simonwillison.net/atom/everything/ | verified |
-| Latent Space | latent.space/feed | verified |
-| Stratechery | stratechery.com/feed/ | verified |
+## Authoritative workbook
 
-## GitHub Releases (11 enabled, 11 verified)
+The importer reads the `All Sources` worksheet in an `.xlsx` workbook supplied
+explicitly with `NEWSROOM_SOURCE_WORKBOOK` or the `--workbook` command option.
+The sheet has these columns, in order:
 
-| Source | Status |
-|--------|--------|
-| python/cpython | verified (0 releases) |
-| pytorch/pytorch | verified |
-| langchain-ai/langchain | verified |
-| openai/openai-python | verified |
-| vercel/next.js | verified |
-| microsoft/TypeScript | verified |
-| rust-lang/rust | verified |
-| nodejs/node | verified |
-| denoland/deno | verified |
-| huggingface/transformers | verified |
-| ollama/ollama | verified |
+```text
+ID, Platform, Type, Name, Handle / ID, Direct URL, Primary Topic, Tags,
+Language, Content Mode, Speed 1-5, Informal 1-5, Noise 1-5, Community?,
+Open-source/API?, Risk, Verification, Discovery Source, Tier, Coverage Score
+```
 
-## Telegram (0 — blocked on MTProto credentials)
+`ID` is the workbook row identity. The importer derives a stable normalized
+source identity from platform, handle, and URL, so display-name edits do not
+duplicate a source. A duplicate or unusable row remains represented with an
+explicit inactive reason; importing never deletes collected items.
 
-## Summary
-- 37 configured, 33 verified collecting, 3 failed, 1 disabled
-- Live collection: 317+ items from 33 sources
+## Public example
+
+[`examples/source_inventory.example.csv`](../examples/source_inventory.example.csv)
+contains two synthetic rows with the exact headers. It has no production
+source, account, cookie, chat, or credential data. Convert/copy the header and
+rows into an `All Sources` sheet when creating a test workbook.
+
+## Import and verification
+
+```powershell
+uv run newsroom sources reconcile --workbook .\path\to\source-radar.xlsx
+uv run newsroom sources status
+```
+
+Repeated reconciliation is idempotent. A source may be active only after a
+bounded attempted validation; otherwise it stays inactive with its safe reason.
+The scheduled collectors preserve cursors, attempt timestamps, and health
+state in PostgreSQL.

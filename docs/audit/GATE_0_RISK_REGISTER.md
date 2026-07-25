@@ -101,6 +101,6 @@ Risks ordered by severity. Each risk includes likelihood, impact, and recommende
 - **Severity**: Low
 - **Likelihood**: Low (dead code)
 - **Impact**: If ever called outside the specific machine, will fail
-- **Evidence**: `PROJECT_DIR = r"[REDACTED]\OneDrive\Desktop\newsroom"`
+- **Evidence**: the archived v1 bot used a machine-specific `PROJECT_DIR`
 - **Affected files**: src/newsroom/delivery/bot_commands.py
 - **Remediation**: Remove dead code.

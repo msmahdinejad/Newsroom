@@ -24,6 +24,7 @@ from newsroom.editorial.router import (
     MultiProviderRouter,
     ProviderConfig,
     QuotaController,
+    QuotaStateSnapshot,
     RateLimits,
     RouteFailure,
     RouteFailureCategory,
@@ -33,6 +34,7 @@ from newsroom.editorial.router import (
     build_chat_payload,
     load_router_config,
 )
+from newsroom.editorial.router import config as router_config
 from newsroom.editorial.router.dispatcher import QueuedDispatcher
 from newsroom.editorial.schema import (
     EditorialEvidenceSet,
@@ -208,6 +210,45 @@ def test_default_gemini_capacity_is_effectively_bounded(tmp_path: Path):
     assert gemini.limits == RateLimits(rpm=12, tpm=200_000, rpd=450)
     assert gemini.concurrency == 1
     assert gemini.min_spacing_seconds == 5.0
+
+
+def test_llm_proxy_is_loaded_only_from_canonical_file_and_hidden(tmp_path: Path):
+    provider_file = tmp_path / ".env.providers.local"
+    protected_proxy = "socks5://user:password@proxy.invalid:1080"
+    provider_file.write_text(f"LLM_PROXY_URL={protected_proxy}\n", encoding="utf-8")
+
+    config = load_router_config(provider_file)
+
+    assert config.proxy_url == protected_proxy
+    assert protected_proxy not in repr(config)
+
+
+def test_container_rewrites_local_loopback_proxy_with_canonical_host_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider_file = tmp_path / ".env.providers.local"
+    provider_file.write_text(
+        "LLM_PROXY_URL=socks5://user:password@127.0.0.1:1080\n"
+        "LLM_PROXY_CONTAINER_HOST=host.docker.internal\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(router_config, "_running_in_container", lambda: True)
+
+    config = load_router_config(provider_file)
+
+    assert config.proxy_url == "socks5://user:password@host.docker.internal:1080"
+
+
+def test_invalid_llm_proxy_configuration_fails_without_echoing_value(tmp_path: Path):
+    provider_file = tmp_path / ".env.providers.local"
+    protected_proxy = "file://protected-local-value"
+    provider_file.write_text(f"LLM_PROXY_URL={protected_proxy}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc:
+        load_router_config(provider_file)
+
+    assert protected_proxy not in str(exc.value)
 
 
 def test_multiple_keys_are_safe_and_round_robin():
@@ -755,6 +796,181 @@ def test_bounded_validator_isolates_invalid_key_and_uses_next_key():
     assert router.key_pool("gemini").snapshot()[0].enabled is False
 
 
+def test_access_validation_can_recheck_a_persisted_disabled_key():
+    clock = ManualClock()
+    transport = FakeTransport()
+    router = _router((_provider("gemini"),), transport, clock)
+    pool = router.key_pool("gemini")
+    lease = pool.acquire()
+    pool.invalid(lease)
+
+    results = router.validate_access_values()
+
+    assert [(result.safe_id, result.status) for result in results] == [
+        ("gemini-key-1", "validated"),
+    ]
+    assert pool.snapshot()[0].enabled is True
+    assert [call[3] for call in transport.calls] == ["unit-key-1"]
+
+
+def test_access_validation_persists_only_safe_attempt_metadata():
+    clock = ManualClock()
+    sink = InMemoryRouterStateSink()
+    protected_value = "protected-unit-access-value"
+    router = MultiProviderRouter.from_config(
+        RouterConfig(
+            providers=(
+                _provider("gemini", keys=(protected_value,)),
+            ),
+            provider_order=("gemini",),
+        ),
+        transport=FakeTransport(),
+        clock=clock,
+        validated_models={"gemini": ("model",)},
+        state_sink=sink,
+        fallback=FakeFallback(),
+    )
+
+    router.validate_access_values()
+
+    assert len(sink.attempts) == 1
+    attempt = sink.attempts[0]
+    assert attempt.stage == "access_validation"
+    assert attempt.status == "validated"
+    assert attempt.key_fingerprint is not None
+    assert len(attempt.key_fingerprint) == 64
+    assert protected_value not in repr((sink.attempts, sink.snapshots))
+
+
+def test_access_validation_attempts_every_value_without_a_validated_model():
+    clock = ManualClock()
+    transport = FakeTransport(
+        {
+            ("mistral", "candidate"): [
+                RouteFailure(RouteFailureCategory.INVALID_KEY),
+                RouteFailure(RouteFailureCategory.INVALID_KEY),
+            ]
+        }
+    )
+    router = _router(
+        (
+            _provider(
+                "mistral",
+                keys=("key-a", "key-b"),
+                models=("candidate",),
+            ),
+        ),
+        transport,
+        clock,
+        validated={"mistral": ()},
+    )
+
+    results = router.validate_access_values()
+
+    assert [(result.safe_id, result.status, result.failure_category) for result in results] == [
+        ("mistral-key-1", "failed", "invalid_key"),
+        ("mistral-key-2", "failed", "invalid_key"),
+    ]
+    assert [call[3] for call in transport.calls] == ["key-a", "key-b"]
+
+
+def test_unconfigured_provider_is_not_reported_as_auth_failure():
+    clock = ManualClock()
+    router = _router(
+        (_provider("groq", keys=()),),
+        FakeTransport(),
+        clock,
+        validated={"groq": ()},
+    )
+
+    result = router.validate_models()[0]
+
+    assert result.status == "not_configured"
+    assert result.failure_category is None
+
+
+def test_unconfigured_provider_does_not_open_a_failure_circuit():
+    clock = ManualClock()
+    router = _router(
+        (_provider("groq", keys=()),),
+        FakeTransport(),
+        clock,
+        validated={"groq": ()},
+    )
+
+    result = router.route(_request())
+
+    assert result.fallback_used is True
+    assert router.circuit("groq").state is CircuitState.CLOSED
+
+
+def test_repair_alternate_invalid_model_is_disabled():
+    clock = ManualClock()
+    transport = FakeTransport(
+        {
+            ("gemini", "map-model"): [
+                RouteFailure(
+                    RouteFailureCategory.MALFORMED_SCHEMA,
+                    repair_payload="bounded malformed output",
+                )
+            ],
+            ("mistral", "bad-repair-model"): [
+                RouteFailure(RouteFailureCategory.INVALID_MODEL)
+            ],
+        }
+    )
+    router = _router(
+        (
+            _provider("gemini", models=("map-model",)),
+            _provider("mistral", models=("bad-repair-model",)),
+        ),
+        transport,
+        clock,
+    )
+
+    result = router.route(_request())
+
+    assert result.fallback_used is True
+    failed_route = router.model_route("mistral", "bad-repair-model")
+    assert failed_route.enabled is False
+    assert failed_route.validation_status == "disabled"
+
+
+def test_repair_alternate_gemini_rate_limit_cools_project_bucket():
+    clock = ManualClock()
+    transport = FakeTransport(
+        {
+            ("mistral", "map-model"): [
+                RouteFailure(
+                    RouteFailureCategory.MALFORMED_SCHEMA,
+                    repair_payload="bounded malformed output",
+                )
+            ],
+            ("gemini", "repair-model"): [
+                RouteFailure(
+                    RouteFailureCategory.RATE_LIMIT,
+                    retry_after_seconds=30,
+                )
+            ],
+        }
+    )
+    router = _router(
+        (
+            _provider("mistral", models=("map-model",)),
+            _provider("gemini", models=("repair-model",)),
+        ),
+        transport,
+        clock,
+    )
+
+    router.route(_request())
+
+    quota = router.dispatcher.quota.snapshot()
+    gemini_quota = next(item for item in quota if item.provider == "gemini")
+    assert gemini_quota.cooldown_until is not None
+    assert router.key_pool("gemini").snapshot()[0].cooldown_until is None
+
+
 def test_gemini_http_400_invalid_key_is_key_local():
     from newsroom.editorial.router import HttpEditorialTransport
 
@@ -787,6 +1003,88 @@ def test_gemini_http_400_invalid_key_is_key_local():
         )
 
     assert exc.value.category is RouteFailureCategory.INVALID_KEY
+
+
+def test_gemini_location_rejection_is_provider_policy():
+    from newsroom.editorial.router import HttpEditorialTransport
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json=[{
+                "error": {
+                    "code": 400,
+                    "message": "User location is not supported for the API use.",
+                    "status": "FAILED_PRECONDITION",
+                }
+            }],
+        )
+
+    class MockClient(httpx.Client):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(*args, **kwargs)
+
+    transport = HttpEditorialTransport(
+        (_provider("gemini"),),
+        client_factory=MockClient,
+    )
+
+    with pytest.raises(RouteFailure) as exc:
+        transport.execute(
+            ModelRoute.validated("gemini", "model"),
+            "unit-test-key",
+            _request(),
+            RouterRequestContext(),
+        )
+
+    assert exc.value.category is RouteFailureCategory.POLICY_REJECTION
+
+
+def test_llm_proxy_reaches_transport_but_health_exposes_only_protocol():
+    from newsroom.editorial.router import HttpEditorialTransport
+
+    protected_proxy = "socks5://user:password@proxy.invalid:1080"
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"error": "bounded"})
+
+    class MockClient(httpx.Client):
+        def __init__(self, *args, **kwargs):
+            seen["proxy"] = kwargs.pop("proxy", None)
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(*args, **kwargs)
+
+    provider = _provider("gemini")
+    transport = HttpEditorialTransport(
+        (provider,),
+        proxy_url=protected_proxy,
+        client_factory=MockClient,
+    )
+    router = MultiProviderRouter.from_config(
+        RouterConfig(
+            providers=(provider,),
+            provider_order=("gemini",),
+            proxy_url=protected_proxy,
+        ),
+        transport=transport,
+        clock=ManualClock(),
+        validated_models={"gemini": ("model",)},
+        fallback=FakeFallback(),
+    )
+
+    with pytest.raises(RouteFailure):
+        transport.execute(
+            ModelRoute.validated("gemini", "model"),
+            "unit-test-key",
+            _request(),
+            RouterRequestContext(),
+        )
+
+    assert seen["proxy"] == protected_proxy
+    assert router.health()["transport"] == "socks5_proxy"
+    assert protected_proxy not in repr(router.health())
 
 
 def test_router_overwrites_untrusted_provider_identity_with_actual_route():
@@ -847,6 +1145,26 @@ def test_daily_quota_is_not_retried_with_another_same_project_key():
 
     assert result.response.provider == "mistral"
     assert [call[3] for call in transport.calls if call[0] == "gemini"] == ["key-a"]
+
+
+def test_daily_quota_category_survives_restart():
+    clock = ManualClock()
+    route = ModelRoute.validated(
+        "gemini",
+        "model",
+        limits=RateLimits(rpm=12, tpm=200_000, rpd=1),
+        quota_scope="project",
+    )
+    original = QuotaController(clock=clock)
+    original.exhaust_daily(route)
+    snapshots: tuple[QuotaStateSnapshot, ...] = original.snapshot()
+    restored = QuotaController(clock=clock)
+    restored.restore(snapshots, [route])
+
+    with pytest.raises(RouteFailure) as exc:
+        restored.reserve(route, 10)
+
+    assert exc.value.category is RouteFailureCategory.DAILY_QUOTA
 
 
 def test_route_context_preserves_job_and_shard_in_attempt_lineage():

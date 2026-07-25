@@ -28,6 +28,7 @@ import os
 import re
 import signal
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -36,6 +37,7 @@ from newsroom.config import settings
 from newsroom.logging import get_logger
 
 logger = get_logger(__name__)
+_POPEN_TYPE = subprocess.Popen
 
 
 # ── Allowlists ────────────────────────────────────────────────────
@@ -622,6 +624,10 @@ class ControlledRunner:
                 stderr=subprocess.PIPE,
                 env=env,
                 cwd=working_dir,
+                # _terminate() signals the child's process group on POSIX.
+                # Without a new session the child shares the worker's group,
+                # so a timeout could terminate the production worker itself.
+                start_new_session=os.name == "posix",
             )
         except FileNotFoundError as e:
             raise RunnerError(
@@ -634,24 +640,23 @@ class ControlledRunner:
                 category="not_run",
             ) from e
 
-        killed = False
         start = time.monotonic()
-        try:
-            stdout, stderr = proc.communicate(timeout=self._timeout)
-        except subprocess.TimeoutExpired:
-            killed = True
-            self._terminate(proc)
-            with contextlib.suppress(Exception):
-                stdout, stderr = proc.communicate(timeout=5)
-        duration = time.monotonic() - start
-
-        truncated = False
-        if len(stdout) > self._max_output:
+        if isinstance(proc, _POPEN_TYPE):
+            stdout, stderr, truncated, killed = self._communicate_bounded(proc)
+        else:
+            # Popen-compatible injected runners used by deterministic tests.
+            killed = False
+            try:
+                stdout, stderr = proc.communicate(timeout=self._timeout)
+            except subprocess.TimeoutExpired:
+                killed = True
+                self._terminate(proc)
+                with contextlib.suppress(Exception):
+                    stdout, stderr = proc.communicate(timeout=5)
+            truncated = len(stdout) > self._max_output or len(stderr) > self._max_output
             stdout = stdout[: self._max_output]
-            truncated = True
-        if len(stderr) > self._max_output:
             stderr = stderr[: self._max_output]
-            truncated = True
+        duration = time.monotonic() - start
 
         return CommandResult(
             executable=executable,
@@ -663,6 +668,59 @@ class ControlledRunner:
             duration_seconds=duration,
             killed=killed,
         )
+
+    def _communicate_bounded(
+        self,
+        proc: subprocess.Popen[Any],
+    ) -> tuple[bytes, bytes, bool, bool]:
+        """Drain a real child process without buffering beyond configured bounds."""
+        stdout = bytearray()
+        stderr = bytearray()
+        overflow = threading.Event()
+
+        def drain(stream: Any, target: bytearray) -> None:
+            if stream is None:
+                return
+            while True:
+                chunk = stream.read(64 * 1024)
+                if not chunk:
+                    return
+                remaining = self._max_output - len(target)
+                if remaining > 0:
+                    target.extend(chunk[:remaining])
+                if len(chunk) > remaining:
+                    overflow.set()
+                    return
+
+        threads = [
+            threading.Thread(target=drain, args=(proc.stdout, stdout), daemon=True),
+            threading.Thread(target=drain, args=(proc.stderr, stderr), daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+
+        deadline = time.monotonic() + self._timeout
+        timed_out = False
+        while proc.poll() is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                self._terminate(proc)
+                break
+            if overflow.wait(min(0.05, remaining)):
+                self._terminate(proc)
+                break
+
+        killed = timed_out or overflow.is_set()
+        if killed and proc.poll() is None:
+            self._terminate(proc)
+        for thread in threads:
+            thread.join(timeout=5)
+        if any(thread.is_alive() for thread in threads):
+            self._terminate(proc)
+        with contextlib.suppress(Exception):
+            proc.wait(timeout=5)
+        return bytes(stdout), bytes(stderr), overflow.is_set(), killed
 
     def _terminate(self, proc: subprocess.Popen[Any]) -> None:
         """Terminate the process and its children. Tries graceful then forceful."""

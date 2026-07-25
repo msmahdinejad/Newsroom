@@ -12,6 +12,7 @@ from newsroom.config import settings
 # Patterns redacted from every log message. The Telegram Bot API embeds the
 # bot token in the request URL; httpx logs that URL, so we scrub it here.
 _REDACT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?i)(?:https?|socks5h?)://[^/\s:@]+:[^@/\s]+@"),
     re.compile(r"bot\d{6,}:[A-Za-z0-9_-]{20,}"),  # Telegram bot token in URLs
     re.compile(r"(?i)(api[_-]?key|token|password|secret|auth)[=:]\s*[^\s&\"']+"),
     re.compile(r"Bearer\s+[A-Za-z0-9_.\-]+"),

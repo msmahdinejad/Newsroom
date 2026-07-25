@@ -33,6 +33,32 @@ def test_compose_has_single_mtproto_owner_and_isolated_x_env() -> None:
     assert "EDITORIAL_API_KEY:" not in agent_worker
 
 
+def test_compose_scopes_protected_configuration_to_required_services() -> None:
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    report_worker = compose.split("  report-worker:", 1)[1].split("  scheduler:", 1)[0]
+    scheduler = compose.split("  scheduler:", 1)[1].split("  telegram-bot:", 1)[0]
+    telegram_bot = compose.split("  telegram-bot:", 1)[1].split(
+        "  telegram-ingestor:", 1
+    )[0]
+    ingestor = compose.split("  telegram-ingestor:", 1)[1].split("  # Gate 5:", 1)[0]
+    agent_worker = compose.split("  agent-reach-worker:", 1)[1].split(
+        "  # One-time authorization", 1
+    )[0]
+
+    assert ".env.providers.local" not in report_worker
+    assert "TELEGRAM_" not in report_worker
+    assert "TELEGRAM_AUTHORIZED_USER_IDS" not in scheduler
+    assert "TELEGRAM_API_" not in scheduler
+    assert ".env.providers.local" in scheduler
+    assert ".env.providers.local" in telegram_bot
+    assert "TELEGRAM_API_" not in telegram_bot
+    assert ".env.providers.local" not in ingestor
+    assert "TELEGRAM_BOT_TOKEN" not in ingestor
+    assert ".env.providers.local" not in agent_worker
+    assert "TELEGRAM_BOT_TOKEN:" not in agent_worker
+    assert "TELEGRAM_API_HASH:" not in agent_worker
+
+
 def test_external_source_dependencies_are_immutable() -> None:
     project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
@@ -178,6 +204,34 @@ def test_telegram_handle_extraction_supports_public_links() -> None:
     assert _channel_handle(source) == "public_channel"
     source = SimpleNamespace(config={"channel_username": "@configured"}, url="")
     assert _channel_handle(source) == "configured"
+
+
+def test_permanent_telegram_identity_failure_deactivates_source_and_inventory() -> None:
+    from newsroom.sources.telegram_ingestor_service import _record_channel_failure
+    from newsroom.storage.models import SourceInventory
+
+    source = SimpleNamespace(
+        id=7,
+        enabled=True,
+        health_status="healthy",
+        inactive_reason=None,
+        no_cursor_reason=None,
+    )
+    inventory = SimpleNamespace(operational_state="active", inactive_reason=None)
+    query = MagicMock()
+    query.filter_by.return_value.first.return_value = inventory
+    db = MagicMock()
+    db.query.return_value = query
+
+    _record_channel_failure(db, source, "channel_unresolvable")
+
+    assert source.enabled is False
+    assert source.health_status == "unavailable"
+    assert source.inactive_reason == "channel_unresolvable"
+    assert source.no_cursor_reason == "channel_unresolvable"
+    assert inventory.operational_state == "inactive"
+    assert inventory.inactive_reason == "channel_unresolvable"
+    db.query.assert_called_once_with(SourceInventory)
 
 
 def test_ingestor_healthcheck_fails_when_enabled_but_disconnected(capsys) -> None:

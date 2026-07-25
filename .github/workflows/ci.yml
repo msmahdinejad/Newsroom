@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "release/**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: "1"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  deterministic:
+    name: Python ${{ matrix.python-version }} deterministic
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.12"
+          - "3.13"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.24"
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install deterministic test environment
+        run: uv sync --extra dev --extra telegram
+      - name: Ruff
+        run: uv run ruff check src tests
+      - name: MyPy
+        run: uv run mypy src/newsroom
+      - name: Deterministic tests
+        run: uv run pytest tests -m "not integration"
+
+  postgres:
+    name: PostgreSQL integration and migrations
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: newsroom_test
+          POSTGRES_USER: newsroom
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U newsroom -d newsroom_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://newsroom:ci-only-password@127.0.0.1:5432/newsroom_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.24"
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test environment
+        run: uv sync --extra dev --extra telegram
+      - name: Upgrade an empty database
+        run: uv run alembic upgrade head
+      - name: Show migration head
+        run: uv run alembic current
+      - name: PostgreSQL integration tests
+        run: uv run pytest tests/integration
+
+  container:
+    name: Compose and production image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create safe local configuration stubs
+        run: |
+          cp .env.example .env
+          cp .env.providers.example .env.providers.local
+      - name: Validate Compose
+        run: docker compose config --quiet
+      - name: Build production image
+        run: docker build --tag newsroom:ci .

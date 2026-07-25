@@ -2,25 +2,29 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
+from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from newsroom.logging import get_logger
+from newsroom.logging import get_logger, redact
 from newsroom.pipeline.cursors import (
     advance_cursor_from_items,
     filter_new_items,
     load_cursor,
     save_cursor,
 )
+from newsroom.pipeline.source_lock import acquire_source_collection_lock
 from newsroom.sources.github import GitHubCollector
 from newsroom.sources.html_reader import NativeHtmlReader
 from newsroom.sources.reddit import NativeRedditSubredditCollector
 from newsroom.sources.rss import RSSCollector
 from newsroom.sources.telegram_collector import TelegramMTProtoCollector
+from newsroom.sources.validation_sweep import safe_failure_category
 from newsroom.sources.youtube_rss import NativeYouTubeRssCollector
 from newsroom.storage.models import CollectionRun, RawItem, Source
 
@@ -66,6 +70,37 @@ NATIVE_SOURCE_TYPES: frozenset[str] = frozenset(
 )
 
 
+def _source_attempt_order(source: Source) -> tuple[int, datetime, int]:
+    """Prefer never-attempted, then least-recently-attempted sources."""
+    attempted_at = source.last_attempt_at
+    if attempted_at is None:
+        return (0, datetime.min.replace(tzinfo=UTC), source.id)
+    if attempted_at.tzinfo is None:
+        attempted_at = attempted_at.replace(tzinfo=UTC)
+    return (1, attempted_at, source.id)
+
+
+def _bounded_fair_sources(sources: list[Source], max_sources: int) -> list[Source]:
+    """Take oldest attempts fairly, at most one source per type per round."""
+    buckets: dict[str, deque[Source]] = {}
+    for source in sorted(sources, key=_source_attempt_order):
+        buckets.setdefault(source.type, deque()).append(source)
+
+    selected: list[Source] = []
+    while buckets and len(selected) < max_sources:
+        source_types = sorted(
+            buckets,
+            key=lambda source_type: _source_attempt_order(buckets[source_type][0]),
+        )
+        for source_type in source_types:
+            selected.append(buckets[source_type].popleft())
+            if not buckets[source_type]:
+                del buckets[source_type]
+            if len(selected) >= max_sources:
+                break
+    return selected
+
+
 def raw_content_hash(item: dict[str, Any]) -> str:
     item_url = item.get("link") or item.get("html_url") or ""
     title = item.get("title") or item.get("name") or ""
@@ -94,6 +129,7 @@ async def collect_sources(
     source_type: str | None = None,
     limit_per_source: int = 10,
     max_sources: int | None = None,
+    source_spacing_seconds: float = 0.0,
     exclude_source_types: set[str] | frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Collect enabled sources, advance cursors only after persist success.
@@ -108,7 +144,7 @@ async def collect_sources(
     if exclude_source_types:
         sources = [source for source in sources if source.type not in exclude_source_types]
     if max_sources is not None:
-        sources = sources[:max_sources]
+        sources = _bounded_fair_sources(sources, max_sources)
 
     rss = RSSCollector()
     gh = GitHubCollector()
@@ -121,7 +157,9 @@ async def collect_sources(
     per_source: list[dict[str, Any]] = []
 
     try:
-        for source in sources:
+        for source_index, source in enumerate(sources):
+            if source_index and source_spacing_seconds > 0:
+                await asyncio.sleep(source_spacing_seconds)
             attempt_at = datetime.now(UTC)
             source.last_attempt_at = attempt_at
             source.validation_status = "attempting"
@@ -201,6 +239,7 @@ async def collect_sources(
                     continue
 
                 source, run = _resume_attempt(session, source, run, run_id, detached)
+                acquire_source_collection_lock(session, source.id)
                 cursor = load_cursor(session, source.id)
                 candidates = filter_new_items(items, cursor, source_type=source.type)
                 # cap fetch window; overlap retained by cursor filter
@@ -265,26 +304,29 @@ async def collect_sources(
                     with contextlib.suppress(Exception):
                         session.rollback()
                 source, run = _resume_attempt(session, source, run, run_id, detached)
-                logger.error(f"collect failed {source.name}: {e}")
+                safe_error = redact(str(e))[:1000]
+                logger.error(f"collect failed {source.name}: {safe_error}")
                 failed.append(source.name)
                 source.last_error_at = datetime.now(UTC)
-                source.last_error = str(e)[:1000]
+                source.last_error = safe_error
                 source.consecutive_failures = (source.consecutive_failures or 0) + 1
                 source.validation_status = "failed"
-                source.failure_category = type(e).__name__[:50]
+                source.failure_category = safe_failure_category(safe_error)
                 source.no_cursor_reason = "collection_failed_before_cursor"
-                if source.consecutive_failures >= 3:
-                    source.health_status = "degraded"
+                source.health_status = "degraded"
                 run.status = "error"
-                run.error = str(e)[:500]
+                run.error = safe_error[:500]
                 run.finished_at = datetime.now(UTC)
                 # do not advance cursor
-                per_source.append({"source": source.name, "status": "error", "error": str(e)[:120]})
+                per_source.append({"source": source.name, "status": "error", "error": safe_error[:120]})
                 session.commit()
     finally:
         await rss.close()
         await gh.close()
         await tg.close()
+        await html.close()
+        await reddit.close()
+        await yt.close()
 
     return {
         "sources": len(sources),

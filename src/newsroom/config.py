@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     collection_timeout_read: int = 60
     collection_max_size_mb: int = 2
     collection_user_agent: str = "newsroom/2.0"
+    collection_proxy_url: str = ""
 
     # Processing
     dedup_time_window_hours: int = 24
@@ -58,6 +59,10 @@ class Settings(BaseSettings):
     collect_concurrency: int = 4
     # Bounded backfill window per source per pass.
     collect_limit_per_source: int = 10
+    # Bounded fair batch per stateless collector cycle.
+    collect_max_sources_per_cycle: int = 20
+    # Minimum delay between stateless source request starts.
+    collect_source_spacing_seconds: float = 1.0
     # Retry delay base with jitter (seconds). Exponential backoff + jitter.
     collect_retry_base_delay_seconds: float = 5.0
     collect_retry_max_delay_seconds: float = 3600.0

@@ -24,7 +24,7 @@
   "youtube": {
     "status": "warn",
     "name": "YouTube 视频和字幕",
-    "message": "yt-dlp 已安装但未配置 JS runtime。运行：\n  $cfg = '[REDACTED]\\AppData\\Roaming\\yt-dlp\\config'\nNew-Item -ItemType Directory -Force -Path (Split-Path $cfg) | Out-Null\nif (-not (Test-Path $cfg) -or -not (Select-String -Path $cfg -Pattern '--js-runtimes' -Quiet)) {\n  Add-Content -Path $cfg -Value '--js-runtimes node'\n}",
+    "message": "yt-dlp is installed; configure a supported JavaScript runtime in the operator-local yt-dlp configuration.",
     "tier": 0,
     "backends": [
       "yt-dlp"

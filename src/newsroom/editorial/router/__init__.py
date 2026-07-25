@@ -33,10 +33,15 @@ from newsroom.editorial.router.types import (
     SystemClock,
     Usage,
 )
-from newsroom.editorial.router.validation import ModelValidationResult, ModelValidator
+from newsroom.editorial.router.validation import (
+    AccessValidationResult,
+    ModelValidationResult,
+    ModelValidator,
+)
 
 __all__ = [
     "DEFAULT_MODELS",
+    "AccessValidationResult",
     "CircuitState",
     "CircuitStateSnapshot",
     "DispatchQueueFull",

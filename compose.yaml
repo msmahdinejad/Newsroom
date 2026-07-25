@@ -52,11 +52,14 @@ services:
       # RSS) run here. Telegram MTProto is exclusively owned by the dedicated
       # telegram-ingestor service; X is owned by agent-reach-worker.
       COLLECT_LIMIT_PER_SOURCE: ${COLLECT_LIMIT_PER_SOURCE:-10}
+      COLLECT_MAX_SOURCES_PER_CYCLE: ${COLLECT_MAX_SOURCES_PER_CYCLE:-20}
+      COLLECT_SOURCE_SPACING_SECONDS: ${COLLECT_SOURCE_SPACING_SECONDS:-1}
       COLLECT_CONCURRENCY: ${COLLECT_CONCURRENCY:-4}
       COLLECTION_TIMEOUT_CONNECT: ${COLLECTION_TIMEOUT_CONNECT:-30}
       COLLECTION_TIMEOUT_READ: ${COLLECTION_TIMEOUT_READ:-60}
       COLLECTION_MAX_SIZE_MB: ${COLLECTION_MAX_SIZE_MB:-2}
       COLLECTION_USER_AGENT: ${COLLECTION_USER_AGENT:-newsroom/2.0}
+      COLLECTION_PROXY_URL: ${COLLECTION_PROXY_URL:-}
       COLLECT_LOOP_SECONDS: ${COLLECT_LOOP_SECONDS:-900}
     command:
       - uv
@@ -73,6 +76,14 @@ services:
                 asyncio.run(collect_sources(
                     db,
                     limit_per_source=int(os.environ.get("COLLECT_LIMIT_PER_SOURCE","10")),
+                    max_sources=max(
+                        1,
+                        int(os.environ.get("COLLECT_MAX_SOURCES_PER_CYCLE","20")),
+                    ),
+                    source_spacing_seconds=max(
+                        0.0,
+                        float(os.environ.get("COLLECT_SOURCE_SPACING_SECONDS","1")),
+                    ),
                     exclude_source_types={"telegram", "x_timeline"},
                 ))
             open('/tmp/newsroom_collector_done','w').write('ok')
@@ -100,9 +111,6 @@ services:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
-      LLM_PROVIDER_ENV_FILE: /run/newsroom/.env.providers.local
-    volumes:
-      - ./.env.providers.local:/run/newsroom/.env.providers.local:ro
     command:
       - uv
       - run
@@ -141,9 +149,7 @@ services:
       DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-      TELEGRAM_AUTHORIZED_USER_IDS: ${TELEGRAM_AUTHORIZED_USER_IDS:-}
       TELEGRAM_BOT_ENABLED: ${TELEGRAM_BOT_ENABLED:-false}
-      TELEGRAM_INGESTOR_ENABLED: ${TELEGRAM_INGESTOR_ENABLED:-false}
       EDITORIAL_ENABLED: ${EDITORIAL_ENABLED:-false}
       LLM_PROVIDER_ENV_FILE: /run/newsroom/.env.providers.local
       EDITORIAL_TIMEOUT_SECONDS: ${EDITORIAL_TIMEOUT_SECONDS:-60}
@@ -295,9 +301,9 @@ services:
       X_WORKER_POLL_SECONDS: ${X_WORKER_POLL_SECONDS:-900}
       X_WORKER_BATCH_SIZE: ${X_WORKER_BATCH_SIZE:-12}
       X_WORKER_SPACING_SECONDS: ${X_WORKER_SPACING_SECONDS:-2}
-      # Deliberately NOT passing TELEGRAM_BOT_TOKEN, TELEGRAM_API_HASH,
-      # EDITORIAL_API_KEY, or any other application secret. The worker talks
-      # to upstream platforms via the controlled runner only.
+      # Deliberately excludes Telegram, editorial, and other application
+      # secrets. The worker talks to upstream platforms only through the
+      # controlled runner.
     volumes:
       - agent_reach_config:/data/agent-reach
     # Bounded CPU and memory — the worker is a capability/diagnostics layer,

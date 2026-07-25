@@ -48,7 +48,6 @@ Start with the simplest stack that works.
 - No Redis, Kafka, Elasticsearch, Celery
 - No semantic embeddings until deterministic deduplication proven
 - No browser automation in MVP
-- No self-hosted WorldMonitor until needed
 
 ### VII. Test Manually First
 

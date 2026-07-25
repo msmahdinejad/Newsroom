@@ -102,7 +102,7 @@ Report generated in Persian. Cron path verified.
 - Telegram delivery: code complete, not live-verified (no bot token)
 - MTProto: code complete, blocked on credentials
 - LLM editorial: deterministic fallback only, pluggable interface ready
-- Agent-Reach/WorldMonitor: not evaluated
+- Agent-Reach: not evaluated
 - Docker full-stack restart: postgres verified, all services not yet tested
 
 ## 27. Commits

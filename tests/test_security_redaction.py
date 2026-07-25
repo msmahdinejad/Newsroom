@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 from newsroom.delivery.client import redact_token
+from newsroom.logging import redact
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = REPO_ROOT / "src"
@@ -28,6 +29,13 @@ def test_redact_token_no_fragment():
     assert token not in redacted
     assert redact_token(None) == "[REDACTED]"
     assert redact_token("") == "[REDACTED]"
+
+
+def test_proxy_userinfo_is_redacted_from_operational_errors():
+    message = "connect failed via socks5://proxy-user:proxy-password@proxy.invalid:1080"
+    redacted = redact(message)
+    assert "proxy-user" not in redacted
+    assert "proxy-password" not in redacted
 
 
 def test_env_example_has_empty_token():

@@ -28,7 +28,11 @@ def create_router_from_local_env(
     persisted validated model IDs are supplied later by the integration layer.
     """
     config = load_router_config(path)
-    transport = HttpEditorialTransport(config.providers, timeout_seconds=timeout_seconds)
+    transport = HttpEditorialTransport(
+        config.providers,
+        timeout_seconds=timeout_seconds,
+        proxy_url=config.proxy_url,
+    )
     router = MultiProviderRouter.from_config(
         config,
         transport=transport,

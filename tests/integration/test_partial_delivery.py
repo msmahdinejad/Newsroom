@@ -184,6 +184,93 @@ def test_partial_delivery_recovery(db_session):
     _cleanup(db_session, report.id, delivery_id)
 
 
+def test_retry_sends_only_the_missing_chunk(db_session):
+    """A persisted gap must not cause already-confirmed later chunks to resend."""
+    content = "\n\n".join(
+        [
+            "بخش اول " + "a" * 3700,
+            "بخش دوم " + "b" * 3700,
+            "بخش سوم " + "c" * 3700,
+        ]
+    )
+    report = _make_long_report(db_session, content=content)
+    chunk_count = _count_chunks(content)
+    assert chunk_count == 3
+
+    delivery = Delivery(
+        report_id=report.id,
+        chat_id=TelegramDelivery.__new__(TelegramDelivery)._hash_chat("gap_chat"),
+        chat_ref="chat_gap",
+        total_chunks=3,
+        delivered_chunks=2,
+        message_ids=[41001, None, 41003],
+        status="partial",
+        attempt_count=1,
+        retry_count=0,
+        parse_mode="HTML",
+    )
+    db_session.add(delivery)
+    db_session.flush()
+    db_session.add_all(
+        [
+            DeliveryChunk(
+                delivery_id=delivery.id,
+                chunk_index=0,
+                total_chunks=3,
+                status="sent",
+                attempt_count=1,
+                telegram_message_id=41001,
+            ),
+            DeliveryChunk(
+                delivery_id=delivery.id,
+                chunk_index=1,
+                total_chunks=3,
+                status="failed",
+                attempt_count=1,
+                error_category="server_error",
+            ),
+            DeliveryChunk(
+                delivery_id=delivery.id,
+                chunk_index=2,
+                total_chunks=3,
+                status="sent",
+                attempt_count=1,
+                telegram_message_id=41003,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    client = _SuccessClient(start_id=42002)
+    delivery_id = asyncio.run(
+        TelegramDelivery(client=client).deliver_report(
+            db_session,
+            report.id,
+            chat_id="gap_chat",
+        )
+    )
+
+    db_session.expire_all()
+    recovered = db_session.get(Delivery, delivery_id)
+    recovered_chunks = (
+        db_session.query(DeliveryChunk)
+        .filter_by(delivery_id=delivery_id)
+        .order_by(DeliveryChunk.chunk_index)
+        .all()
+    )
+    assert client.send_count == 1
+    assert recovered.status == "delivered"
+    assert recovered.delivered_chunks == 3
+    assert recovered.message_ids == [41001, 42002, 41003]
+    assert [chunk.telegram_message_id for chunk in recovered_chunks] == [
+        41001,
+        42002,
+        41003,
+    ]
+
+    _cleanup(db_session, report.id, delivery_id)
+
+
 def test_cursor_advances_on_complete_delivery(db_session):
     """Cursor advances only after confirmed complete delivery."""
     report = _make_long_report(db_session, content="short content")

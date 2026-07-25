@@ -81,7 +81,6 @@
 **Not implemented now. Later adds**:
 - Telegram channel monitoring (auth required)
 - Agent-Reach integration
-- WorldMonitor integration  
 - YouTube monitoring
 - Additional social sources
 - Three daily cron schedules (morning, afternoon, evening)

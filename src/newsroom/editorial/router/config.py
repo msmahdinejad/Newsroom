@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
 from dotenv import dotenv_values
 
@@ -30,6 +31,9 @@ DEFAULT_BASES = {
     "groq": "https://api.groq.com/openai/v1",
     "nvidia": "https://integrate.api.nvidia.com/v1",
 }
+_PROXY_SCHEMES = frozenset({"http", "https", "socks5", "socks5h"})
+_LOOPBACK_PROXY_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
 
 
 def _split(value: str | None) -> tuple[str, ...]:
@@ -55,6 +59,33 @@ def _bool(values: dict[str, str | None], name: str, default: bool = False) -> bo
     if raw is None:
         return default
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _running_in_container() -> bool:
+    """Return true for OCI runtimes without relying on ambient configuration."""
+    return Path("/.dockerenv").is_file() or Path("/run/.containerenv").is_file()
+
+
+def _proxy_url(values: dict[str, str | None]) -> str | None:
+    raw = str(values.get("LLM_PROXY_URL") or "").strip()
+    if not raw:
+        return None
+    parsed = urlparse(raw)
+    if parsed.scheme.lower() not in _PROXY_SCHEMES or not parsed.hostname:
+        raise ValueError("LLM_PROXY_URL must use a supported proxy scheme and host")
+    container_host = str(values.get("LLM_PROXY_CONTAINER_HOST") or "").strip()
+    if (
+        container_host
+        and _running_in_container()
+        and parsed.hostname.lower() in _LOOPBACK_PROXY_HOSTS
+    ):
+        if not _HOSTNAME_RE.fullmatch(container_host):
+            raise ValueError("LLM_PROXY_CONTAINER_HOST must be a hostname")
+        userinfo, separator, _ = parsed.netloc.rpartition("@")
+        prefix = f"{userinfo}@" if separator else ""
+        port = f":{parsed.port}" if parsed.port is not None else ""
+        return urlunparse(parsed._replace(netloc=f"{prefix}{container_host}{port}"))
+    return raw
 
 
 def load_router_config(path: str | Path = ".env.providers.local") -> RouterConfig:
@@ -124,6 +155,7 @@ def load_router_config(path: str | Path = ".env.providers.local") -> RouterConfi
         providers=tuple(providers),
         enabled=_bool(values, "LLM_ROUTER_ENABLED", False),
         provider_order=order,
+        proxy_url=_proxy_url(values),
         queue_size=_int(values, "LLM_QUEUE_SIZE", 32),
         provider_cooldown_seconds=_float(values, "LLM_PROVIDER_COOLDOWN_SECONDS", 300),
         key_cooldown_seconds=_float(values, "LLM_KEY_COOLDOWN_SECONDS", 60),

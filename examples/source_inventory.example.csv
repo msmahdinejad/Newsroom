@@ -1,0 +1,3 @@
+ID,Platform,Type,Name,Handle / ID,Direct URL,Primary Topic,Tags,Language,Content Mode,Speed 1-5,Informal 1-5,Noise 1-5,Community?,Open-source/API?,Risk,Verification,Discovery Source,Tier,Coverage Score
+example-rss-001,Website / Newsletter,Newsletter,Example Engineering Digest,,https://example.invalid/feed.xml,Developer tools,"engineering,release",English,Feed,3,2,1,No,No,low,synthetic,public-example,2,50
+example-github-001,GitHub,Repository,Example Organization/example-project,example-org/example-project,https://github.com/example-org/example-project,Open source,"python,ai",English,Releases,4,1,1,No,Yes,low,synthetic,public-example,1,75

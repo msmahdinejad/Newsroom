@@ -21,7 +21,6 @@ from newsroom.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
 
-# Gate 6: four scheduled reports at six-hour boundaries (Tehran time).
 # 00:00, 06:00, 12:00, 18:00 — independent of host/container timezone.
 JOB_IDS = ("report_00", "report_06", "report_12", "report_18")
 SCHEDULE_HOURS: tuple[int, ...] = (0, 6, 12, 18)
@@ -64,7 +63,7 @@ async def run_scheduled_pipeline(job_label: str) -> None:
 
 
 def create_scheduler() -> AsyncIOScheduler:
-    """Create scheduler with PostgreSQL job store and three Tehran cron jobs."""
+    """Create scheduler with PostgreSQL job store and four Tehran cron jobs."""
     jobstores = {
         "default": SQLAlchemyJobStore(url=str(settings.database_url)),
     }
@@ -79,7 +78,6 @@ def create_scheduler() -> AsyncIOScheduler:
     )
 
     tz = settings.timezone or "Asia/Tehran"
-    # Gate 6: six-hour reporting cadence at 00:00, 06:00, 12:00, 18:00 Tehran.
     for jid, hour, minute, label, name in scheduled_specs():
         scheduler.add_job(
             run_scheduled_pipeline,

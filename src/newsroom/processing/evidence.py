@@ -19,7 +19,7 @@ class EvidenceBuilder:
     """Build evidence packets from stories."""
 
     def build_for_story(self, db: Session, story: Story) -> int:
-        """Build and persist evidence packet for a story. Returns evidence ID."""
+        """Build and persist the stable evidence packet for a story."""
         items = (
             db.query(NormalizedItem)
             .join(StoryItem, StoryItem.item_id == NormalizedItem.id)
@@ -28,10 +28,19 @@ class EvidenceBuilder:
         )
 
         packet = self._build_packet(story, items)
-        evidence = Evidence(story_id=story.id, packet=packet)
-        db.add(evidence)
+        evidence = (
+            db.query(Evidence)
+            .filter_by(story_id=story.id)
+            .order_by(Evidence.id.desc())
+            .first()
+        )
+        if evidence is None:
+            evidence = Evidence(story_id=story.id, packet=packet)
+            db.add(evidence)
+        else:
+            evidence.packet = packet
         db.flush()
-        logger.debug(f"Built evidence {evidence.id} for story {story.id}")
+        logger.debug(f"Built stable evidence {evidence.id} for story {story.id}")
         return evidence.id
 
     def build_for_stories(self, db: Session, story_ids: list[int]) -> dict[str, int]:

@@ -147,9 +147,10 @@ def test_alembic_at_gate5x_revision(engine):
     # Later Gate 6 revisions preserve the Gate 5X tables.
     assert row[0] in (
         "0008_gate5x_x_ingestion",
-        "0009_gate6_source_inventory",
-        "0010_gate6_router_reliability",
-    )
+            "0009_gate6_source_inventory",
+            "0010_gate6_router_reliability",
+            "0011_gate7_identity_privacy",
+        )
 
 
 # ── 2. Source import ───────────────────────────────────────────

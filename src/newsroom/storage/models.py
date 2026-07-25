@@ -319,8 +319,8 @@ class TelegramUpdate(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     update_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True, index=True)
     update_type: Mapped[str] = mapped_column(String(30), nullable=False)  # message/callback
-    user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    chat_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    user_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    chat_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     command: Mapped[str | None] = mapped_column(String(100), nullable=True)
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     result: Mapped[str | None] = mapped_column(String(50), nullable=True)  # ok/denied/error/busy
@@ -365,8 +365,8 @@ class CommandRequest(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     request_key: Mapped[str] = mapped_column(String(200), nullable=False, unique=True, index=True)
     command: Mapped[str] = mapped_column(String(100), nullable=False)
-    user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    chat_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    user_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    chat_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     job_run_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     report_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     delivery_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

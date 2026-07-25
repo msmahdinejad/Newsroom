@@ -36,6 +36,7 @@ from newsroom.pipeline.cursors import (
     load_cursor,
     save_cursor,
 )
+from newsroom.pipeline.source_lock import acquire_source_collection_lock
 from newsroom.sources.agent_reach.adapters import (
     GitHubDiscoveryCollector,
     LinkedInPublicReadCollector,
@@ -379,6 +380,36 @@ async def collect_agent_reach_sources(
         adapter = _adapter_for(source.type)
         try:
             items = await adapter.collect(source)
+        except SSRFError:
+            source, run = _resume_attempt(session, source, run, run_id, detached)
+            logger.warning(f"agent_reach SSRF rejected {source.name}")
+            failed.append(source.name)
+            state = _ensure_source_state(session, source, channel=channel, backend="")
+            _update_state_failure(state, error_category="ssrf")
+            _update_x_state_failure(session, source, "ssrf")
+            source.last_error_at = datetime.now(UTC)
+            source.last_error = "ssrf"
+            source.consecutive_failures = (source.consecutive_failures or 0) + 1
+            source.validation_status = "failed"
+            source.failure_category = "ssrf"
+            source.no_cursor_reason = "collection_failed_before_cursor"
+            source.health_status = "degraded"
+            if source.type == "x_timeline":
+                source.enabled = False
+                source.inactive_reason = "x_ssrf"
+            run.status = "error"
+            run.error = "ssrf"
+            run.finished_at = datetime.now(UTC)
+            per_source.append(
+                {
+                    "source": source.name,
+                    "status": "ssrf_rejected",
+                    "channel": channel,
+                }
+            )
+            if detached:
+                session.commit()
+            continue
         except CollectionError as e:
             source, run = _resume_attempt(session, source, run, run_id, detached)
             logger.error(f"agent_reach collect failed {source.name}: {e}")
@@ -455,37 +486,6 @@ async def collect_agent_reach_sources(
             if detached:
                 session.commit()
             continue
-        except SSRFError as e:
-            source, run = _resume_attempt(session, source, run, run_id, detached)
-            logger.warning(f"agent_reach SSRF rejected {source.name}: {e}")
-            failed.append(source.name)
-            state = _ensure_source_state(session, source, channel=channel, backend="")
-            _update_state_failure(state, error_category="ssrf")
-            _update_x_state_failure(session, source, "ssrf")
-            source.last_error_at = datetime.now(UTC)
-            source.last_error = "ssrf"
-            source.consecutive_failures = (source.consecutive_failures or 0) + 1
-            source.validation_status = "failed"
-            source.failure_category = "ssrf"
-            source.no_cursor_reason = "collection_failed_before_cursor"
-            if source.type == "x_timeline":
-                source.enabled = False
-                source.inactive_reason = "x_ssrf"
-            if source.consecutive_failures >= 3:
-                source.health_status = "degraded"
-            run.status = "error"
-            run.error = "ssrf"
-            run.finished_at = datetime.now(UTC)
-            per_source.append(
-                {
-                    "source": source.name,
-                    "status": "ssrf_rejected",
-                    "channel": channel,
-                }
-            )
-            if detached:
-                session.commit()
-            continue
         finally:
             with contextlib.suppress(Exception):
                 await adapter.close()
@@ -493,6 +493,7 @@ async def collect_agent_reach_sources(
         source, run = _resume_attempt(session, source, run, run_id, detached)
 
         # Cursor filter — drop items already covered by the cursor.
+        acquire_source_collection_lock(session, source.id)
         cursor = load_cursor(session, source.id)
         candidates = filter_new_items(items, cursor, source_type=source.type)
         candidates = candidates[:limit_per_source]

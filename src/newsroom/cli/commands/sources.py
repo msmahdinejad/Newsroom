@@ -35,11 +35,11 @@ def sources_command(args: argparse.Namespace) -> int:
     setup_logging()
     action = getattr(args, "sources_command", "status")
     if action == "import":
-        return _do_import()
+        return _do_import(getattr(args, "workbook", None))
     if action == "activate":
         return _do_activate()
     if action == "reconcile":
-        rc = _do_import()
+        rc = _do_import(getattr(args, "workbook", None))
         if rc != 0:
             return rc
         return _do_activate()
@@ -49,17 +49,18 @@ def sources_command(args: argparse.Namespace) -> int:
     return 1
 
 
-def _do_import() -> int:
-    src = find_workbook(".")
+def _do_import(workbook: str | None = None) -> int:
+    src = find_workbook(".", workbook)
     if src is None:
         logger.error("workbook not found in searched paths")
         print(
-            "FAIL: workbook not found. Searched: . config/import ~/OneDrive/Desktop",
+            "FAIL: workbook not found. Use --workbook, set NEWSROOM_SOURCE_WORKBOOK, "
+            "or place it in . or config/import.",
             file=sys.stderr,
         )
         return 1
     dest = copy_workbook_to_import_dir(src, ".")
-    logger.info(f"workbook copied: {src} -> {dest}")
+    logger.info("workbook copied into the local import directory")
     with get_db() as db:
         report = import_workbook(db, dest)
     _print(report.to_dict())

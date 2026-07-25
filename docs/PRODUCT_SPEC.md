@@ -102,7 +102,6 @@ MVP: Template-based with source preservation
 - Reddit monitoring
 - YouTube monitoring
 - LinkedIn monitoring
-- WorldMonitor integration (no self-hosting yet)
 - Semantic embeddings
 - Full AI editorial synthesis (templates only)
 - Automated publishing

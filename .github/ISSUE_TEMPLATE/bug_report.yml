@@ -1,0 +1,88 @@
+name: Bug report
+description: Report a reproducible defect in Persian AI Newsroom
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a defect. Do not include credentials, session
+        files, private source content, personal IDs, or unredacted logs.
+        Report vulnerabilities through the private process in SECURITY.md.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: This report contains no protected values or private data.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Release version, tag, or commit hash.
+      placeholder: v2.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Source inventory/import
+        - Collector
+        - Telegram MTProto ingestion
+        - X or Agent-Reach
+        - Processing/deduplication/clustering
+        - LLM routing/editorial
+        - Scheduler
+        - Telegram delivery/bot
+        - Database/migration
+        - Docker/operations
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the observed and expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include bounded commands and sanitized configuration names only.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python, uv, Docker, Compose, and PostgreSQL versions.
+      placeholder: |
+        OS:
+        Python:
+        uv:
+        Docker/Compose:
+        PostgreSQL:
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized diagnostics
+      description: Safe health output or a short redacted traceback. Never paste environment files.
+      render: text
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context

@@ -213,7 +213,6 @@ INSERT INTO sources (name, type, url, language, priority, enabled) VALUES
 - Advanced clustering algorithms
 - Multi-language detection
 - Agent-Reach integration (M4)
-- WorldMonitor integration (M4)
 - YouTube/X/Reddit sources (M4)
 
 ## Success Criteria
