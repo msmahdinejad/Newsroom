@@ -2,7 +2,8 @@
 
 ## Version and upgrade
 
-Proposed release: **2.0.0**. Upgrade with `uv sync --frozen --extra dev
+Release: **2.0.0**. Local tag `v2.0.0` was created after final checks and was
+not pushed. Upgrade with `uv sync --frozen --extra dev
 --extra telegram`, then `uv run alembic upgrade head`. Migration
 `0011_gate7_identity_privacy` replaces durable raw Telegram owner/chat fields
 with one-way fingerprints; it does not reauthorize, delete, or recreate the
