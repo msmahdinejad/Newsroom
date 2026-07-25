@@ -50,6 +50,21 @@ Authoritative platform totals are Telegram 159, Reddit 204, Community 45,
 X/Twitter 144, Website/Newsletter 464, GitHub 246, Community/Forum 19, and
 YouTube/Social 63.
 
+## Final reconciliation snapshot
+
+After the bounded validation/reconciliation pass the 1344 workbook rows are:
+
+- **1228 active**; all 1228 have `last_attempt_at` and a cursor or explicit
+  no-cursor reason.
+- **112 inactive**; all carry an evidence-based reason.
+- **4 duplicate** rows; all are retained for workbook accounting.
+- **1329** workbook-linked rows have a persisted collection attempt. The
+  remaining rows are represented but intentionally inactive/duplicate and do
+  not imply an unattempted active collector.
+- Linked active source health is **965 healthy** and **263 degraded**. A
+  degraded source is still scheduled with bounded retry/isolation; it is not
+  falsely reported as healthy.
+
 The collector registry also intentionally contains 34 enabled non-workbook
 sources: 22 RSS, 11 GitHub release sources, and one legacy X timeline. They
 remain separately identifiable because `workbook_id` is null.
