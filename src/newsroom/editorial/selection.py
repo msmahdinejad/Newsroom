@@ -19,8 +19,9 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from newsroom.config import settings
 from newsroom.logging import get_logger
-from newsroom.storage.models import Story
+from newsroom.storage.models import NormalizedItem, RawItem, Source, Story, StoryItem
 
 logger = get_logger(__name__)
 
@@ -40,6 +41,96 @@ class SelectionResult:
     omitted_count: int
     report_mode: str
     no_new_items: bool
+
+
+def reserve_telegram_story_ids(
+    selected: list[int],
+    candidates: list[int],
+    *,
+    telegram_story_ids: set[int],
+    max_stories: int,
+    minimum_telegram_stories: int,
+) -> list[int]:
+    """Reserve a small bounded share for Telegram without expanding a report."""
+    minimum = max(0, min(minimum_telegram_stories, max_stories))
+    if not minimum or not telegram_story_ids:
+        return selected[:max_stories]
+
+    included = [story_id for story_id in selected if story_id in telegram_story_ids]
+    missing = [
+        story_id
+        for story_id in candidates
+        if story_id in telegram_story_ids and story_id not in included
+    ][: max(0, minimum - len(included))]
+    if not missing:
+        return selected[:max_stories]
+
+    retained = [story_id for story_id in selected if story_id not in missing]
+    retained = retained[: max(0, max_stories - len(missing))]
+    return retained + missing
+
+
+def _extend_with_telegram_candidates(
+    db: Session,
+    story_ids: list[int],
+    *,
+    boundary: datetime | None = None,
+) -> list[int]:
+    """Add a few recent Telegram stories when global ranking omits the platform."""
+    minimum = settings.editorial_min_telegram_stories
+    if minimum <= 0:
+        return story_ids
+
+    query = (
+        db.query(Story)
+        .join(StoryItem, StoryItem.story_id == Story.id)
+        .join(NormalizedItem, StoryItem.item_id == NormalizedItem.id)
+        .join(RawItem, NormalizedItem.raw_item_id == RawItem.id)
+        .join(Source, RawItem.source_id == Source.id)
+        .filter(Source.type == "telegram")
+    )
+    if boundary is not None:
+        query = query.filter(
+            (Story.created_at > boundary)
+            | (Story.material_change_at.is_not(None) & (Story.material_change_at > boundary))
+        )
+    if story_ids:
+        query = query.filter(~Story.id.in_(story_ids))
+    telegram_ids = [
+        story.id
+        for story in (
+            query.order_by(Story.importance_score.desc(), Story.created_at.desc())
+            .distinct()
+            .limit(minimum)
+            .all()
+        )
+    ]
+    return story_ids + telegram_ids
+
+
+def _with_telegram_reserve(db: Session, story_ids: list[int], max_stories: int) -> list[int]:
+    """Give newly eligible Telegram stories a bounded seat in editorial selection."""
+    if not story_ids:
+        return []
+    telegram_story_ids = {
+        row[0]
+        for row in (
+            db.query(StoryItem.story_id)
+            .join(NormalizedItem, StoryItem.item_id == NormalizedItem.id)
+            .join(RawItem, NormalizedItem.raw_item_id == RawItem.id)
+            .join(Source, RawItem.source_id == Source.id)
+            .filter(StoryItem.story_id.in_(story_ids), Source.type == "telegram")
+            .distinct()
+            .all()
+        )
+    }
+    return reserve_telegram_story_ids(
+        story_ids[:max_stories],
+        story_ids,
+        telegram_story_ids=telegram_story_ids,
+        max_stories=max_stories,
+        minimum_telegram_stories=settings.editorial_min_telegram_stories,
+    )
 
 
 def get_delivered_story_ids(db: Session) -> set[int]:
@@ -161,7 +252,7 @@ def select_stories_for_report(
                 .limit(MAX_CANDIDATE_STORIES)
                 .all()
             )
-            candidate_ids = [s.id for s in candidates]
+            candidate_ids = _extend_with_telegram_candidates(db, [s.id for s in candidates])
         else:
             # New material since the boundary: created or materially changed after.
             candidates = (
@@ -174,7 +265,11 @@ def select_stories_for_report(
                 .limit(MAX_CANDIDATE_STORIES)
                 .all()
             )
-            candidate_ids = [s.id for s in candidates]
+            candidate_ids = _extend_with_telegram_candidates(
+                db,
+                [s.id for s in candidates],
+                boundary=boundary,
+            )
         total_candidates = len(candidate_ids)
         # Exclude delivered unchanged stories (already delivered, no change).
         selected = [sid for sid in candidate_ids if sid not in excluded_delivered]
@@ -190,7 +285,7 @@ def select_stories_for_report(
                 report_mode=report_mode,
                 no_new_items=True,
             )
-        selected = selected[:max_stories]
+        selected = _with_telegram_reserve(db, selected, max_stories)
         omitted = max(0, total_candidates - len(selected))
         return SelectionResult(
             story_ids=selected,
@@ -204,13 +299,13 @@ def select_stories_for_report(
         )
 
     if report_mode == "manual_new":
-        candidate_ids = [
+        candidate_ids = _extend_with_telegram_candidates(db, [
             s.id
             for s in db.query(Story)
             .order_by(Story.importance_score.desc(), Story.created_at.desc())
             .limit(MAX_CANDIDATE_STORIES)
             .all()
-        ]
+        ])
         total_candidates = len(candidate_ids)
         selected = [sid for sid in candidate_ids if sid not in excluded_delivered]
         excluded_count = len(candidate_ids) - len(selected)
@@ -225,7 +320,7 @@ def select_stories_for_report(
                 report_mode=report_mode,
                 no_new_items=True,
             )
-        selected = selected[:max_stories]
+        selected = _with_telegram_reserve(db, selected, max_stories)
         omitted = max(0, len(candidate_ids) - len(selected))
         return SelectionResult(
             story_ids=selected,
@@ -245,9 +340,9 @@ def select_stories_for_report(
         .limit(MAX_CANDIDATE_STORIES)
         .all()
     )
-    candidate_ids = [s.id for s in candidates]
+    candidate_ids = _extend_with_telegram_candidates(db, [s.id for s in candidates])
     total_candidates = len(candidate_ids)
-    selected = candidate_ids[:max_stories]
+    selected = _with_telegram_reserve(db, candidate_ids, max_stories)
     omitted = max(0, len(candidate_ids) - len(selected))
 
     return SelectionResult(

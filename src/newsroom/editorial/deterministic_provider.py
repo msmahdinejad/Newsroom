@@ -1,16 +1,13 @@
 """Deterministic editorial provider — no network, always available.
 
-Wraps the existing PersianEditorial renderer to produce structured
-EditorialOutput. This is the fallback when AI providers fail and the
-default when no credentials are configured.
+This is the terminal structured fallback when every validated AI route is
+unavailable. Public rendering is centralized in ``editorial.presentation``.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
-# Reuse existing Persian category labels from the legacy renderer
-from newsroom.editorial.persian import TRUST_FA
 from newsroom.editorial.provider import EditorialProvider
 from newsroom.editorial.schema import (
     OUTPUT_SCHEMA_VERSION,
@@ -25,6 +22,16 @@ from newsroom.editorial.schema import (
     ReportMetadata,
     StoryEditorialResult,
 )
+
+TRUST_FA = {
+    "official": "رسمی",
+    "confirmed": "تأییدشده",
+    "likely": "محتمل",
+    "unconfirmed": "تأییدنشده",
+    "rumor": "شایعه",
+    "promotional": "تبلیغاتی",
+    "suspicious": "مشکوک",
+}
 
 
 class DeterministicEditorialProvider(EditorialProvider):

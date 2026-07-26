@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # Processing
     dedup_time_window_hours: int = 24
     cluster_keyword_threshold: float = 0.35
+    processing_batch_size: int = 500
+    processing_loop_seconds: int = 60
+    # Process this platform first when it has a backlog. Empty disables priority.
+    processing_priority_source_type: str = "telegram"
 
     # Report schedules (Asia/Tehran = UTC+3:30)
     schedule_morning: str = "09:00"
@@ -116,12 +120,13 @@ class Settings(BaseSettings):
     editorial_timeout_seconds: int = 60
     editorial_max_retries: int = 2
     editorial_max_input_tokens: int = 12000
-    editorial_max_output_tokens: int = 4000
+    editorial_max_output_tokens: int = 8000
     editorial_temperature: float = 0.3
     editorial_fallback_enabled: bool = True
     editorial_max_stories_per_call: int = 15
     editorial_max_evidence_per_story: int = 10
     editorial_max_excerpt_length: int = 300
+    editorial_min_telegram_stories: int = 2
     editorial_concurrency_limit: int = 1
     editorial_scheduled_run_budget: int = 1
     editorial_manual_run_budget: int = 3

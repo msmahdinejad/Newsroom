@@ -24,6 +24,7 @@ from newsroom.config import settings
 from newsroom.editorial.deterministic_provider import DeterministicEditorialProvider
 from newsroom.editorial.evidence_builder import build_evidence_set
 from newsroom.editorial.grounding import validate_grounding
+from newsroom.editorial.presentation import render_persian_report
 from newsroom.editorial.provider import (
     EditorialError,
     EditorialProvider,
@@ -34,7 +35,6 @@ from newsroom.editorial.schema import (
     EditorialErrorCategory,
     EditorialEvidenceSet,
     EditorialOutput,
-    StoryEditorialResult,
 )
 from newsroom.editorial.validation import create_validation_error, parse_and_validate
 from newsroom.logging import get_logger
@@ -218,14 +218,34 @@ def generate_editorial(
     output = response.output
     if attempt.provider != "deterministic":
         # Re-validate the structured output
+        validation_error: EditorialError | None = None
         try:
             output = _validate_output(output, evidence, settings.editorial_max_output_tokens)
         except EditorialError as e:
-            attempt.error_category = e.category.value
-            attempt.error_summary = e.detail
-            attempt.status = "validation_failed"
+            validation_error = e
+            repaired = _repair_semantic_schema(provider, request, response)
+            if repaired is not None:
+                response = repaired
+                attempt.provider = response.provider or provider.name
+                attempt.model = response.model or provider.model_name
+                attempt.retry_count = response.retry_count
+                attempt.usage = response.usage
+                try:
+                    output = _validate_output(
+                        response.output,
+                        evidence,
+                        settings.editorial_max_output_tokens,
+                    )
+                    validation_error = None
+                except EditorialError as repair_error:
+                    validation_error = repair_error
 
-            if settings.editorial_fallback_enabled:
+            if validation_error is not None:
+                attempt.error_category = validation_error.category.value
+                attempt.error_summary = validation_error.detail
+                attempt.status = "validation_failed"
+
+            if validation_error is not None and settings.editorial_fallback_enabled:
                 logger.warning("Editorial validation failed — falling back to deterministic")
                 det_provider = DeterministicEditorialProvider()
                 response = det_provider.generate(request)
@@ -234,7 +254,7 @@ def generate_editorial(
                 attempt.model = response.model or det_provider.model_name
                 attempt.fallback_used = True
                 attempt.status = "fallback"
-            else:
+            elif validation_error is not None:
                 attempt.completed_at = datetime.now(UTC).isoformat()
                 attempt.latency_ms = int((time.monotonic() - start) * 1000)
                 raise
@@ -244,7 +264,7 @@ def generate_editorial(
         grounded_output, grounding_result = validate_grounding(evidence, output)
         attempt.grounding_result = "; ".join(grounding_result.issues) if grounding_result.issues else "ok"
 
-        if not grounding_result.valid and settings.editorial_fallback_enabled:
+        if not grounding_result.valid and not grounded_output.stories and settings.editorial_fallback_enabled:
             logger.warning("Grounding validation failed — falling back to deterministic")
             det_provider = DeterministicEditorialProvider()
             response = det_provider.generate(request)
@@ -254,7 +274,7 @@ def generate_editorial(
             attempt.fallback_used = True
             attempt.status = "fallback"
             attempt.grounding_result = "; ".join(grounding_result.issues) if grounding_result.issues else "ok"
-        elif not grounding_result.valid:
+        elif not grounding_result.valid and not grounded_output.stories:
             attempt.status = "grounding_failed"
             attempt.completed_at = datetime.now(UTC).isoformat()
             attempt.latency_ms = int((time.monotonic() - start) * 1000)
@@ -262,6 +282,15 @@ def generate_editorial(
                 EditorialErrorCategory.UNSUPPORTED_CLAIMS,
                 "grounding validation failed and fallback disabled",
                 retryable=False,
+            )
+        elif not grounding_result.valid:
+            # Grounding has removed only unsafe claim fragments. The public
+            # renderer uses reader-facing title, summary, and evidence links;
+            # retain the non-empty AI result rather than replace it with a
+            # template merely because internal claims were scrubbed.
+            logger.warning(
+                "Grounding scrubbed unsupported AI claims: %s",
+                grounding_result.issues[:3],
             )
         output = grounded_output
     else:
@@ -278,6 +307,23 @@ def generate_editorial(
         attempt.status = "ok"
 
     return content, attempt
+
+
+def _repair_semantic_schema(
+    provider: EditorialProvider,
+    request: EditorialRequest,
+    response: EditorialResponse,
+) -> EditorialResponse | None:
+    """Request one alternate route when semantic schema checks fail."""
+    repair = getattr(provider, "repair", None)
+    if not callable(repair):
+        return None
+    try:
+        routed = repair(request, response)
+    except Exception as exc:
+        logger.warning("Editorial schema repair unavailable (%s)", type(exc).__name__)
+        return None
+    return routed.response if routed is not None else None
 
 
 def _validate_output(
@@ -341,102 +387,15 @@ def _check_cache(
 
 
 def _render_persian_report(output: EditorialOutput, report_mode: str) -> str:
-    """Render the structured editorial output as a Persian report text."""
-    now = datetime.now(UTC)
-    mode_fa = {
-        "scheduled": "زمان‌بندی‌شده",
-        "manual": "فوری",
-        "manual_new": "اخبار جدید",
-        "manual_comprehensive": "جامع",
-    }.get(report_mode, "")
-
-    lines = [
-        "📰 گزارش خبری هوش مصنوعی و فناوری",
-        f"تاریخ: {now.strftime('%Y-%m-%d')}",
-        f"نوع گزارش: {mode_fa}",
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    ]
-
-    # Layer A: high priority
-    high = [s for s in output.stories if s.suggested_priority == "high"]
-    medium = [s for s in output.stories if s.suggested_priority == "medium"]
-    low = [s for s in output.stories if s.suggested_priority == "low"]
-
-    if high:
-        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("🔥 مهم‌ترین خبرها")
-        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        for story in high:
-            lines.append(_render_story_major(story))
-
-    if medium:
-        lines.append("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("📋 اخبار مهم")
-        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        for story in medium[:8]:
-            lines.append(_render_story_medium(story))
-
-    if low:
-        lines.append("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("📰 ریزخبرها")
-        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        for story in low[:15]:
-            lines.append(_render_story_brief(story))
-
-    gen_label = "تولید شده توسط هوش مصنوعی" if output.metadata.provider != "deterministic" else "تولید شده توسط سیستم خبرخوان"
-    if output.metadata.editorial_status == "fallback":
-        gen_label = "تولید شده توسط سیستم خبرخوان (حالت پشتیبان)"
-
-    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append(f"📊 این گزارش شامل {len(output.stories)} خبر از منابع مختلف است")
-    lines.append(f"🤖 {gen_label}")
-    lines.append(f"⏰ {now.strftime('%H:%M UTC')}")
-
-    return "\n\n".join(lines)
-
-
-def _render_story_major(story: StoryEditorialResult) -> str:
-    lines = [f"🔹 {story.headline_fa}"]
-    lines.append(f"وضعیت: {story.verification_status} | اطمینان: {int(story.confidence_level * 100)}%")
-
-    if story.summary_fa:
-        lines.append(f"چه اتفاقی افتاد: {story.summary_fa}")
-    if story.why_it_matters_fa:
-        lines.append(f"چرا مهم است: {story.why_it_matters_fa}")
-    if story.practical_impact_fa:
-        lines.append(f"کاربرد عملی: {story.practical_impact_fa}")
-    if story.uncertainty_notes:
-        lines.append(f"⚠️ {story.uncertainty_notes}")
-
-    for link in story.source_links[:3]:
-        if link:
-            lines.append(f"🔗 {link}")
-
-    if len(story.source_links) > 3:
-        lines.append(f"... و {len(story.source_links) - 3} منبع دیگر")
-
-    return "\n".join(lines)
-
-
-def _render_story_medium(story: StoryEditorialResult) -> str:
-    lines = [f"▸ {story.headline_fa}"]
-    lines.append(f"  وضعیت: {story.verification_status}")
-    if story.source_links:
-        lines.append(f"  🔗 {story.source_links[0]}")
-    return "\n".join(lines)
-
-
-def _render_story_brief(story: StoryEditorialResult) -> str:
-    link = f" | 🔗 {story.source_links[0]}" if story.source_links else ""
-    return f"• {story.headline_fa}{link}"
+    """Render the grounded output through the compact public presentation seam."""
+    return render_persian_report(output, report_mode)
 
 
 def _empty_report(report_mode: str) -> str:
+    del report_mode
     now = datetime.now(UTC)
-    return f"""📰 گزارش خبری هوش مصنوعی و فناوری
-تاریخ: {now.strftime('%Y-%m-%d')}
+    return f"""📰 اخبار فناوری
+📅 {now.strftime('%Y-%m-%d')}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-خبر جدیدی در این دوره یافت نشد.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
+در این بازه خبر تازه‌ای برای گزارش پیدا نشد."""

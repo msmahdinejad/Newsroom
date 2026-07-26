@@ -807,7 +807,12 @@ def _final_reduction(
                     "Final AI reduction grounding scrubbed unsupported claims: %s",
                     grounding.issues[:3],
                 )
-            output = grounded
+            output = _preserve_telegram_coverage(
+                grounded,
+                merged.stories,
+                evidence,
+                max_stories=settings.editorial_max_stories_per_call,
+            )
             actual_provider = response.provider or provider.name
             actual_model = response.model or provider.model_name
             usage = response.usage
@@ -869,6 +874,67 @@ def _bounded_reduction_evidence(
     )
 
 
+def _telegram_story_ids(evidence: EditorialEvidenceSet) -> set[int]:
+    """Return story IDs with at least one Telegram evidence item."""
+    return {
+        story.story_id
+        for story in evidence.stories
+        if any(source.source_type == "telegram" for source in story.sources)
+    }
+
+
+def _reserve_telegram_story_results(
+    selected: list[StoryEditorialResult],
+    candidates: list[StoryEditorialResult],
+    evidence: EditorialEvidenceSet,
+    *,
+    max_stories: int,
+) -> list[StoryEditorialResult]:
+    """Keep a small, bounded Telegram share through every reduction stage."""
+    telegram_ids = _telegram_story_ids(evidence)
+    minimum = max(0, min(settings.editorial_min_telegram_stories, max_stories))
+    if not minimum or not telegram_ids:
+        return selected[:max_stories]
+
+    included = [story for story in selected if story.story_id in telegram_ids]
+    missing = [
+        story
+        for story in candidates
+        if story.story_id in telegram_ids
+        and story.story_id not in {included_story.story_id for included_story in included}
+    ][: max(0, minimum - len(included))]
+    if not missing:
+        return selected[:max_stories]
+
+    retained = list(selected)
+    while len(retained) + len(missing) > max_stories:
+        removable = next(
+            (index for index in range(len(retained) - 1, -1) if retained[index].story_id not in telegram_ids),
+            None,
+        )
+        if removable is None:
+            break
+        retained.pop(removable)
+    return retained + missing
+
+
+def _preserve_telegram_coverage(
+    output: EditorialOutput,
+    candidates: list[StoryEditorialResult],
+    evidence: EditorialEvidenceSet,
+    *,
+    max_stories: int,
+) -> EditorialOutput:
+    """Backfill validated map copy when final reduction drops Telegram stories."""
+    stories = _reserve_telegram_story_results(
+        output.stories,
+        candidates,
+        evidence,
+        max_stories=max_stories,
+    )
+    return output.model_copy(update={"stories": stories})
+
+
 def _merge_outputs(
     results: list[MapResult],
     evidence: EditorialEvidenceSet,
@@ -897,9 +963,15 @@ def _merge_outputs(
         key=lambda s: (priority_order.get(s.suggested_priority, 1), -s.confidence_level)
     )
 
-    # Limit to configured max stories
+    ranked_stories = all_stories
+    # Limit to configured max stories while preserving Telegram coverage.
     max_stories = settings.editorial_max_stories_per_call
-    all_stories = all_stories[:max_stories]
+    all_stories = _reserve_telegram_story_results(
+        ranked_stories[:max_stories],
+        ranked_stories,
+        evidence,
+        max_stories=max_stories,
+    )
 
     providers = {result.provider for result in results}
     models = {result.model for result in results}

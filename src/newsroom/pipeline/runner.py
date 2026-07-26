@@ -20,7 +20,7 @@ from newsroom.logging import get_logger, setup_logging
 from newsroom.pipeline.collect import collect_sources
 from newsroom.pipeline.lock import PipelineBusyError, PipelineLock
 from newsroom.storage.database import engine
-from newsroom.storage.models import Delivery, JobRun, NormalizedItem, RawItem, Report
+from newsroom.storage.models import Delivery, JobRun, Report
 
 logger = get_logger(__name__)
 
@@ -190,67 +190,33 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
             )
 
     stage("normalize", "starting")
-    from newsroom.processing.normalize import Normalizer
+    from newsroom.pipeline.processing_worker import process_pending_items
 
-    normalizer = Normalizer()
-    raw_items = (
-        session.query(RawItem)
-        .filter(~RawItem.id.in_(session.query(NormalizedItem.raw_item_id)))
-        .limit(500)
-        .all()
+    processed = process_pending_items(batch_size=500)
+    stage(
+        "normalize",
+        "ok",
+        f"{processed.normalized} normalized / {processed.raw_seen} claimed",
     )
-    normalized_count = 0
-    for raw in raw_items:
-        try:
-            norm_data = normalizer.normalize(raw.raw_data)
-            session.add(
-                NormalizedItem(
-                    raw_item_id=raw.id,
-                    title=norm_data["title"][:500],
-                    description=(norm_data.get("description") or "")[:2000],
-                    source_url=norm_data["source_url"],
-                    canonical_url=norm_data.get("canonical_url") or "",
-                    published_at=norm_data.get("published_at"),
-                    language=norm_data.get("language"),
-                    content_hash=norm_data["content_hash"],
-                    url_hash=norm_data.get("url_hash") or "",
-                )
-            )
-            normalized_count += 1
-        except Exception as e:
-            stage("normalize", "item_error", f"raw {raw.id}: {str(e)[:80]}")
-    session.commit()
-    stage("normalize", "ok", f"{normalized_count} items")
 
     stage("dedupe", "starting")
-    from newsroom.processing.dedupe import Deduplicator
-
-    deduper = Deduplicator()
-    non_dup = session.query(NormalizedItem).filter(NormalizedItem.is_duplicate.is_(False)).all()
-    if non_dup:
-        stats = deduper.deduplicate_batch(session, [i.id for i in non_dup])
-        session.commit()
-        stage("dedupe", "ok", str(stats))
-    else:
-        stage("dedupe", "ok", "no items")
+    stage("dedupe", "ok", f"{processed.duplicates} duplicates in claimed batch")
 
     stage("cluster", "starting")
-    from newsroom.processing.cluster import Clusterer
-
-    clusterer = Clusterer()
-    non_dup = session.query(NormalizedItem).filter(NormalizedItem.is_duplicate.is_(False)).all()
-    if non_dup:
-        cstats = clusterer.cluster_items(session, [i.id for i in non_dup])
-        session.commit()
-        stage("cluster", "ok", str(cstats))
-    else:
-        stage("cluster", "ok", "no items")
+    stage("cluster", "ok", f"{processed.clustered} items clustered in claimed batch")
 
     stage("report", "starting")
+    from newsroom.config import settings as runtime_settings
     from newsroom.editorial.selection import select_stories_for_report
 
     report_mode = result["report_mode"]
-    selection = select_stories_for_report(session, report_mode)
+    # A Telegram digest is intentionally compact: stay within one validated
+    # editorial call so every selected story receives reader-facing AI copy.
+    selection = select_stories_for_report(
+        session,
+        report_mode,
+        max_stories=runtime_settings.editorial_max_stories_per_call,
+    )
     story_ids = selection.story_ids
 
     stage("evidence", "starting")
@@ -372,7 +338,7 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
         editorial_attempt.model,
     )
 
-    cache_key = compute_cache_key(
+    cache_key: str | None = compute_cache_key(
         report_mode,
         editorial_attempt.evidence_set_hash,
         editorial_attempt.prompt_version,
@@ -382,6 +348,10 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
         max_input_tokens=_settings.editorial_max_input_tokens,
         max_output_tokens=_settings.editorial_max_output_tokens,
     )
+    # Failed/terminal-fallback attempts are audit events, not reusable cache
+    # artifacts. PostgreSQL therefore permits subsequent bounded retries.
+    if editorial_attempt.fallback_used:
+        cache_key = None
     from newsroom.storage.models import EditorialAttempt as EditorialAttemptModel
 
     existing_attempt = (

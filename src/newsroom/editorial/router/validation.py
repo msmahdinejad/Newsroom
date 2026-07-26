@@ -392,10 +392,7 @@ class ModelValidator:
         response: EditorialResponse,
     ) -> tuple[str, ...]:
         output = response.output
-        persian = " ".join(
-            f"{story.headline_fa} {story.summary_fa} {story.why_it_matters_fa}"
-            for story in output.stories
-        )
+        persian = " ".join(f"{story.headline_fa} {story.summary_fa}" for story in output.stories)
         if not PERSIAN_RE.search(persian):
             raise RouteFailure(
                 RouteFailureCategory.MALFORMED_SCHEMA,

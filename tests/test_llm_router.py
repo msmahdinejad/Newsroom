@@ -7,6 +7,7 @@ No test performs network I/O or uses a real provider access value.
 
 from __future__ import annotations
 
+import json
 import threading
 from collections import deque
 from pathlib import Path
@@ -619,6 +620,57 @@ def test_malformed_schema_repairs_through_another_validated_route():
     assert [call[2] for call in transport.calls] == ["map", "repair"]
 
 
+def test_malformed_schema_repair_uses_the_next_provider_not_another_gemini_model():
+    clock = ManualClock()
+    transport = FakeTransport(
+        {
+            ("gemini", "map-model"): [
+                RouteFailure(RouteFailureCategory.MALFORMED_SCHEMA, repair_payload="bounded malformed output")
+            ],
+            ("mistral", "repair-model"): [_response("mistral", "repair-model")],
+        }
+    )
+    router = _router(
+        (
+            _provider("gemini", models=("map-model", "other-gemini")),
+            _provider("mistral", models=("repair-model",)),
+        ),
+        transport,
+        clock,
+    )
+
+    result = router.route(_request())
+
+    assert result.response.provider == "mistral"
+    assert [(call[0], call[1]) for call in transport.calls] == [
+        ("gemini", "map-model"),
+        ("mistral", "repair-model"),
+    ]
+
+
+def test_orchestrator_can_request_one_cross_provider_schema_repair():
+    clock = ManualClock()
+    transport = FakeTransport(
+        {
+            ("mistral", "repair-model"): [_response("mistral", "repair-model")],
+        }
+    )
+    router = _router(
+        (
+            _provider("gemini", models=("map-model",)),
+            _provider("mistral", models=("repair-model",)),
+        ),
+        transport,
+        clock,
+    )
+
+    repaired = router.repair(_request(), _response("gemini", "map-model"))
+
+    assert repaired is not None
+    assert repaired.response.provider == "mistral"
+    assert [call[2] for call in transport.calls] == ["repair"]
+
+
 def test_policy_rejection_tries_only_one_compatible_alternate():
     clock = ManualClock()
     fallback = FakeFallback()
@@ -1099,6 +1151,36 @@ def test_router_overwrites_untrusted_provider_identity_with_actual_route():
         "gemini",
         "model",
     )
+
+
+def test_transport_safely_coerces_an_unknown_optional_classification():
+    from newsroom.editorial.router import HttpEditorialTransport
+
+    payload = _response("mistral", "model").output.model_dump(mode="json")
+    payload["stories"][0]["classification"] = "provider_specific_label"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": json.dumps(payload)}, "finish_reason": "stop"}],
+                "usage": {},
+            },
+        )
+
+    class MockClient(httpx.Client):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(*args, **kwargs)
+
+    response = HttpEditorialTransport((_provider("mistral"),), client_factory=MockClient).execute(
+        ModelRoute.validated("mistral", "model"),
+        "unit-test-key",
+        _request(),
+        RouterRequestContext(),
+    )
+
+    assert response.output.stories[0].classification.value == "unverified"
 
 
 def test_production_transport_parses_retry_after_without_exposing_body():

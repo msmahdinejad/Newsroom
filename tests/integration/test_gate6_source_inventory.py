@@ -53,6 +53,18 @@ def db(engine):
             "SELECT id FROM sources WHERE workbook_id IS NOT NULL)))"
         )
     )
+    # ``normalized_items.duplicate_of_id`` is self-referential. Clear every
+    # inbound reference before deleting the workbook-scoped rows so cleanup is
+    # valid even when the processing worker created duplicate clusters.
+    session.execute(
+        text(
+            "UPDATE normalized_items SET duplicate_of_id = NULL "
+            "WHERE duplicate_of_id IN ("
+            "SELECT id FROM normalized_items WHERE raw_item_id IN ("
+            "SELECT id FROM raw_items WHERE source_id IN ("
+            "SELECT id FROM sources WHERE workbook_id IS NOT NULL)))"
+        )
+    )
     session.execute(
         text(
             "DELETE FROM normalized_items WHERE raw_item_id IN ("

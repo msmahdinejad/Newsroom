@@ -30,6 +30,9 @@ from newsroom.editorial.schema import (
     EditorialOutput,
 )
 
+_PERSIAN_RE = re.compile(r"[\u0600-\u06ff]")
+_URL_RE = re.compile(r"(?:https?://|www\.)", re.IGNORECASE)
+
 
 @dataclass
 class ValidationResult:
@@ -107,6 +110,11 @@ def parse_and_validate(
             result.valid = False
             result.issues.append(f"unknown story ID: {sid}")
             return (None, result)
+    missing_story_ids = valid_story_ids - seen_ids
+    if missing_story_ids:
+        result.valid = False
+        result.issues.append(f"missing story IDs: {sorted(missing_story_ids)}")
+        return (None, result)
 
     # Step 5: Check output size (approximate token count via char/4)
     approx_tokens = len(raw_content) // 4
@@ -125,6 +133,12 @@ def parse_and_validate(
 
     for story in stories:
         sid = story.get("story_id", "?")
+        copy_issue = _reader_facing_copy_issue(story)
+        if copy_issue:
+            result.valid = False
+            result.issues.append(f"story {sid}: reader-facing copy {copy_issue}")
+            return (None, result)
+
         cls = story.get("classification", "")
         if cls and cls not in valid_classifications:
             result.valid = False
@@ -178,6 +192,23 @@ def parse_and_validate(
     if not result.valid:
         return (None, result)
     return (output, result)
+
+
+def _reader_facing_copy_issue(story: dict) -> str | None:
+    """Reject source-shaped output before it can reach the public renderer."""
+    headline = story.get("headline_fa")
+    summary = story.get("summary_fa")
+    if not isinstance(headline, str) or not headline.strip():
+        return "has an empty headline"
+    if not isinstance(summary, str) or not summary.strip():
+        return "has an empty summary"
+    if len(headline) > 180 or len(summary) > 600:
+        return "exceeds the compact-copy limit"
+    if _URL_RE.search(headline):
+        return "has a URL-shaped headline"
+    if not _PERSIAN_RE.search(headline) or not _PERSIAN_RE.search(summary):
+        return "is not Persian"
+    return None
 
 
 def create_validation_error(

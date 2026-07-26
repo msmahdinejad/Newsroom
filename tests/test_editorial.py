@@ -353,6 +353,19 @@ def test_unknown_story_id_rejected():
     assert "unknown story ID" in result.issues[0]
 
 
+def test_reader_facing_copy_must_be_persian_and_not_a_url():
+    """A raw URL or English source title cannot reach a Persian Telegram report."""
+    evidence = make_evidence_set([1])
+    output = make_output(evidence).model_dump(mode="json")
+    output["stories"][0]["headline_fa"] = "https://example.test/category/ai"
+    output["stories"][0]["summary_fa"] = "English source text without a Persian summary."
+
+    parsed, result = parse_and_validate(json.dumps(output), evidence)
+
+    assert parsed is None
+    assert any("reader-facing copy" in issue for issue in result.issues)
+
+
 # ── 7. Duplicate story entries ─────────────────────────────────────
 
 
@@ -661,6 +674,33 @@ def test_provider_outage_triggers_fallback():
 # ── 23. Safety refusal ─────────────────────────────────────────────
 
 
+def test_grounding_scrub_keeps_nonempty_ai_reader_copy():
+    """Unsafe internal claims do not discard a complete grounded AI digest."""
+    evidence = make_evidence_set([1])
+    output = make_output(evidence, claim_text_override="ادعای تأییدنشده با عدد ۹۹۹۹")
+    fake_response = EditorialResponse(output=output, model="fake-model", provider="fake")
+    fake_provider = FakeProvider(name="fake", response=fake_response)
+
+    with (
+        patch.multiple(
+            "newsroom.config.settings",
+            editorial_enabled=True,
+            editorial_fallback_enabled=True,
+        ),
+        patch("newsroom.editorial.orchestrator.select_provider", return_value=fake_provider),
+        patch("newsroom.editorial.orchestrator.build_evidence_set", return_value=evidence),
+    ):
+        _, attempt = generate_editorial(MagicMock(), [1], "scheduled", cache_check=False)
+
+    assert attempt.provider == "fake"
+    assert attempt.fallback_used is False
+    assert attempt.status == "ok"
+    assert attempt.grounding_result != "ok"
+    assert attempt.output is not None
+    assert attempt.output.stories
+    assert attempt.output.stories[0].key_claims == []
+
+
 def test_router_internal_fallback_is_recorded_truthfully():
     """A router response that used deterministic fallback is never labeled AI."""
     evidence = make_evidence_set([1])
@@ -872,6 +912,104 @@ def test_report_content_telegram_safe():
     # Each chunk should be within Telegram limits
     for chunk in chunks:
         assert len(chunk) <= 4096
+
+
+def test_telegram_report_renders_titles_summaries_and_links_without_legacy_fields():
+    """Every story gets its LLM summary; internal editorial fields stay internal."""
+    from newsroom.editorial.orchestrator import _render_persian_report
+
+    output = make_output(make_evidence_set([1, 2, 3]))
+    for story, priority in zip(output.stories, ("high", "medium", "low"), strict=True):
+        story.suggested_priority = priority
+        story.summary_fa = f"خلاصهٔ فارسی خبر {story.story_id}"
+
+    content = _render_persian_report(output, "scheduled")
+
+    for story in output.stories:
+        assert story.headline_fa in content
+        assert story.summary_fa in content
+        assert story.source_links[0] in content
+
+    for legacy_label in (
+        "وضعیت:",
+        "اطمینان:",
+        "چه اتفاقی افتاد:",
+        "چرا مهم است:",
+        "کاربرد عملی:",
+        "ریزخبرها",
+    ):
+        assert legacy_label not in content
+
+
+def test_prompt_requests_only_reader_facing_persian_copy():
+    """The model contract asks for a Persian title and concise summary, not boilerplate."""
+    system_prompt = build_prompt(make_evidence_set())[0]["content"]
+
+    assert '"headline_fa"' in system_prompt
+    assert '"summary_fa"' in system_prompt
+    assert '"why_it_matters_fa"' not in system_prompt
+    assert '"practical_impact_fa"' not in system_prompt
+    assert "چرا مهم است" not in system_prompt
+    assert "کاربرد عملی" not in system_prompt
+
+
+def test_prompt_requires_copy_for_each_selected_story_id():
+    messages = build_prompt(make_evidence_set([1, 2, 3]))
+
+    assert "exactly 3 stories" in messages[1]["content"]
+    assert "[1, 2, 3]" in messages[1]["content"]
+
+
+def test_reduction_keeps_a_bounded_telegram_presence():
+    from newsroom.editorial.hierarchy import _preserve_telegram_coverage
+
+    evidence = make_evidence_set([1, 2, 3, 4])
+    for story in evidence.stories[2:]:
+        story.sources[0].source_type = "telegram"
+    mapped = make_output(evidence)
+    reduced = mapped.model_copy(update={"stories": mapped.stories[:2]})
+
+    repaired = _preserve_telegram_coverage(
+        reduced,
+        mapped.stories,
+        evidence,
+        max_stories=4,
+    )
+
+    assert {3, 4}.issubset(repaired.story_ids())
+
+
+def test_structured_output_cannot_omit_an_selected_story():
+    evidence = make_evidence_set([1, 2])
+    raw = make_output(evidence).model_dump()
+    raw["stories"] = raw["stories"][:1]
+
+    parsed, result = parse_and_validate(json.dumps(raw), evidence)
+
+    assert parsed is None
+    assert any("missing story IDs" in issue for issue in result.issues)
+
+
+def test_semantic_schema_failure_can_use_router_repair():
+    from types import SimpleNamespace
+
+    from newsroom.editorial.orchestrator import _repair_semantic_schema
+
+    evidence = make_evidence_set()
+    original = FakeProvider().generate(EditorialRequest(evidence=evidence))
+    repaired = FakeProvider().generate(EditorialRequest(evidence=evidence))
+    repaired.provider = "mistral"
+
+    class RepairingRouter(FakeProvider):
+        def repair(self, request, response):
+            assert request.evidence is evidence
+            assert response is original
+            return SimpleNamespace(response=repaired)
+
+    result = _repair_semantic_schema(RepairingRouter(), EditorialRequest(evidence=evidence), original)
+
+    assert result is repaired
+    assert result.provider == "mistral"
 
 
 # ── 33. Evidence set hash determinism ─────────────────────────────

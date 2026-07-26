@@ -4,7 +4,7 @@ import argparse
 
 from newsroom.logging import get_logger, setup_logging
 from newsroom.storage.database import get_db
-from newsroom.storage.models import NormalizedItem, RawItem
+from newsroom.storage.models import NormalizedItem
 
 logger = get_logger(__name__)
 
@@ -42,44 +42,11 @@ def _normalize() -> int:
     """Normalize raw items."""
     logger.info("Starting normalization")
     try:
-        from newsroom.processing.normalize import Normalizer
+        from newsroom.pipeline.processing_worker import process_pending_items
 
-        normalizer = Normalizer()
-        with get_db() as db:
-            raw_items = (
-                db.query(RawItem)
-                .outerjoin(NormalizedItem, RawItem.id == NormalizedItem.raw_item_id)
-                .filter(NormalizedItem.id == None)  # noqa: E711
-                .limit(500)
-                .all()
-            )
-
-            if not raw_items:
-                print("No raw items to normalize")
-                return 0
-
-            count = 0
-            for raw in raw_items:
-                try:
-                    norm_data = normalizer.normalize(raw.raw_data)
-                    norm = NormalizedItem(
-                        raw_item_id=raw.id,
-                        title=norm_data["title"][:500],
-                        description=norm_data.get("description", "")[:2000],
-                        source_url=norm_data["source_url"],
-                        canonical_url=norm_data.get("canonical_url", ""),
-                        published_at=norm_data.get("published_at"),
-                        language=norm_data.get("language"),
-                        content_hash=norm_data["content_hash"],
-                        url_hash=norm_data.get("url_hash", ""),
-                    )
-                    db.add(norm)
-                    count += 1
-                except Exception as e:
-                    logger.error(f"Normalize raw {raw.id}: {e}")
-
-            print(f"OK: Normalized {count} items")
-            return 0
+        result = process_pending_items()
+        print(f"OK: Normalized {result.normalized} of {result.raw_seen} claimed items")
+        return 0
     except Exception as e:
         logger.error(f"Normalization failed: {e}")
         print(f"FAIL: {e}")

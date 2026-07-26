@@ -111,19 +111,15 @@ services:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
+      PROCESSING_BATCH_SIZE: ${PROCESSING_BATCH_SIZE:-500}
+      PROCESSING_LOOP_SECONDS: ${PROCESSING_LOOP_SECONDS:-60}
+      PROCESSING_PRIORITY_SOURCE_TYPE: ${PROCESSING_PRIORITY_SOURCE_TYPE:-telegram}
     command:
       - uv
       - run
       - python
-      - -c
-      - |
-        import time
-        from argparse import Namespace
-        from newsroom.cli.commands.process import process_command
-        process_command(Namespace(process_command='all'))
-        open('/tmp/newsroom_report_worker_done','w').write('ok')
-        while True:
-            time.sleep(3600)
+      - -m
+      - newsroom.pipeline.processing_worker
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "uv run python -m newsroom.service_status report_worker"]
@@ -155,12 +151,13 @@ services:
       EDITORIAL_TIMEOUT_SECONDS: ${EDITORIAL_TIMEOUT_SECONDS:-60}
       EDITORIAL_MAX_RETRIES: ${EDITORIAL_MAX_RETRIES:-2}
       EDITORIAL_MAX_INPUT_TOKENS: ${EDITORIAL_MAX_INPUT_TOKENS:-12000}
-      EDITORIAL_MAX_OUTPUT_TOKENS: ${EDITORIAL_MAX_OUTPUT_TOKENS:-4000}
+      EDITORIAL_MAX_OUTPUT_TOKENS: ${EDITORIAL_MAX_OUTPUT_TOKENS:-8000}
       EDITORIAL_TEMPERATURE: ${EDITORIAL_TEMPERATURE:-0.3}
       EDITORIAL_FALLBACK_ENABLED: ${EDITORIAL_FALLBACK_ENABLED:-true}
       EDITORIAL_MAX_STORIES_PER_CALL: ${EDITORIAL_MAX_STORIES_PER_CALL:-15}
       EDITORIAL_MAX_EVIDENCE_PER_STORY: ${EDITORIAL_MAX_EVIDENCE_PER_STORY:-10}
       EDITORIAL_MAX_EXCERPT_LENGTH: ${EDITORIAL_MAX_EXCERPT_LENGTH:-300}
+      EDITORIAL_MIN_TELEGRAM_STORIES: ${EDITORIAL_MIN_TELEGRAM_STORIES:-2}
       EDITORIAL_CONCURRENCY_LIMIT: ${EDITORIAL_CONCURRENCY_LIMIT:-1}
       EDITORIAL_SCHEDULED_RUN_BUDGET: ${EDITORIAL_SCHEDULED_RUN_BUDGET:-1}
       EDITORIAL_MANUAL_RUN_BUDGET: ${EDITORIAL_MANUAL_RUN_BUDGET:-3}

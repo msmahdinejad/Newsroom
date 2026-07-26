@@ -141,6 +141,12 @@ def test_telegram_http_proxy_is_supported() -> None:
     assert kwargs["proxy"][1:4] == ("proxy.test", 8080, True)
 
 
+def test_telegram_proxy_runtime_dependency_is_declared() -> None:
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert "python-socks" in pyproject
+
+
 def test_mtproxy_requires_explicit_connection_mode() -> None:
     from newsroom.sources import telegram_collector
 

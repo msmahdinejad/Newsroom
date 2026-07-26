@@ -14,7 +14,6 @@ RUN uv sync --frozen --no-install-project --extra dev --extra telegram
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY tests/ ./tests/
-COPY legacy/ ./legacy/
 COPY alembic.ini ./
 RUN uv sync --frozen --extra dev --extra telegram --extra external-sources
 

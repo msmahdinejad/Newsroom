@@ -162,6 +162,32 @@ class MultiProviderRouter(EditorialProvider):
         response.fallback_used = True
         return RoutedEditorialResponse(response=response, fallback_used=True)
 
+    def repair(
+        self,
+        request: EditorialRequest,
+        failed_response: EditorialResponse,
+    ) -> RoutedEditorialResponse | None:
+        """Make one bounded schema-repair request through another provider."""
+        failed_provider = failed_response.provider
+        # A semantic validation failure needs a genuinely independent retry;
+        # do not ask another model on the same upstream to repeat its mistake.
+        excluded = {
+            (route.provider, route.model)
+            for route in self.routes
+            if route.provider == failed_provider
+        }
+        context = RouterRequestContext(
+            job_id=request.job_id or None,
+            shard_id=request.shard_id or None,
+            stage="repair",
+            repair_payload=failed_response.output.model_dump_json(),
+        )
+        repaired = self._one_alternate(request, context, exclude=excluded)
+        if repaired is None:
+            return None
+        repaired.fallback_used = False
+        return RoutedEditorialResponse(response=repaired, repaired=True)
+
     def validate_models(self) -> list[ModelValidationResult]:
         validator = ModelValidator(
             transport=self.transport,
@@ -366,10 +392,18 @@ class MultiProviderRouter(EditorialProvider):
                                 stop_model = True
                                 break
                             if category is RouteFailureCategory.MALFORMED_SCHEMA:
+                                # Schema repair is an independent quality
+                                # check, so use the next provider rather than
+                                # another model that shares the same behavior.
+                                repair_exclude = {
+                                    (candidate.provider, candidate.model)
+                                    for candidate in self.routes
+                                    if candidate.provider == route.provider
+                                }
                                 repaired = self._one_alternate(
                                     request,
                                     replace(context, stage="repair", repair_payload=failure.repair_payload),
-                                    exclude={(route.provider, route.model)},
+                                    exclude=repair_exclude,
                                 )
                                 if repaired is not None:
                                     return RoutedEditorialResponse(response=repaired, repaired=True)

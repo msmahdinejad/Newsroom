@@ -20,12 +20,41 @@ from newsroom.editorial.router.types import (
     RouteFailureCategory,
     RouterRequestContext,
 )
-from newsroom.editorial.schema import EditorialOutput, EditorialRequest, EditorialResponse
+from newsroom.editorial.schema import (
+    EditorialClassification,
+    EditorialOutput,
+    EditorialRequest,
+    EditorialResponse,
+)
 
 OMIT_SAMPLING_PARAMETERS = {
     ("gemini", "gemini-3.6-flash"),
     ("gemini", "gemini-3.5-flash-lite"),
 }
+
+_EDITORIAL_CLASSIFICATIONS = frozenset(item.value for item in EditorialClassification)
+
+
+def _coerce_safe_schema_defaults(decoded: Any) -> Any:
+    """Normalize provider-only labels without changing evidence or reader copy.
+
+    Some OpenAI-compatible providers emit a harmless classification synonym even
+    when their JSON is otherwise valid.  Classification is optional display
+    metadata, so treat an unknown value as the conservative ``unverified``
+    state and retain the provider's title, summary, references and evidence.
+    """
+    if not isinstance(decoded, dict):
+        return decoded
+    stories = decoded.get("stories")
+    if not isinstance(stories, list):
+        return decoded
+    for story in stories:
+        if not isinstance(story, dict):
+            continue
+        classification = story.get("classification")
+        if classification is not None and classification not in _EDITORIAL_CLASSIFICATIONS:
+            story["classification"] = EditorialClassification.UNVERIFIED.value
+    return decoded
 
 
 def build_chat_payload(route: ModelRoute, request: EditorialRequest) -> dict[str, Any]:
@@ -95,8 +124,9 @@ class HttpEditorialTransport:
                 {
                     "role": "user",
                     "content": (
-                        "Repair the following bounded response into the required JSON schema. "
-                        "Do not add facts or references.\n<<<REPAIR_BEGIN>>>\n"
+                        "Regenerate a complete response for EVERY evidence story into the required JSON schema. "
+                        "Do not preserve omissions; use only facts and references from the supplied evidence.\n"
+                        "<<<REPAIR_BEGIN>>>\n"
                         f"{context.repair_payload[:12000]}\n<<<REPAIR_END>>>"
                     ),
                 },
@@ -134,7 +164,7 @@ class HttpEditorialTransport:
         if finish_reason in {"length", "max_tokens"}:
             raise RouteFailure(RouteFailureCategory.MALFORMED_SCHEMA, "bounded response was incomplete", repair_payload=str(content)[:12000])
         try:
-            decoded = json.loads(content) if isinstance(content, str) else content
+            decoded = _coerce_safe_schema_defaults(json.loads(content) if isinstance(content, str) else content)
             decoded.setdefault("metadata", {})
             decoded["metadata"].update(
                 {

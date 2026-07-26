@@ -1,43 +1,32 @@
-"""Report generation CLI command."""
+"""Report generation CLI command through the production editorial path."""
 
 import argparse
+import os
 
 from newsroom.logging import get_logger, setup_logging
-from newsroom.storage.database import get_db
-from newsroom.storage.models import Story
 
 logger = get_logger(__name__)
 
 
 def report_command(args: argparse.Namespace) -> int:
-    """Generate a Persian report from recent stories."""
+    """Generate and deliver one manual report with the configured AI router."""
+    del args
     setup_logging()
     logger.info("Generating report")
+    from newsroom.pipeline.runner import run_pipeline
 
-    from newsroom.editorial.persian import PersianEditorial
-    from newsroom.processing.evidence import EvidenceBuilder
+    previous_mode = os.environ.get("NEWSROOM_REPORT_MODE")
+    os.environ["NEWSROOM_REPORT_MODE"] = "manual"
+    try:
+        result = run_pipeline(blocking_lock=True)
+    finally:
+        if previous_mode is None:
+            os.environ.pop("NEWSROOM_REPORT_MODE", None)
+        else:
+            os.environ["NEWSROOM_REPORT_MODE"] = previous_mode
 
-    with get_db() as db:
-        stories = (
-            db.query(Story)
-            .order_by(Story.importance_score.desc(), Story.created_at.desc())
-            .limit(30)
-            .all()
-        )
-
-        if not stories:
-            print("No stories available")
-            return 0
-
-        story_ids = [s.id for s in stories]
-
-        # Build evidence
-        ev_builder = EvidenceBuilder()
-        ev_builder.build_for_stories(db, story_ids)
-
-        # Generate report
-        editorial = PersianEditorial()
-        report_id = editorial.generate_report(db, story_ids, report_mode="manual")
-
-        print(f"OK: Created report {report_id} with {len(story_ids)} stories")
+    if result["status"] == "ok":
+        print(f"OK: report {result['report_id']} delivery {result['delivery_id']}")
         return 0
+    print(f"FAIL: {result.get('error') or result['status']}")
+    return int(result.get("exit_code", 1) or 1)

@@ -6,7 +6,7 @@ are in tests/integration/test_gate4_report_new.py.
 
 from __future__ import annotations
 
-from newsroom.editorial.selection import detect_material_change
+from newsroom.editorial.selection import detect_material_change, reserve_telegram_story_ids
 from newsroom.storage.models import Story
 
 
@@ -52,3 +52,18 @@ class TestDetectMaterialChange:
         old = {"source_count": 1, "facts": ["the model was released"]}
         new = {"source_count": 1, "facts": ["the model was released"]}  # same
         assert detect_material_change(story, new, old) is False
+
+
+def test_selection_reserves_space_for_recent_telegram_stories() -> None:
+    selected = [10, 11, 12, 13]
+    candidates = [10, 11, 12, 13, 20, 21]
+
+    result = reserve_telegram_story_ids(
+        selected,
+        candidates,
+        telegram_story_ids={20, 21},
+        max_stories=4,
+        minimum_telegram_stories=2,
+    )
+
+    assert result == [10, 11, 20, 21]

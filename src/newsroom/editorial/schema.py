@@ -15,10 +15,10 @@ from pydantic import BaseModel, Field, field_validator
 
 # ── Version constants ─────────────────────────────────────────────
 
-SYSTEM_PROMPT_VERSION = "g4sp-v1"
+SYSTEM_PROMPT_VERSION = "g5sp-v2"
 EVIDENCE_SCHEMA_VERSION = "g4ev-v1"
-OUTPUT_SCHEMA_VERSION = "g4out-v1"
-TERMINOLOGY_POLICY_VERSION = "g4tp-v1"
+OUTPUT_SCHEMA_VERSION = "g5out-v2"
+TERMINOLOGY_POLICY_VERSION = "g5tp-v2"
 GROUNDING_VALIDATOR_VERSION = "g4gv-v1"
 EDITORIAL_PROVIDER_VERSION = "g4pv-v1"
 
