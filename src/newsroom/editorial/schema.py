@@ -15,9 +15,9 @@ from pydantic import BaseModel, Field, field_validator
 
 # ── Version constants ─────────────────────────────────────────────
 
-SYSTEM_PROMPT_VERSION = "g7sp-v3"
-EVIDENCE_SCHEMA_VERSION = "g4ev-v1"
-OUTPUT_SCHEMA_VERSION = "g5out-v2"
+SYSTEM_PROMPT_VERSION = "g7sp-v4"
+EVIDENCE_SCHEMA_VERSION = "g7ev-v2"
+OUTPUT_SCHEMA_VERSION = "g7out-v3"
 TERMINOLOGY_POLICY_VERSION = "g5tp-v2"
 GROUNDING_VALIDATOR_VERSION = "g4gv-v1"
 EDITORIAL_PROVIDER_VERSION = "g4pv-v1"
@@ -68,6 +68,7 @@ class EditorialEvidenceSet(BaseModel):
     schema_version: str = EVIDENCE_SCHEMA_VERSION
     prompt_version: str = SYSTEM_PROMPT_VERSION
     report_mode: str = "scheduled"
+    report_language: str = "fa"
     stories: list[EvidenceStoryPacket] = Field(default_factory=list)
 
     def evidence_hash(self) -> str:
@@ -174,6 +175,7 @@ class ReportMetadata(BaseModel):
 
     schema_version: str = OUTPUT_SCHEMA_VERSION
     report_mode: str = "scheduled"
+    report_language: str = "fa"
     generated_at: str = ""
     model_name: str = ""
     provider: str = "deterministic"

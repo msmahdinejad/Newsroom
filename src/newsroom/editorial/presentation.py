@@ -14,6 +14,17 @@ from newsroom.editorial.report_profiles import resolve_report_profile
 from newsroom.editorial.schema import EditorialOutput, StoryEditorialResult
 
 _SEPARATOR = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+_EN_TITLES = {
+    "scheduled": "Programming & Developer Tools",
+    "manual": "Programming & Developer Tools",
+    "manual_new": "New Programming Stories",
+    "manual_comprehensive": "Comprehensive Programming Report",
+    "platform_telegram": "Programming from Telegram",
+    "platform_x": "Programming from X",
+    "platform_web": "Programming from Websites",
+    "platform_github": "GitHub Projects & Releases",
+    "platform_reddit": "Programming from Reddit",
+}
 
 
 def render_persian_report(
@@ -24,6 +35,7 @@ def render_persian_report(
 ) -> str:
     """Render an intentionally compact reader-facing Persian Telegram report."""
     profile = resolve_report_profile(report_mode)
+    language = output.metadata.report_language or "fa"
     rendered_at = now or datetime.now(UTC)
     high = [story for story in output.stories if story.suggested_priority == "high"]
     other = [story for story in output.stories if story.suggested_priority != "high"]
@@ -32,18 +44,21 @@ def render_persian_report(
         high = other[:promoted_count]
         other = other[promoted_count:]
 
+    title = _EN_TITLES.get(report_mode, "Programming News") if language == "en" else profile.title_fa
+    important_label = "🔥 Top stories" if language == "en" else "🔥 خبرهای مهم"
+    other_label = "📰 More stories" if language == "en" else "📰 خبرهای دیگر"
     lines = [
-        f"📰 {profile.title_fa}",
+        f"📰 {title}",
         f"📅 {rendered_at.strftime('%Y-%m-%d')}",
         _SEPARATOR,
     ]
     if high:
-        lines.extend(("🔥 خبرهای مهم", _SEPARATOR))
+        lines.extend((important_label, _SEPARATOR))
         lines.extend(_render_story(story) for story in high)
     if other:
         if high:
             lines.append(_SEPARATOR)
-        lines.extend(("📰 خبرهای دیگر", _SEPARATOR))
+        lines.extend((other_label, _SEPARATOR))
         lines.extend(_render_story(story) for story in other)
     return "\n\n".join(lines)
 

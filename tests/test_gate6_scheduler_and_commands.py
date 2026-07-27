@@ -40,13 +40,30 @@ def test_scheduled_specs_count_and_hours():
     assert [s[0] for s in specs] == list(JOB_IDS)
 
 
+def test_scheduled_specs_support_owner_minutes_and_disabled_schedule():
+    specs = scheduled_specs(("01:15", "13:45"))
+    assert [(item[0], item[1], item[2], item[3]) for item in specs] == [
+        ("report_0115", 1, 15, "01:15"),
+        ("report_1345", 13, 45, "13:45"),
+    ]
+    assert scheduled_specs(()) == []
+
+
 def test_help_text_reflects_six_hour_schedule():
     assert "۱۸:۰۰" in HELP_TEXT
     assert "۰۹:۰۰" not in HELP_TEXT  # old schedule removed
 
 
 def test_help_text_mentions_new_commands():
-    for cmd in ("/status", "/sources", "/collect", "/schedule"):
+    for cmd in (
+        "/status",
+        "/sources",
+        "/collect",
+        "/schedule",
+        "/settings language",
+        "/source enable",
+        "/sources import",
+    ):
         assert cmd in HELP_TEXT
 
 
@@ -142,3 +159,32 @@ async def test_dispatch_schedule():
     result = await bot._dispatch_command(123, "/schedule", 999, 1, "message")
     assert result == "ok"
     bot._handle_schedule.assert_called_once_with(123)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_settings_and_source_import():
+    bot = make_bot()
+    bot._handle_settings = AsyncMock(return_value="ok")
+    bot._handle_source_import = AsyncMock(return_value="ok")
+    document = {"file_id": "safe-id", "file_name": "sources.csv"}
+
+    settings_result = await bot._dispatch_command(
+        123,
+        "/settings language en",
+        999,
+        2,
+        "message",
+    )
+    import_result = await bot._dispatch_command(
+        123,
+        "/sources import",
+        999,
+        3,
+        "message",
+        document=document,
+    )
+
+    assert settings_result == "ok"
+    assert import_result == "ok"
+    bot._handle_settings.assert_awaited_once_with(123, "/settings language en")
+    bot._handle_source_import.assert_awaited_once_with(123, document)

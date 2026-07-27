@@ -1,7 +1,10 @@
 """Bot API client tests — error classification, retry, redaction (mocked httpx)."""
 
 
+from unittest.mock import AsyncMock
+
 import httpx
+import pytest
 
 from newsroom.delivery.client import (
     PERMANENT_ERRORS,
@@ -128,3 +131,29 @@ def test_classify_unknown_exception():
 
 
 client = TelegramBotClient(token="fake", max_retries=0)
+
+
+@pytest.mark.asyncio
+async def test_download_file_is_bounded_and_does_not_expose_token():
+    seen_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        return httpx.Response(200, content=b"name,type,url\n", request=request)
+
+    client = TelegramBotClient(token="protected-value", max_retries=0)
+    await client.client.aclose()
+    client.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client.call = AsyncMock(
+        return_value={"ok": True, "result": {"file_path": "documents/sources.csv"}}
+    )
+    try:
+        payload = await client.download_file("safe-file-id", max_bytes=1024)
+    finally:
+        await client.close()
+
+    assert payload == b"name,type,url\n"
+    assert len(seen_urls) == 1
+    # The protected value is necessarily present in the outbound Bot API URL,
+    # but the client never returns or logs that URL.
+    assert "documents/sources.csv" in seen_urls[0]

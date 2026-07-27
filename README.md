@@ -1,8 +1,8 @@
 # Persian AI Newsroom
 
 A production-oriented, local-first newsroom that collects global AI and
-developer news, preserves evidence and source history, creates grounded Persian
-reports, and delivers them to Telegram.
+developer news, preserves evidence and source history, creates grounded
+Persian or English reports, and delivers them to Telegram.
 
 ## معرفی فارسی
 
@@ -27,11 +27,13 @@ fallback. APScheduler creates reports at 00:00, 06:00, 12:00, and 18:00 in
 - Stable source, item, cursor, story, evidence, report, and delivery identities
 - Source-specific retries, cooldowns, failure isolation, and durable health
 - Native bounded collectors plus an audited, revision-pinned Agent-Reach layer
-- Hierarchical Persian editorial generation for large evidence sets
+- Hierarchical, language-selectable editorial generation for large evidence sets
 - Gemini, Mistral, Groq, and NVIDIA routes with key pools, quotas, model
   fallback, provider circuit breakers, and safe persisted attempt metadata
 - Deterministic operation when no editorial provider is available
 - Idempotent scheduled and manual Telegram delivery
+- Owner control plane for report language, source scope, story count, daily
+  schedule, reversible source state, and bounded CSV/XLSX imports
 - Docker Compose production stack with persistent volumes and health checks
 
 ### Supported source platforms
@@ -67,7 +69,7 @@ normalize --> deduplicate --> cluster --> rank --> evidence packets
                                     (deterministic fallback)
                                                    |
                                                    v
-                                Persian report --> Telegram delivery
+                              localized report --> Telegram delivery
 ```
 
 PostgreSQL is the durable coordination boundary. Separate workers own native
@@ -160,11 +162,37 @@ Telegram ingestion and Telegram delivery use separate identities.
    `TELEGRAM_AUTHORIZED_USER_IDS` in `.env`.
 3. Set `TELEGRAM_BOT_ENABLED=true`.
 
-The owner-restricted bot supports `/status`, `/latest`, `/report`,
+The owner-restricted bot supports `/start`, `/help`, `/status`, `/latest`, `/report`,
 `/report new`, `/report comprehensive`, and programming-only platform
 digests through `/report telegram`, `/report x`, `/report web`,
 `/report github`, and `/report reddit`. Operational commands include
 `/collect`, `/sources`, and `/schedule`.
+
+Runtime preferences are stored safely in PostgreSQL and survive restarts:
+
+```text
+/settings
+/settings language fa|en
+/settings count 1..50
+/settings schedule 00:00,06:00,12:00,18:00
+/settings schedule off
+/settings sources all|telegram,x,web,github,reddit,youtube
+```
+
+Manage individual sources without deleting collected history:
+
+```text
+/sources list [type] [page]
+/source enable <id>
+/source disable <id>
+/source delete <id> confirm
+```
+
+For a bounded bulk import, upload a UTF-8 CSV or XLSX document to the bot with
+the caption `/sources import`. The first sheet/header row uses
+`name,type,url,language,category,trust_class,enabled`. Imports are limited to
+5 MiB and 2,000 rows. Rows without an explicit true `enabled` value remain
+inactive for owner review.
 
 ### MTProto ingestion
 
@@ -259,7 +287,9 @@ docker compose restart                      # restart, preserving volumes
 docker compose down                         # stop, preserving volumes
 ```
 
-The production schedule is `00,06,12,18` in `Asia/Tehran`. A failed generation
+The initial production schedule is `00:00,06:00,12:00,18:00` in
+`Asia/Tehran`; the owner may change up to 12 daily times through the bot.
+The scheduler applies changes without a service restart. A failed generation
 or partial delivery does not advance the scheduled delivery boundary.
 
 ## Database migrations

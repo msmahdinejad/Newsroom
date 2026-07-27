@@ -121,6 +121,7 @@ def generate_editorial(
     *,
     cache_check: bool = True,
     job_id: str | None = None,
+    report_language: str = "fa",
 ) -> tuple[str, EditorialAttempt]:
     """Generate an editorial report from persisted stories.
 
@@ -134,7 +135,12 @@ def generate_editorial(
     attempt.started_at = datetime.now(UTC).isoformat()
 
     # 1. Build evidence set
-    evidence = build_evidence_set(db, story_ids, report_mode)
+    evidence = build_evidence_set(
+        db,
+        story_ids,
+        report_mode,
+        report_language=report_language,
+    )
     attempt.evidence_set_hash = evidence.evidence_hash()
     attempt.prompt_version = evidence.prompt_version
     attempt.schema_version = evidence.schema_version
@@ -147,7 +153,7 @@ def generate_editorial(
         attempt.status = "ok"
         attempt.completed_at = datetime.now(UTC).isoformat()
         attempt.latency_ms = int((time.monotonic() - start) * 1000)
-        empty_content = _empty_report(report_mode)
+        empty_content = _empty_report(report_mode, report_language)
         return empty_content, attempt
 
     # 2. Select provider (needed for cache key identity)
@@ -213,6 +219,7 @@ def generate_editorial(
 
     attempt.retry_count = response.retry_count
     attempt.usage = response.usage
+    response.output.metadata.report_language = evidence.report_language
 
     # 4. Validate output (for AI providers; deterministic is already structured)
     output = response.output
@@ -296,7 +303,9 @@ def generate_editorial(
     else:
         attempt.grounding_result = "ok"
 
-    # 6. Render Persian report
+    output.metadata.report_language = evidence.report_language
+
+    # 6. Render localized report
     content = _render_persian_report(output, report_mode)
 
     attempt.output = output
@@ -368,6 +377,15 @@ def _check_cache(
     )
     record = find_cached_attempt(db, cache_key)
     if record and record.output_json:
+        # A terminal deterministic result is useful audit evidence, but it is
+        # never accepted as an AI cache hit. Otherwise one transiently
+        # disabled runtime can poison every later request for the same
+        # evidence even after validated routes recover.
+        if (
+            provider == "validated-editorial-artifact"
+            and str(record.provider or "").strip().lower() == "deterministic"
+        ):
+            return None
         try:
             output = EditorialOutput.model_validate(record.output_json)
             return EditorialResponse(
@@ -391,9 +409,15 @@ def _render_persian_report(output: EditorialOutput, report_mode: str) -> str:
     return render_persian_report(output, report_mode)
 
 
-def _empty_report(report_mode: str) -> str:
+def _empty_report(report_mode: str, report_language: str = "fa") -> str:
     del report_mode
     now = datetime.now(UTC)
+    if report_language == "en":
+        return f"""📰 Programming News
+📅 {now.strftime('%Y-%m-%d')}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No new reportable stories were found in this period."""
     return f"""📰 اخبار فناوری
 📅 {now.strftime('%Y-%m-%d')}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━

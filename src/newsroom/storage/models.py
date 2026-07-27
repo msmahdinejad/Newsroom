@@ -375,6 +375,38 @@ class CommandRequest(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+# ── Owner control plane ──────────────────────────────────────────
+
+class NewsroomControlSettings(Base):
+    """Single-row, non-secret runtime preferences managed by the owner bot."""
+
+    __tablename__ = "newsroom_control_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    report_language: Mapped[str] = mapped_column(String(10), nullable=False, default="fa")
+    report_source_types: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    report_story_count: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
+    schedule_times: Mapped[list] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=lambda: ["00:00", "06:00", "12:00", "18:00"],
+    )
+    schedule_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+    )
+
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_newsroom_control_singleton"),
+        CheckConstraint(
+            "report_story_count BETWEEN 1 AND 50",
+            name="ck_newsroom_control_story_count",
+        ),
+    )
+
+
 # ── Gate 3: Telegram MTProto ingestion state ──────────────────────
 
 class TelegramChannel(Base):

@@ -12,7 +12,7 @@ Uses set-based SQL — no per-story queries, no loading all delivery history.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
@@ -78,9 +78,9 @@ def reserve_telegram_story_ids(
 def _story_material(
     db: Session,
     story_ids: list[int],
-) -> dict[int, list[tuple[str, str, str, str]]]:
+) -> dict[int, list[tuple[str, str, str, str, bool]]]:
     """Load bounded selection metadata in one query."""
-    material: dict[int, list[tuple[str, str, str, str]]] = {
+    material: dict[int, list[tuple[str, str, str, str, bool]]] = {
         story_id: [] for story_id in story_ids
     }
     if not story_ids:
@@ -92,6 +92,7 @@ def _story_material(
             Source.category,
             NormalizedItem.title,
             NormalizedItem.description,
+            Source.enabled,
         )
         .join(NormalizedItem, StoryItem.item_id == NormalizedItem.id)
         .join(RawItem, NormalizedItem.raw_item_id == RawItem.id)
@@ -99,9 +100,15 @@ def _story_material(
         .filter(StoryItem.story_id.in_(story_ids))
         .all()
     )
-    for story_id, source_type, category, title, description in rows:
+    for story_id, source_type, category, title, description, source_enabled in rows:
         material[story_id].append(
-            (source_type, category or "", title or "", description or "")
+            (
+                source_type,
+                category or "",
+                title or "",
+                description or "",
+                bool(source_enabled),
+            )
         )
     return material
 
@@ -124,7 +131,8 @@ def _eligible_story_ids(
         scoped = [
             entry
             for entry in entries
-            if profile.source_types is None or entry[0] in profile.source_types
+            if entry[4]
+            and (profile.source_types is None or entry[0] in profile.source_types)
         ]
         if not scoped:
             continue
@@ -145,7 +153,7 @@ def _eligible_story_ids(
                 title=title,
                 description=description,
             )
-            for source_type, category, title, description in scoped
+            for source_type, category, title, description, _enabled in scoped
         ):
             continue
         eligible.append(story_id)
@@ -161,7 +169,10 @@ def _candidate_query(db: Session, profile: ReportProfile):
             .join(NormalizedItem, StoryItem.item_id == NormalizedItem.id)
             .join(RawItem, NormalizedItem.raw_item_id == RawItem.id)
             .join(Source, RawItem.source_id == Source.id)
-            .filter(Source.type.in_(profile.source_types))
+            .filter(
+                Source.type.in_(profile.source_types),
+                Source.enabled.is_(True),
+            )
             .distinct()
         )
     return query
@@ -192,7 +203,8 @@ def _with_telegram_reserve(
                 title=title,
                 description=description,
             )
-            for source_type, category, title, description in entries
+            for source_type, category, title, description, enabled in entries
+            if enabled
         )
     }
     return reserve_telegram_story_ids(
@@ -295,6 +307,8 @@ def select_stories_for_report(
     db: Session,
     report_mode: str,
     max_stories: int | None = None,
+    *,
+    source_types: tuple[str, ...] | None = None,
 ) -> SelectionResult:
     """Select stories for a report based on the report mode.
 
@@ -309,6 +323,17 @@ def select_stories_for_report(
     Returns a SelectionResult with counts and no_new_items flag.
     """
     profile = resolve_report_profile(report_mode)
+    if source_types is not None:
+        normalized_types = frozenset(source_types)
+        profile = replace(
+            profile,
+            source_types=normalized_types or None,
+            minimum_telegram_stories=(
+                profile.minimum_telegram_stories
+                if "telegram" in normalized_types or not normalized_types
+                else 0
+            ),
+        )
     max_stories = max_stories or profile.max_stories
     delivered_ids = get_delivered_story_ids(db)
     updated_ids = get_delivered_story_versions(db)

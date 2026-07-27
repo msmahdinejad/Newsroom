@@ -211,15 +211,31 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
     stage("cluster", "ok", f"{processed.clustered} items clustered in claimed batch")
 
     stage("report", "starting")
+    from newsroom.control import NewsroomControl
     from newsroom.editorial.report_profiles import resolve_report_profile
     from newsroom.editorial.selection import select_stories_for_report
 
     report_mode = result["report_mode"]
     report_profile = resolve_report_profile(report_mode)
+    control = NewsroomControl(session).settings()
+    uses_owner_defaults = report_mode in {
+        "scheduled",
+        "manual",
+        "manual_new",
+        "manual_comprehensive",
+    }
+    report_story_count = (
+        control.report_story_count if uses_owner_defaults else report_profile.max_stories
+    )
+    selected_source_types = (
+        control.report_source_types if uses_owner_defaults else None
+    )
+    report_language = control.report_language
     selection = select_stories_for_report(
         session,
         report_mode,
-        max_stories=report_profile.max_stories,
+        max_stories=report_story_count,
+        source_types=selected_source_types,
     )
     story_ids = selection.story_ids
 
@@ -248,7 +264,7 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
         # the scheduled cursor — with ZERO editorial provider calls.
         from newsroom.editorial.orchestrator import _empty_report
 
-        notice = _empty_report(report_mode)
+        notice = _empty_report(report_mode, report_language)
         report = Report(
             content_fa=notice,
             story_ids=[],
@@ -281,6 +297,7 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
             story_ids,
             report_mode,
             job_id=result["job_id"],
+            report_language=report_language,
         )
         content = hier_result.content
         editorial_attempt = hier_result.attempt
@@ -297,6 +314,7 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
             story_ids,
             report_mode,
             job_id=result["job_id"],
+            report_language=report_language,
         )
 
     existing_report_id = (

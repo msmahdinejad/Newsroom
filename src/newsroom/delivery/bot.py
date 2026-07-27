@@ -16,8 +16,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from newsroom.config import settings
+from newsroom.control import ControlSnapshot, NewsroomControl
 from newsroom.delivery.access import deny_message, is_authorized
 from newsroom.delivery.client import TelegramBotClient, redact_token
+from newsroom.delivery.i18n import bot_commands, help_text, menu_keyboard
+from newsroom.delivery.i18n import text as localized_text
 from newsroom.delivery.identity import command_request_key, identity_fingerprint
 from newsroom.delivery.telegram import TelegramDelivery
 from newsroom.logging import get_logger, setup_logging
@@ -31,48 +34,15 @@ from newsroom.storage.models import (
 
 logger = get_logger(__name__)
 
-MENU_KEYBOARD: dict[str, Any] = {
-    "inline_keyboard": [
-        [
-            {"text": "گزارش فوری", "callback_data": "report_now"},
-            {"text": "خبرهای جدید", "callback_data": "report_new"},
-        ],
-        [
-            {"text": "فقط تلگرام", "callback_data": "report_telegram"},
-            {"text": "فقط X", "callback_data": "report_x"},
-        ],
-        [
-            {"text": "فقط وب‌سایت‌ها", "callback_data": "report_web"},
-            {"text": "فقط GitHub", "callback_data": "report_github"},
-        ],
-        [
-            {"text": "فقط Reddit", "callback_data": "report_reddit"},
-            {"text": "گزارش جامع فعلی", "callback_data": "report_comprehensive"},
-        ],
-        [
-            {"text": "آخرین گزارش", "callback_data": "latest"},
-            {"text": "راهنمای گزارش‌ها", "callback_data": "help"},
-        ],
-    ]
-}
-
-HELP_TEXT = (
-    "🤖 راهنمای گزارش‌های خبری\n\n"
-    "گزارش فوری — اخبار برنامه‌نویسی با تمرکز ویژه بر تلگرام\n"
-    "خبرهای جدید — فقط خبرهای برنامه‌نویسیِ تحویل‌نشده\n"
-    "گزارش جامع — نسخه گسترده از همه منابع\n"
-    "/report telegram — گزارش جامع فقط از تلگرام\n"
-    "/report x — گزارش جامع فقط از X\n"
-    "/report web — گزارش جامع فقط از وب‌سایت‌ها و RSS\n"
-    "/report github — پروژه‌ها و انتشارهای GitHub\n"
-    "/report reddit — گزارش جامع فقط از Reddit\n"
-    "آخرین گزارش — آخرین گزارش تولید شده\n"
-    "/status — وضعیت سرویس‌ها\n"
-    "/sources — آمار منابع\n"
-    "/collect — جمع‌آوری فوری\n"
-    "/schedule — زمان‌بندی گزارش‌ها\n\n"
-    "⏰ زمان‌بندی خودکار: ۰۰:۰۰ | ۰۶:۰۰ | ۱۲:۰۰ | ۱۸:۰۰ (تهران)"
+_DEFAULT_CONTROL = ControlSnapshot(
+    report_language="fa",
+    report_source_types=(),
+    report_story_count=15,
+    schedule_times=("00:00", "06:00", "12:00", "18:00"),
+    schedule_enabled=True,
 )
+MENU_KEYBOARD = menu_keyboard("fa")
+HELP_TEXT = help_text(_DEFAULT_CONTROL)
 
 # Max update_id offset stored to survive restart
 _STATUS_FILE = "/tmp/newsroom_bot_status.json"
@@ -150,6 +120,9 @@ class TelegramBot:
 
         # Clear any webhook to ensure polling works
         await self.api.delete_webhook()
+        with contextlib.suppress(Exception):
+            language = self._control_snapshot().report_language
+            await self.api.set_my_commands(bot_commands(language))
 
         self._polling_alive = True
         while True:
@@ -190,13 +163,15 @@ class TelegramBot:
             msg = update["message"]
             user_id = msg.get("from", {}).get("id")
             chat_id = msg["chat"]["id"]
-            text = msg.get("text", "").strip()
-            command = text.lower() if text else ""
+            message_text = (msg.get("text") or msg.get("caption") or "").strip()
+            command = message_text.lower() if message_text else ""
+            document = msg.get("document")
         elif "callback_query" in update:
             cb = update["callback_query"]
             user_id = cb.get("from", {}).get("id")
             chat_id = cb["message"]["chat"]["id"]
             command = cb.get("data", "")
+            document = None
             # Answer the callback query to remove the loading spinner
             with contextlib.suppress(Exception):
                 await self.api.answer_callback_query(cb["id"])
@@ -214,7 +189,14 @@ class TelegramBot:
             return
 
         # Process command
-        result = await self._dispatch_command(chat_id, command, user_id, update_id, update_type)
+        result = await self._dispatch_command(
+            chat_id,
+            command,
+            user_id,
+            update_id,
+            update_type,
+            document=document,
+        )
 
         self._record_update(update_id, update_type, user_id, chat_id, command, result)
         if result == "ok" and "deliver" in command:
@@ -253,6 +235,8 @@ class TelegramBot:
         user_id: int | None,
         update_id: int,
         update_type: str,
+        *,
+        document: dict[str, Any] | None = None,
     ) -> str:
         """Route command to handler. Returns result string."""
         cmd = command.lower().strip()
@@ -260,6 +244,18 @@ class TelegramBot:
         if cmd in ("/start", "/help", "help"):
             await self._send_menu(chat_id)
             return "ok"
+
+        if cmd == "/settings" or cmd.startswith("/settings "):
+            return await self._handle_settings(chat_id, cmd)
+
+        if cmd == "/sources import":
+            return await self._handle_source_import(chat_id, document)
+
+        if cmd == "/sources list" or cmd.startswith("/sources list "):
+            return await self._handle_source_list(chat_id, cmd)
+
+        if cmd.startswith("/source "):
+            return await self._handle_source_command(chat_id, cmd)
 
         if cmd == "/latest" or cmd == "latest":
             return await self._handle_latest(chat_id)
@@ -305,13 +301,247 @@ class TelegramBot:
 
     async def _send_menu(self, chat_id: int | str) -> None:
         try:
+            snapshot = self._control_snapshot()
             await self.api.send_message(
                 chat_id,
-                HELP_TEXT,
-                reply_markup=MENU_KEYBOARD,
+                help_text(snapshot),
+                reply_markup=menu_keyboard(snapshot.report_language),
             )
         except Exception as e:
             logger.error(f"Send menu failed: {e}")
+
+    def _control_snapshot(self) -> ControlSnapshot:
+        with get_db() as db:
+            return NewsroomControl(db).settings()
+
+    def _language(self) -> str:
+        try:
+            return self._control_snapshot().report_language
+        except Exception:
+            return "fa"
+
+    def _message(self, key: str, **values: Any) -> str:
+        return localized_text(self._language(), key, **values)
+
+    async def _handle_settings(self, chat_id: int | str, command: str) -> str:
+        parts = command.split(maxsplit=2)
+        try:
+            with get_db() as db:
+                control = NewsroomControl(db)
+                if len(parts) == 1:
+                    snapshot = control.settings()
+                    response = help_text(snapshot)
+                else:
+                    section = parts[1]
+                    value = parts[2].strip() if len(parts) > 2 else ""
+                    if section == "language":
+                        snapshot = control.configure(language=value)
+                    elif section == "count":
+                        snapshot = control.configure(story_count=int(value))
+                    elif section == "schedule":
+                        snapshot = (
+                            control.configure(schedule_enabled=False)
+                            if value.lower() == "off"
+                            else control.configure(
+                                schedule_times=value,
+                                schedule_enabled=True,
+                            )
+                        )
+                    elif section == "sources":
+                        snapshot = control.configure(source_groups=value)
+                    else:
+                        raise ValueError(
+                            "use language, count, schedule, or sources"
+                        )
+                    response = (
+                        localized_text(
+                            snapshot.report_language,
+                            "settings_saved",
+                        )
+                        + "\n\n"
+                        + help_text(snapshot)
+                    )
+            if len(parts) > 1 and parts[1] == "language":
+                with contextlib.suppress(Exception):
+                    await self.api.set_my_commands(
+                        bot_commands(snapshot.report_language)
+                    )
+            await self._send_text(chat_id, response)
+            return "ok"
+        except (TypeError, ValueError) as exc:
+            await self._send_text(
+                chat_id,
+                localized_text(
+                    self._language(),
+                    "bad_settings",
+                    error=str(exc),
+                ),
+            )
+            return "error"
+
+    async def _handle_source_list(self, chat_id: int | str, command: str) -> str:
+        parts = command.split()
+        source_type: str | None = None
+        page = 1
+        if len(parts) >= 3:
+            if parts[2].isdigit():
+                page = int(parts[2])
+            else:
+                source_type = parts[2]
+        if len(parts) >= 4 and parts[3].isdigit():
+            page = int(parts[3])
+        try:
+            with get_db() as db:
+                rows, total = NewsroomControl(db).list_sources(
+                    source_type=source_type,
+                    page=page,
+                )
+            language = self._language()
+            heading = (
+                f"📚 منابع — صفحه {page} از {total} رکورد"
+                if language == "fa"
+                else f"📚 Sources — page {page}, {total} records"
+            )
+            lines = [heading, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"]
+            for source in rows:
+                state = "✅" if source.enabled else "⏸"
+                lines.append(
+                    f"{state} #{source.id} · {source.type} · {source.name}\n"
+                    f"{source.url}"
+                )
+            if not rows:
+                lines.append("—")
+            await self._send_text(chat_id, "\n\n".join(lines))
+            return "ok"
+        except ValueError as exc:
+            await self._send_text(
+                chat_id,
+                localized_text(
+                    self._language(),
+                    "source_command_error",
+                    error=str(exc),
+                ),
+            )
+            return "error"
+
+    async def _handle_source_command(self, chat_id: int | str, command: str) -> str:
+        parts = command.split()
+        if len(parts) < 3 or parts[1] not in {"enable", "disable", "delete"}:
+            await self._send_text(
+                chat_id,
+                "/source enable|disable <id>\n/source delete <id> confirm",
+            )
+            return "error"
+        try:
+            source_id = int(parts[2])
+            action = parts[1]
+            if action == "delete" and (
+                len(parts) < 4 or parts[3].lower() != "confirm"
+            ):
+                await self._send_text(
+                    chat_id,
+                    localized_text(
+                        self._language(),
+                        "source_delete_confirm",
+                        source_id=source_id,
+                    ),
+                )
+                return "error"
+            with get_db() as db:
+                control = NewsroomControl(db)
+                if action == "enable":
+                    result = control.set_source_enabled(source_id, True)
+                elif action == "disable":
+                    result = control.set_source_enabled(source_id, False)
+                else:
+                    result = control.delete_source(source_id, confirmed=True)
+            localized_action = {
+                "fa": {
+                    "enabled": "فعال شد",
+                    "disabled": "غیرفعال شد",
+                    "deleted": "آرشیو شد",
+                },
+                "en": {
+                    "enabled": "enabled",
+                    "disabled": "disabled",
+                    "deleted": "archived",
+                },
+            }[self._language()][result.action]
+            await self._send_text(
+                chat_id,
+                localized_text(
+                    self._language(),
+                    "source_changed",
+                    source_id=result.source_id,
+                    name=result.name,
+                    action=localized_action,
+                ),
+            )
+            return "ok"
+        except LookupError:
+            await self._send_text(
+                chat_id,
+                localized_text(self._language(), "source_not_found"),
+            )
+            return "error"
+        except (TypeError, ValueError) as exc:
+            await self._send_text(
+                chat_id,
+                localized_text(
+                    self._language(),
+                    "source_command_error",
+                    error=str(exc),
+                ),
+            )
+            return "error"
+
+    async def _handle_source_import(
+        self,
+        chat_id: int | str,
+        document: dict[str, Any] | None,
+    ) -> str:
+        if not document:
+            await self._send_text(
+                chat_id,
+                localized_text(self._language(), "import_caption"),
+            )
+            return "error"
+        if int(document.get("file_size") or 0) > 5 * 1024 * 1024:
+            await self._send_text(
+                chat_id,
+                localized_text(self._language(), "import_too_large"),
+            )
+            return "error"
+        try:
+            filename = str(document.get("file_name") or "sources.csv")
+            payload = await self.api.download_file(
+                str(document["file_id"]),
+                max_bytes=5 * 1024 * 1024,
+            )
+            with get_db() as db:
+                result = NewsroomControl(db).import_sources(filename, payload)
+            await self._send_text(
+                chat_id,
+                localized_text(
+                    self._language(),
+                    "import_done",
+                    filename=result.filename,
+                    created=result.created,
+                    updated=result.updated,
+                    skipped=result.skipped,
+                ),
+            )
+            return "ok"
+        except (KeyError, TypeError, ValueError) as exc:
+            await self._send_text(
+                chat_id,
+                localized_text(
+                    self._language(),
+                    "import_error",
+                    error=str(exc),
+                ),
+            )
+            return "error"
 
     async def _handle_latest(self, chat_id: int | str) -> str:
         """Return latest persisted report — no collection, no generation."""
@@ -340,12 +570,12 @@ class TelegramBot:
                         )
                     return "ok"
                 else:
-                    await self.api.send_message(chat_id, "📭 هنوز گزارشی تولید نشده است.")
+                    await self.api.send_message(chat_id, self._message("no_report"))
                     return "ok"
         except Exception as e:
             logger.error(f"/latest failed: {e}")
             with contextlib.suppress(Exception):
-                await self.api.send_message(chat_id, "❌ خطا در بازیابی گزارش.")
+                await self.api.send_message(chat_id, self._message("latest_error"))
             return "error"
 
     async def _handle_status(self, chat_id: int | str) -> str:
@@ -353,14 +583,15 @@ class TelegramBot:
         from newsroom.delivery.status_commands import status_text
 
         try:
+            language = self._language()
             with get_db() as db:
-                text = status_text(db)
+                text = status_text(db, language)
             await self._send_text(chat_id, text)
             return "ok"
         except Exception as e:
             logger.error(f"/status failed: {e}")
             with contextlib.suppress(Exception):
-                await self._send_text(chat_id, "❌ خطا در وضعیت.")
+                await self._send_text(chat_id, self._message("status_error"))
             return "error"
 
     async def _handle_sources(self, chat_id: int | str) -> str:
@@ -368,14 +599,15 @@ class TelegramBot:
         from newsroom.delivery.status_commands import sources_text
 
         try:
+            language = self._language()
             with get_db() as db:
-                text = sources_text(db)
+                text = sources_text(db, language)
             await self._send_text(chat_id, text)
             return "ok"
         except Exception as e:
             logger.error(f"/sources failed: {e}")
             with contextlib.suppress(Exception):
-                await self._send_text(chat_id, "❌ خطا در آمار منابع.")
+                await self._send_text(chat_id, self._message("sources_error"))
             return "error"
 
     def _handle_schedule(self, chat_id: int | str) -> str:
@@ -383,20 +615,21 @@ class TelegramBot:
         from newsroom.delivery.status_commands import schedule_text
 
         try:
+            language = self._language()
             with get_db() as db:
-                text = schedule_text(db)
+                text = schedule_text(db, language)
             asyncio.get_running_loop().create_task(self._send_text(chat_id, text))
         except Exception as e:
             logger.error(f"/schedule failed: {e}")
             with contextlib.suppress(Exception):
                 asyncio.get_running_loop().create_task(
-                    self._send_text(chat_id, "❌ خطا در زمان‌بندی.")
+                    self._send_text(chat_id, self._message("schedule_error"))
                 )
         return "ok"
 
     async def _handle_collect(self, chat_id: int | str) -> str:
         """Run one bounded collection pass (no report generation)."""
-        await self._send_text(chat_id, "⏳ در حال جمع‌آوری منابع...")
+        await self._send_text(chat_id, self._message("collecting"))
         try:
             from newsroom.pipeline.collect import collect_sources
 
@@ -412,13 +645,17 @@ class TelegramBot:
                 )
             await self._send_text(
                 chat_id,
-                f"✅ جمع‌آوری: {result.get('new_items', 0)} آیتم از {result.get('sources', 0)} منبع"
-                f" (شکست: {len(result.get('failed', []))})",
+                self._message(
+                    "collected",
+                    items=result.get("new_items", 0),
+                    sources=result.get("sources", 0),
+                    failed=len(result.get("failed", [])),
+                ),
             )
             return "ok"
         except Exception as e:
             logger.error(f"/collect failed: {e}")
-            await self._send_text(chat_id, "❌ خطا در جمع‌آوری.")
+            await self._send_text(chat_id, self._message("collect_error"))
             return "error"
 
     async def _handle_report(
@@ -438,13 +675,16 @@ class TelegramBot:
         with get_db() as db:
             existing_req = db.query(CommandRequest).filter_by(request_key=request_key).first()
             if existing_req and existing_req.status == "running":
-                await self._send_text(chat_id, "⏳ در حال تولید گزارش...")
+                await self._send_text(chat_id, self._message("generating"))
                 return "busy"
             if existing_req and existing_req.status == "ok" and existing_req.report_id:
                 # Already completed — return existing report
                 report_id = existing_req.report_id
                 db.close()
-                await self._send_text(chat_id, f"✅ گزارش شماره {report_id} از قبل تولید شده است.")
+                await self._send_text(
+                    chat_id,
+                    self._message("existing_report", report_id=report_id),
+                )
                 return "ok"
             cooldown_seconds = max(0, settings.manual_cooldown_seconds)
             if cooldown_seconds:
@@ -464,7 +704,7 @@ class TelegramBot:
                 if recent_req:
                     await self._send_text(
                         chat_id,
-                        "⏳ برای جلوگیری از اجرای تکراری، کمی بعد دوباره تلاش کنید.",
+                        self._message("cooldown"),
                     )
                     return "busy"
             # Create or update request
@@ -482,7 +722,7 @@ class TelegramBot:
                 db.add(req)
                 db.flush()
 
-        await self._send_text(chat_id, "⏳ در حال تولید گزارش...")
+        await self._send_text(chat_id, self._message("generating"))
 
         # Run pipeline via authoritative runner
         env = {
@@ -502,17 +742,17 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"Report generation failed: {e}")
             self._finish_request(request_key, "error", None, None)
-            await self._send_text(chat_id, "❌ خطا در تولید گزارش.")
+            await self._send_text(chat_id, self._message("generation_error"))
             return "error"
 
         if result.get("status") == "busy":
             self._finish_request(request_key, "busy", None, None)
-            await self._send_text(chat_id, "⏳ خط لوله در حال اجراست. لطفاً کمی بعد تلاش کنید.")
+            await self._send_text(chat_id, self._message("pipeline_busy"))
             return "busy"
 
         if result.get("status") == "ok_empty":
             self._finish_request(request_key, "ok", None, None)
-            await self._send_text(chat_id, "📭 خبر جدیدی در این دوره یافت نشد.")
+            await self._send_text(chat_id, self._message("no_news"))
             return "ok"
 
         if result.get("status") != "ok":
@@ -520,16 +760,16 @@ class TelegramBot:
             if result.get("status") == "ai_unavailable":
                 await self._send_text(
                     chat_id,
-                    "⏳ مدل هوش مصنوعی در دسترس نبود؛ برای جلوگیری از ارسال گزارش بی‌کیفیت چیزی ارسال نشد.",
+                    self._message("ai_unavailable"),
                 )
             else:
-                await self._send_text(chat_id, "❌ خطا در تولید گزارش.")
+                await self._send_text(chat_id, self._message("generation_error"))
             return "error"
 
         result_report_id = result.get("report_id")
         if not result_report_id:
             self._finish_request(request_key, "ok", None, None)
-            await self._send_text(chat_id, "📭 خبر جدیدی در این دوره یافت نشد.")
+            await self._send_text(chat_id, self._message("no_news"))
             return "ok"
 
         # Deliver the report
@@ -547,10 +787,17 @@ class TelegramBot:
         self._finish_request(request_key, "ok", result_report_id, delivery_id)
 
         if delivery_id:
-            await self._send_text(chat_id, f"✅ گزارش شماره {result_report_id} تولید و ارسال شد.")
+            await self._send_text(
+                chat_id,
+                self._message("report_delivered", report_id=result_report_id),
+            )
         else:
             await self._send_text(
-                chat_id, f"✅ گزارش شماره {result_report_id} تولید شد (تحویل تلگرام تنظیم نشده)."
+                chat_id,
+                self._message(
+                    "report_not_delivered",
+                    report_id=result_report_id,
+                ),
             )
         return "ok"
 

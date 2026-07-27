@@ -44,6 +44,7 @@ def build_evidence_set(
     report_mode: str = "scheduled",
     *,
     max_stories: int | None = None,
+    report_language: str = "fa",
 ) -> EditorialEvidenceSet:
     """Build a bounded evidence set from persisted stories.
 
@@ -73,7 +74,10 @@ def build_evidence_set(
             .join(StoryItem, StoryItem.item_id == NormalizedItem.id)
             .join(RawItem, NormalizedItem.raw_item_id == RawItem.id)
             .join(Source, RawItem.source_id == Source.id)
-            .filter(StoryItem.story_id == story.id)
+            .filter(
+                StoryItem.story_id == story.id,
+                Source.enabled.is_(True),
+            )
         )
         if profile.source_types is not None:
             item_query = item_query.filter(Source.type.in_(profile.source_types))
@@ -180,6 +184,7 @@ def build_evidence_set(
         schema_version=EVIDENCE_SCHEMA_VERSION,
         prompt_version=SYSTEM_PROMPT_VERSION,
         report_mode=report_mode,
+        report_language=report_language,
         stories=story_packets,
     )
 

@@ -17,6 +17,7 @@ from newsroom.logging import get_logger
 logger = get_logger(__name__)
 
 TG_API = "https://api.telegram.org/bot{token}"
+TG_FILE_API = "https://api.telegram.org/file/bot{token}/{path}"
 
 
 class ErrorCategory(StrEnum):
@@ -222,6 +223,49 @@ class TelegramBotClient:
 
     async def delete_webhook(self) -> dict[str, Any]:
         return await self.call("deleteWebhook", retry=False)
+
+    async def set_my_commands(
+        self,
+        commands: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        return await self.call(
+            "setMyCommands",
+            json={"commands": commands},
+            retry=False,
+        )
+
+    async def download_file(self, file_id: str, *, max_bytes: int) -> bytes:
+        """Download one bounded Bot API file without logging its protected URL."""
+        metadata = await self.call(
+            "getFile",
+            json={"file_id": file_id},
+            retry=False,
+        )
+        file_path = str(metadata.get("result", {}).get("file_path") or "")
+        if not file_path or ".." in file_path:
+            raise TelegramAPIError(
+                ErrorCategory.MALFORMED_RESPONSE,
+                "getFile returned an invalid file path",
+            )
+        try:
+            async with self.client.stream(
+                "GET",
+                TG_FILE_API.format(token=self.token, path=file_path),
+            ) as response:
+                response.raise_for_status()
+                declared_size = int(response.headers.get("content-length") or 0)
+                if declared_size > max_bytes:
+                    raise ValueError("Telegram file exceeds configured size limit")
+                content = bytearray()
+                async for chunk in response.aiter_bytes():
+                    content.extend(chunk)
+                    if len(content) > max_bytes:
+                        raise ValueError("Telegram file exceeds configured size limit")
+                return bytes(content)
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise self._classify_exception(exc) from exc
 
     async def close(self) -> None:
         await self.client.aclose()

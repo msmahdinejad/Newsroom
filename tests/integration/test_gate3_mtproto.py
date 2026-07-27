@@ -106,6 +106,7 @@ def test_alembic_at_gate3_revision(engine):
             "0009_gate6_source_inventory",
             "0010_gate6_router_reliability",
             "0011_gate7_identity_privacy",
+            "0012_owner_control_plane",
         )
 
 

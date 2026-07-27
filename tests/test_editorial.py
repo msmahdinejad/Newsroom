@@ -30,8 +30,9 @@ import pytest
 
 from newsroom.editorial.deterministic_provider import DeterministicEditorialProvider
 from newsroom.editorial.grounding import validate_grounding
-from newsroom.editorial.orchestrator import generate_editorial, select_provider
+from newsroom.editorial.orchestrator import _check_cache, generate_editorial, select_provider
 from newsroom.editorial.persistence import compute_cache_key
+from newsroom.editorial.presentation import render_persian_report
 from newsroom.editorial.prompt import build_prompt
 from newsroom.editorial.provider import (
     EditorialError,
@@ -218,6 +219,49 @@ class FakeProvider(EditorialProvider):
             retry_count=0,
             fallback_used=False,
         )
+
+
+def test_ai_cache_never_reuses_deterministic_output() -> None:
+    """A prior terminal fallback must not poison a healthy AI route."""
+    evidence = make_evidence_set([1])
+    record = MagicMock(
+        provider="deterministic",
+        model="deterministic-v1",
+        output_json=make_output(evidence).model_dump(mode="json"),
+        usage=None,
+    )
+
+    with patch(
+        "newsroom.editorial.persistence.find_cached_attempt",
+        return_value=record,
+    ):
+        cached = _check_cache(
+            MagicMock(),
+            evidence,
+            "manual",
+            "multi_provider_router",
+            "dynamic-validated-route",
+        )
+
+    assert cached is None
+
+
+def test_selected_report_language_reaches_prompt_and_renderer() -> None:
+    evidence = make_evidence_set([1])
+    evidence.report_language = "en"
+    messages = build_prompt(evidence)
+    assert "TARGET OUTPUT LANGUAGE: English (en)" in messages[1]["content"]
+
+    output = make_output(evidence)
+    output.metadata.report_language = "en"
+    rendered = render_persian_report(
+        output,
+        "manual",
+        now=datetime(2026, 7, 27, tzinfo=UTC),
+    )
+    assert "Programming & Developer Tools" in rendered
+    assert "Top stories" in rendered
+    assert "خبرهای مهم" not in rendered
 
 
 # ── 1. Editorial disabled / missing config ────────────────────────

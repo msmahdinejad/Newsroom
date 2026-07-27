@@ -36,17 +36,22 @@ def _safe_ts(ts: datetime | None) -> str:
     return ts.strftime("%Y-%m-%d %H:%M UTC")
 
 
-def _next_tehran_boundary() -> str:
-    """Next 00/06/12/18 Asia/Tehran boundary from now (text)."""
+def _next_tehran_boundary(schedule_times: tuple[str, ...]) -> str:
+    """Return the next configured Asia/Tehran report boundary."""
     try:
         from zoneinfo import ZoneInfo
 
         tz = ZoneInfo(settings.timezone or "Asia/Tehran")
         now = datetime.now(tz)
-        hours = [0, 6, 12, 18]
         nxt = None
-        for h in hours:
-            cand = now.replace(hour=h, minute=0, second=0, microsecond=0)
+        for value in schedule_times:
+            hour_text, minute_text = value.split(":", maxsplit=1)
+            cand = now.replace(
+                hour=int(hour_text),
+                minute=int(minute_text),
+                second=0,
+                microsecond=0,
+            )
             if cand <= now:
                 from datetime import timedelta
 
@@ -146,8 +151,11 @@ def last_delivery(db: Session) -> dict[str, Any]:
     }
 
 
-def status_text(db: Session) -> str:
-    """Compose the /status Persian summary."""
+def status_text(db: Session, language: str = "fa") -> str:
+    """Compose the localized /status summary."""
+    from newsroom.control import NewsroomControl
+
+    control = NewsroomControl(db).settings()
     inv = inventory_totals(db)
     last = last_collection(db)
     ed = editorial_state(db)
@@ -161,6 +169,25 @@ def status_text(db: Session) -> str:
     )
     inv_inactive = inv["by_state"].get("inactive", 0) + inv["by_state"].get("invalid", 0)
 
+    if language == "en":
+        return "\n".join(
+            [
+                "📊 Newsroom status",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                f"Active collectors: {active_sources}",
+                f"Inactive sources: {inactive_sources}",
+                f"Unhealthy active sources: {unhealthy}",
+                f"Inventory: {inv['total']}/{inv['expected']} ({'✓' if inv['reconciled'] else '✗'})",
+                f"Inactive/invalid queue: {inv_inactive}",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                f"Last collection: {last['status']} @ {last['started_at']} ({last['items']} items)",
+                f"Editorial AI: {'enabled' if ed.get('enabled') else 'disabled'} | {ed.get('provider','deterministic')}",
+                f"Last delivery: {dlv['status']} @ {dlv['delivered_at']} ({dlv['message_ids_count']} messages)",
+                f"Scheduled cursor: {dlv['cursor_advanced_at']}",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                f"Next report: {_next_tehran_boundary(control.schedule_times) if control.schedule_enabled else 'OFF'}",
+            ]
+        )
     lines = [
         "📊 وضعیت سیستم خبرخوان",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -171,17 +198,32 @@ def status_text(db: Session) -> str:
         f"صف غیرفعال/نامعتبر: {inv_inactive}",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         f"آخرین جمع‌آوری: {last['status']} @ {last['started_at']} ({last['items']} آیتم)",
-        f"ادبیال: {'فعال' if ed.get('enabled') else 'غیرفعال'} | {ed.get('provider','deterministic')}",
+        f"هوش مصنوعی تحریریه: {'فعال' if ed.get('enabled') else 'غیرفعال'} | {ed.get('provider','deterministic')}",
         f"آخرین تحویل: {dlv['status']} @ {dlv['delivered_at']} ({dlv['message_ids_count']} پیام)",
-        f"مکرس زمان‌بندی: {dlv['cursor_advanced_at']}",
+        f"نشانگر زمان‌بندی: {dlv['cursor_advanced_at']}",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"گزارش بعدی: {_next_tehran_boundary()}",
+        f"گزارش بعدی: {_next_tehran_boundary(control.schedule_times) if control.schedule_enabled else 'خاموش'}",
     ]
     return "\n".join(lines)
 
 
-def sources_text(db: Session) -> str:
+def sources_text(db: Session, language: str = "fa") -> str:
     inv = inventory_totals(db)
+    if language == "en":
+        lines = [
+            "📚 Source inventory",
+            f"Total: {inv['total']}/{inv['expected']}",
+            f"Active: {inv['by_state'].get('active', 0)} | "
+            f"Inactive: {inv['by_state'].get('inactive', 0)} | "
+            f"Invalid: {inv['by_state'].get('invalid', 0)}",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "By platform:",
+        ]
+        for platform in sorted(inv["by_platform"]):
+            states = inv["by_platform"][platform]
+            parts = [f"{key}:{value}" for key, value in sorted(states.items()) if value]
+            lines.append(f"• {platform}: " + " | ".join(parts))
+        return "\n".join(lines)
     lines = [
         "📚 آمار منابع",
         f"مجموع: {inv['total']}/{inv['expected']}",
@@ -203,17 +245,41 @@ def sources_text(db: Session) -> str:
     return "\n".join(lines)
 
 
-def schedule_text(db: Session) -> str:
+def schedule_text(db: Session, language: str = "fa") -> str:
+    from newsroom.control import NewsroomControl
+
+    control = NewsroomControl(db).settings()
     dlv = last_delivery(db)
+    schedule = "  •  ".join(control.schedule_times) if control.schedule_enabled else "OFF"
+    next_boundary = (
+        _next_tehran_boundary(control.schedule_times)
+        if control.schedule_enabled
+        else "OFF"
+    )
+    if language == "en":
+        return "\n".join(
+            [
+                "⏰ Report schedule",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                f"Automatic reports (Tehran): {schedule}",
+                f"Next report: {next_boundary}",
+                f"Stories per default report: {control.report_story_count}",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                f"Last successful delivery: {dlv['cursor_advanced_at']}",
+                f"Scheduled cursor report: #{dlv['cursor_report_id'] or '—'}",
+                "The cursor advances only after complete delivery.",
+            ]
+        )
+    schedule = schedule.translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹"))
     lines = [
         "⏰ زمان‌بندی گزارش‌ها",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        "گزارش‌های خودکار (تهران):",
-        "• ۰۰:۰۰  •  ۰۶:۰۰  •  ۱۲:۰۰  •  ۱۸:۰۰",
-        f"گزارش بعدی: {_next_tehran_boundary()}",
+        f"گزارش‌های خودکار (تهران): {schedule}",
+        f"گزارش بعدی: {next_boundary}",
+        f"تعداد خبر در گزارش پیش‌فرض: {control.report_story_count}",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         f"آخرین تحویل موفق: {dlv['cursor_advanced_at']}",
-        f"گزارش مکرس: #{dlv['cursor_report_id'] or '—'}",
+        f"گزارش نشانگر زمان‌بندی: #{dlv['cursor_report_id'] or '—'}",
         "محدوده فقط پس از تحویل کامل پیش می‌رود.",
     ]
     return "\n".join(lines)

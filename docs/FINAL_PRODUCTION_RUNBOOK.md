@@ -164,7 +164,9 @@ Run the authoritative full pipeline:
 uv run newsroom pipeline run
 ```
 
-Production scheduled reports run at Tehran 00:00, 06:00, 12:00, and 18:00.
+Production scheduled reports initially run at Tehran 00:00, 06:00, 12:00, and
+18:00. Owner changes are persisted in `newsroom_control_settings` and applied
+by the scheduler within 30 seconds without a restart.
 The scheduled cursor advances only after a complete Telegram delivery. Failed
 or partial delivery resumes missing chunks; no-news windows make no LLM calls.
 
@@ -185,11 +187,25 @@ The configured owner may use:
 /report reddit
 /collect
 /sources
+/sources list [type] [page]
+/sources import        (CSV/XLSX document caption)
+/source enable <id>
+/source disable <id>
+/source delete <id> confirm
 /schedule
+/settings
+/settings language fa|en
+/settings count 1..50
+/settings schedule HH:MM,HH:MM
+/settings schedule off
+/settings sources all|telegram,x,web,github,reddit,youtube
 ```
 
 The bot is the sole Bot API polling owner. Commands are owner-restricted and
-idempotent; persisted audit state uses one-way identity fingerprints.
+idempotent; persisted audit state uses one-way identity fingerprints. Source
+deletion is an audit-preserving archive: raw items, cursors and lineage remain.
+Bulk source imports accept at most 5 MiB and 2,000 rows and never ingest
+credentials.
 
 ## Routine operations
 
@@ -231,7 +247,7 @@ docker compose restart
 
 After restart verify:
 
-- scheduler jobs remain in the four Tehran windows;
+- scheduler jobs match the persisted Tehran schedule;
 - Telegram MTProto reconnects without reauthorization;
 - source and platform cursors continue;
 - provider cooldown/validation state reloads;

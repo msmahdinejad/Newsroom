@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from newsroom.control import ControlSnapshot
 from newsroom.delivery import bot as bot_module
 from newsroom.delivery.bot import TelegramBot
 
@@ -70,3 +71,25 @@ async def test_report_command_enforces_cross_update_cooldown() -> None:
     assert result == "busy"
     db.add.assert_not_called()
     bot._send_text.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_start_menu_uses_selected_language() -> None:
+    bot = object.__new__(TelegramBot)
+    bot.api = AsyncMock()
+    bot._control_snapshot = MagicMock(
+        return_value=ControlSnapshot(
+            report_language="en",
+            report_source_types=("telegram",),
+            report_story_count=20,
+            schedule_times=("01:15", "13:45"),
+            schedule_enabled=True,
+        )
+    )
+
+    await bot._send_menu(123)
+
+    payload = bot.api.send_message.await_args
+    assert "Welcome to Newsroom" in payload.args[1]
+    assert "stories=20" in payload.args[1]
+    assert payload.kwargs["reply_markup"]["inline_keyboard"][0][0]["text"] == "Report now"

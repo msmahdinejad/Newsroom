@@ -109,6 +109,7 @@ def run_hierarchical_editorial(
     story_ids: list[int],
     report_mode: str = "scheduled",
     job_id: str | None = None,
+    report_language: str = "fa",
 ) -> HierarchicalResult:
     """Run the full hierarchical map/reduce editorial pipeline.
 
@@ -129,6 +130,7 @@ def run_hierarchical_editorial(
         story_ids,
         report_mode,
         max_stories=len(story_ids),
+        report_language=report_language,
     )
 
     if not evidence.stories:
@@ -343,7 +345,9 @@ def run_hierarchical_editorial(
     job.partial_ai = job.fallback_used and fallback_shards < len(map_results)
     db.flush()
 
-    # 7. Render Persian report
+    final_output.metadata.report_language = evidence.report_language
+
+    # 7. Render localized report
     content = _render_persian_report(final_output, report_mode)
 
     # 8. Build attempt metadata
@@ -455,6 +459,7 @@ def _process_shard(
         schema_version=evidence.schema_version,
         prompt_version=evidence.prompt_version,
         report_mode=evidence.report_mode,
+        report_language=evidence.report_language,
         stories=shard_stories,
     )
 
@@ -465,8 +470,16 @@ def _process_shard(
         f"shard_{spec.shard_id}",
         shard_evidence.evidence_hash(),
         evidence.prompt_version,
-        "validated-editorial-artifact",
-        "route-independent-v1",
+        (
+            "deterministic-editorial-artifact"
+            if provider.name == "deterministic"
+            else "validated-editorial-artifact"
+        ),
+        (
+            "deterministic-v1"
+            if provider.name == "deterministic"
+            else "route-independent-v1"
+        ),
         temperature=settings.editorial_temperature,
         max_input_tokens=spec.effective_input_limit,
         max_output_tokens=spec.effective_output_limit,
@@ -757,7 +770,15 @@ def _final_reduction(
     existing = (
         db.query(EditorialArtifact)
         .filter_by(
-            cache_key=_reduction_cache_key("reduction_final", evidence),
+            cache_key=_reduction_cache_key(
+                "reduction_final",
+                evidence,
+                quality=(
+                    "deterministic"
+                    if provider.name == "deterministic"
+                    else "ai"
+                ),
+            ),
             status="validated",
         )
         .first()
@@ -898,6 +919,7 @@ def _bounded_reduction_evidence(
         schema_version=evidence.schema_version,
         prompt_version=evidence.prompt_version,
         report_mode=evidence.report_mode,
+        report_language=evidence.report_language,
         stories=selected,
     )
 
@@ -1046,7 +1068,19 @@ def _persist_reduction(
     child_artifact_ids: list[int] | None = None,
 ) -> EditorialArtifact:
     """Persist a reduction artifact."""
-    cache_key = _reduction_cache_key(shard_id, evidence)
+    quality = (
+        "ai"
+        if provider in {
+            "gemini",
+            "mistral",
+            "groq",
+            "nvidia",
+            "mixed",
+            "multi_provider_router",
+        }
+        else "deterministic"
+    )
+    cache_key = _reduction_cache_key(shard_id, evidence, quality=quality)
     existing = db.query(EditorialArtifact).filter_by(cache_key=cache_key, status="validated").first()
     if existing is not None:
         return existing
@@ -1081,10 +1115,15 @@ def _persist_reduction(
     return artifact
 
 
-def _reduction_cache_key(shard_id: str, evidence: EditorialEvidenceSet) -> str:
+def _reduction_cache_key(
+    shard_id: str,
+    evidence: EditorialEvidenceSet,
+    *,
+    quality: str = "deterministic",
+) -> str:
     return hashlib.sha256(
         (
-            f"reduction:v2:{PARTITION_VERSION}:{shard_id}:"
+            f"reduction:v3:{quality}:{PARTITION_VERSION}:{shard_id}:"
             f"{evidence.evidence_hash()}:{settings.editorial_temperature}:"
             f"{settings.editorial_max_input_tokens}:"
             f"{settings.editorial_max_output_tokens}:"
