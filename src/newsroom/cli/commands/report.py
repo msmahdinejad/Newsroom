@@ -10,13 +10,23 @@ logger = get_logger(__name__)
 
 def report_command(args: argparse.Namespace) -> int:
     """Generate and deliver one manual report with the configured AI router."""
-    del args
     setup_logging()
     logger.info("Generating report")
     from newsroom.pipeline.runner import run_pipeline
 
     previous_mode = os.environ.get("NEWSROOM_REPORT_MODE")
-    os.environ["NEWSROOM_REPORT_MODE"] = "manual"
+    mode_by_source = {
+        "default": "manual",
+        "all": "manual_comprehensive",
+        "telegram": "platform_telegram",
+        "x": "platform_x",
+        "web": "platform_web",
+        "github": "platform_github",
+        "reddit": "platform_reddit",
+    }
+    os.environ["NEWSROOM_REPORT_MODE"] = mode_by_source[
+        getattr(args, "source", "default")
+    ]
     try:
         result = run_pipeline(blocking_lock=True)
     finally:

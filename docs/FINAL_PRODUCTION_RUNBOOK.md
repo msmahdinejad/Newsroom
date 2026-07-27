@@ -151,6 +151,11 @@ Run processing stages:
 ```powershell
 uv run newsroom process all
 uv run newsroom report generate
+uv run newsroom report generate --source telegram
+uv run newsroom report generate --source x
+uv run newsroom report generate --source web
+uv run newsroom report generate --source github
+uv run newsroom report generate --source reddit
 ```
 
 Run the authoritative full pipeline:
@@ -173,6 +178,11 @@ The configured owner may use:
 /report
 /report new
 /report comprehensive
+/report telegram
+/report x
+/report web
+/report github
+/report reddit
 /collect
 /sources
 /schedule

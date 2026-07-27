@@ -5,6 +5,7 @@ and Persian/Arabic character normalization.
 """
 
 import hashlib
+import html
 import re
 from datetime import datetime
 from typing import Any
@@ -212,9 +213,12 @@ class Normalizer:
         """Normalize a Reddit public-post item. post_id is the identity."""
         post_id = str(raw.get("post_id") or "")
         subreddit = str(raw.get("subreddit") or "")
-        text = self._normalize_text(raw.get("content", raw.get("description", "")))
+        title = self._normalize_text(raw.get("title", ""))
+        text = self._normalize_text(
+            self._strip_html(raw.get("content") or raw.get("description") or "")
+        )
         source_url = raw.get("link") or raw.get("source_url") or ""
-        title = text[:120] if text else f"Reddit post {post_id}"
+        title = title or text[:120] or f"Reddit post {post_id}"
 
         return {
             "title": title,
@@ -226,6 +230,12 @@ class Normalizer:
             "content_hash": self._compute_hash(f"reddit:{subreddit}:{post_id}"),
             "url_hash": self._compute_hash(source_url) if source_url else self._compute_hash(f"reddit:{post_id}"),
         }
+
+    @staticmethod
+    def _strip_html(value: str) -> str:
+        """Convert syndication markup to bounded plain text."""
+        without_tags = re.sub(r"<[^>]+>", " ", value)
+        return html.unescape(without_tags)
 
     def _normalize_linkedin_public(self, raw: dict[str, Any]) -> dict[str, Any]:
         """Normalize a LinkedIn public-page item. Source URL is the identity."""

@@ -7,8 +7,10 @@ summary, and the original source links for each story.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 
+from newsroom.editorial.report_profiles import resolve_report_profile
 from newsroom.editorial.schema import EditorialOutput, StoryEditorialResult
 
 _SEPARATOR = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -21,13 +23,17 @@ def render_persian_report(
     now: datetime | None = None,
 ) -> str:
     """Render an intentionally compact reader-facing Persian Telegram report."""
-    del report_mode  # The delivery format is identical for scheduled and manual reports.
+    profile = resolve_report_profile(report_mode)
     rendered_at = now or datetime.now(UTC)
     high = [story for story in output.stories if story.suggested_priority == "high"]
     other = [story for story in output.stories if story.suggested_priority != "high"]
+    if not high and other:
+        promoted_count = min(5, max(1, len(other) // 5))
+        high = other[:promoted_count]
+        other = other[promoted_count:]
 
     lines = [
-        "📰 اخبار فناوری",
+        f"📰 {profile.title_fa}",
         f"📅 {rendered_at.strftime('%Y-%m-%d')}",
         _SEPARATOR,
     ]
@@ -51,7 +57,14 @@ def _render_story(story: StoryEditorialResult) -> str:
 
 
 def _compact(value: str) -> str:
-    return " ".join(value.split())
+    compact = " ".join(value.split())
+    # Small models occasionally emit a detached first letter before the same
+    # Persian word ("انت انتشار", "د دوره"). It is never meaningful prose.
+    return re.sub(
+        r"(?<!\S)([آ-ی]{1,3})\s+(?=\1[آ-ی])",
+        "",
+        compact,
+    )
 
 
 def _unique_links(links: list[str]) -> list[str]:

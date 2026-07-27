@@ -161,8 +161,10 @@ Telegram ingestion and Telegram delivery use separate identities.
 3. Set `TELEGRAM_BOT_ENABLED=true`.
 
 The owner-restricted bot supports `/status`, `/latest`, `/report`,
-`/report new`, `/report comprehensive`, `/collect`, `/sources`, and
-`/schedule`.
+`/report new`, `/report comprehensive`, and programming-only platform
+digests through `/report telegram`, `/report x`, `/report web`,
+`/report github`, and `/report reddit`. Operational commands include
+`/collect`, `/sources`, and `/schedule`.
 
 ### MTProto ingestion
 

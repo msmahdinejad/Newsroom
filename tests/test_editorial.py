@@ -409,6 +409,20 @@ def test_grounding_invented_links_removed():
         assert "https://evil.com/fake" not in story.source_links
 
 
+def test_grounding_backfills_missing_links_from_same_story_evidence():
+    """Every public story keeps at least one original, grounded source link."""
+    evidence = make_evidence_set([1])
+    output = make_output(evidence)
+    output.stories[0].source_links = []
+
+    grounded, result = validate_grounding(evidence, output)
+
+    assert result.valid
+    assert grounded.stories[0].source_links == [
+        source.original_url for source in evidence.stories[0].sources
+    ]
+
+
 # ── 10. Unsupported numerical claims ───────────────────────────────
 
 
@@ -941,6 +955,21 @@ def test_telegram_report_renders_titles_summaries_and_links_without_legacy_field
         assert legacy_label not in content
 
 
+def test_presentation_repairs_detached_persian_letter_and_promotes_top_news():
+    from newsroom.editorial.orchestrator import _render_persian_report
+
+    output = make_output(make_evidence_set([1, 2, 3, 4, 5]))
+    output.stories[0].headline_fa = "انت انتشار نسخه جدید کتابخانه"
+    for story in output.stories:
+        story.suggested_priority = "medium"
+
+    content = _render_persian_report(output, "platform_telegram")
+
+    assert "انت انتشار" not in content
+    assert "انتشار نسخه جدید کتابخانه" in content
+    assert "🔥 خبرهای مهم" in content
+
+
 def test_prompt_requests_only_reader_facing_persian_copy():
     """The model contract asks for a Persian title and concise summary, not boilerplate."""
     system_prompt = build_prompt(make_evidence_set())[0]["content"]
@@ -958,6 +987,16 @@ def test_prompt_requires_copy_for_each_selected_story_id():
 
     assert "exactly 3 stories" in messages[1]["content"]
     assert "[1, 2, 3]" in messages[1]["content"]
+
+
+def test_platform_prompt_requires_source_exclusivity_and_programming_focus():
+    messages = build_prompt(
+        make_evidence_set([1], report_mode="platform_telegram")
+    )
+
+    assert "programming newsroom report" in messages[1]["content"]
+    assert "only evidence from the requested platform" in messages[1]["content"]
+    assert "free APIs" in messages[1]["content"]
 
 
 def test_reduction_keeps_a_bounded_telegram_presence():

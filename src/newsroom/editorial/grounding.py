@@ -54,6 +54,7 @@ def validate_grounding(
     refs_by_story = evidence.refs_by_story()
     valid_story_ids = evidence.story_ids()
     valid_urls = evidence.all_urls()
+    evidence_by_story = {story.story_id: story for story in evidence.stories}
 
     cleaned_stories: list[StoryEditorialResult] = []
 
@@ -78,7 +79,14 @@ def validate_grounding(
                 r for r in story_result.source_ref_ids if r in valid_ref_ids
             ]
 
-        # Check source_links
+        # Check source_links. If the provider omitted them, restore only
+        # original URLs belonging to this exact story.
+        if not story_result.source_links:
+            story_result.source_links = [
+                source.original_url
+                for source in evidence_by_story[story_result.story_id].sources
+                if source.original_url in valid_urls
+            ]
         bad_links = [lnk for lnk in story_result.source_links if lnk not in valid_urls]
         if bad_links:
             result.add_issue(

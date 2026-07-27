@@ -109,6 +109,22 @@ def test_similarity_below_threshold(clusterer):
     assert clusterer._compute_similarity(a, b) < 0.35
 
 
+def test_reddit_html_boilerplate_cannot_merge_unrelated_posts(clusterer):
+    """Shared syndication markup is not evidence that two posts are one story."""
+    backend = clusterer._extract_keywords(
+        '<table><tr><td><a href="https://www.reddit.com/r/Backend/comments/a">'
+        "AutoLock automatically locks a Windows PC"
+        "</a><br/>submitted by user</td></tr></table>"
+    )
+    matlab = clusterer._extract_keywords(
+        '<table><tr><td><a href="https://www.reddit.com/r/matlab/comments/b">'
+        "Simple C++ framework for math and data"
+        "</a><br/>submitted by user</td></tr></table>"
+    )
+
+    assert clusterer._compute_similarity(backend, matlab) < 0.35
+
+
 # ── Clustering with mock DB ─────────────────────────────────────
 
 def _make_norm_item(item_id, title, description=""):

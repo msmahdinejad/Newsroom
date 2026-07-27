@@ -37,6 +37,7 @@ from newsroom.editorial.orchestrator import (
     select_provider,
 )
 from newsroom.editorial.provider import EditorialError, EditorialProvider, EditorialRequest
+from newsroom.editorial.report_profiles import resolve_report_profile
 from newsroom.editorial.schema import (
     EditorialEvidenceSet,
     EditorialOutput,
@@ -281,9 +282,36 @@ def run_hierarchical_editorial(
     reduction_level = 0
     final_output: EditorialOutput
 
+    profile = resolve_report_profile(report_mode)
     if len(map_results) == 1:
         # Single shard — no reduction needed
         final_output = map_results[0].output
+        reduction_calls = 0
+        reduction_input_tokens = 0
+        reduction_output_tokens = 0
+        reduction_fallback = False
+    elif profile.comprehensive:
+        # Every map artifact already contains validated LLM copy. Preserve the
+        # complete platform digest instead of asking a final call capped at the
+        # compact scheduled-report size.
+        final_output = _merge_outputs(
+            map_results,
+            evidence,
+            max_stories=profile.max_stories,
+        )
+        _persist_reduction(
+            db,
+            job,
+            "reduction_final",
+            final_output,
+            evidence,
+            "reduction_final",
+            1,
+            provider=final_output.metadata.provider,
+            model=final_output.metadata.model_name,
+            child_artifact_ids=[result.artifact_id for result in map_results],
+        )
+        reduction_level = 1
         reduction_calls = 0
         reduction_input_tokens = 0
         reduction_output_tokens = 0
@@ -892,7 +920,13 @@ def _reserve_telegram_story_results(
 ) -> list[StoryEditorialResult]:
     """Keep a small, bounded Telegram share through every reduction stage."""
     telegram_ids = _telegram_story_ids(evidence)
-    minimum = max(0, min(settings.editorial_min_telegram_stories, max_stories))
+    minimum = max(
+        0,
+        min(
+            resolve_report_profile(evidence.report_mode).minimum_telegram_stories,
+            max_stories,
+        ),
+    )
     if not minimum or not telegram_ids:
         return selected[:max_stories]
 
@@ -938,6 +972,8 @@ def _preserve_telegram_coverage(
 def _merge_outputs(
     results: list[MapResult],
     evidence: EditorialEvidenceSet,
+    *,
+    max_stories: int | None = None,
 ) -> EditorialOutput:
     """Merge multiple map outputs into a single editorial output.
 
@@ -965,7 +1001,9 @@ def _merge_outputs(
 
     ranked_stories = all_stories
     # Limit to configured max stories while preserving Telegram coverage.
-    max_stories = settings.editorial_max_stories_per_call
+    max_stories = max_stories or resolve_report_profile(
+        evidence.report_mode
+    ).max_stories
     all_stories = _reserve_telegram_story_results(
         ranked_stories[:max_stories],
         ranked_stories,
@@ -1050,7 +1088,7 @@ def _reduction_cache_key(shard_id: str, evidence: EditorialEvidenceSet) -> str:
             f"{evidence.evidence_hash()}:{settings.editorial_temperature}:"
             f"{settings.editorial_max_input_tokens}:"
             f"{settings.editorial_max_output_tokens}:"
-            f"{settings.editorial_max_stories_per_call}"
+            f"{resolve_report_profile(evidence.report_mode).max_stories}"
         ).encode()
     ).hexdigest()[:64]
 

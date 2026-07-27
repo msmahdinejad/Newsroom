@@ -7,7 +7,11 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from newsroom.editorial.persistence import cache_route_identity
-from newsroom.pipeline.runner import generation_method_for_attempt, report_story_ids_for_attempt
+from newsroom.pipeline.runner import (
+    delivery_allowed_for_attempt,
+    generation_method_for_attempt,
+    report_story_ids_for_attempt,
+)
 from newsroom.scheduler import scheduled_boundary_job_id
 from newsroom.sources.validation_sweep import safe_failure_category
 
@@ -26,6 +30,16 @@ def test_fallback_report_is_not_mislabeled_ai():
 def test_nonfallback_provider_report_is_ai():
     attempt = SimpleNamespace(provider="mistral", status="ok", fallback_used=False)
     assert generation_method_for_attempt(attempt) == "ai"
+
+
+def test_deterministic_fallback_is_persisted_but_never_publicly_delivered():
+    attempt = SimpleNamespace(provider="deterministic", status="fallback", fallback_used=True)
+    assert delivery_allowed_for_attempt(attempt) is False
+
+
+def test_valid_ai_report_is_publicly_deliverable():
+    attempt = SimpleNamespace(provider="gemini", status="ok", fallback_used=False)
+    assert delivery_allowed_for_attempt(attempt) is True
 
 
 def test_report_lineage_contains_only_validated_final_output_stories():

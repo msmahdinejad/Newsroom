@@ -21,6 +21,8 @@ def process_command(args: argparse.Namespace) -> int:
         return _dedupe()
     elif args.process_command == "cluster":
         return _cluster()
+    elif args.process_command == "repair-clusters":
+        return _repair_clusters()
     else:
         print("Unknown process command")
         return 1
@@ -99,5 +101,31 @@ def _cluster() -> int:
             return 0
     except Exception as e:
         logger.error(f"Clustering failed: {e}")
+        print(f"FAIL: {e}")
+        return 1
+
+
+def _repair_clusters() -> int:
+    """Split legacy clusters using the corrected similarity contract."""
+    logger.info("Starting legacy cluster repair")
+    try:
+        from newsroom.pipeline.lock import PipelineLock
+        from newsroom.processing.cluster_repair import (
+            renormalize_reddit_items,
+            repair_polluted_story_clusters,
+        )
+
+        with PipelineLock(blocking=True), get_db() as db:
+            reddit_fixed = renormalize_reddit_items(db)
+            stats = repair_polluted_story_clusters(db)
+        print(
+            "OK: "
+            f"{reddit_fixed} Reddit items normalized; "
+            f"{stats.stories_split} polluted stories split into "
+            f"{stats.stories_created} additional coherent stories"
+        )
+        return 0
+    except Exception as e:
+        logger.error(f"Cluster repair failed: {e}")
         print(f"FAIL: {e}")
         return 1

@@ -56,10 +56,20 @@ def main() -> int:
     process_sub.add_parser("normalize", help="Normalize raw items")
     process_sub.add_parser("dedupe", help="Deduplicate items")
     process_sub.add_parser("cluster", help="Cluster into stories")
+    process_sub.add_parser(
+        "repair-clusters",
+        help="Split legacy clusters polluted by feed boilerplate",
+    )
 
     report_parser = subparsers.add_parser("report", help="Report generation")
     report_sub = report_parser.add_subparsers(dest="report_command")
-    report_sub.add_parser("generate", help="Generate Persian report")
+    report_generate = report_sub.add_parser("generate", help="Generate Persian report")
+    report_generate.add_argument(
+        "--source",
+        choices=["default", "all", "telegram", "x", "web", "github", "reddit"],
+        default="default",
+        help="Generate a programming report scoped to one platform",
+    )
 
     pipeline_parser = subparsers.add_parser("pipeline", help="Run complete pipeline")
     pipeline_sub = pipeline_parser.add_subparsers(dest="pipeline_command")

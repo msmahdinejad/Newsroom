@@ -38,18 +38,34 @@ MENU_KEYBOARD: dict[str, Any] = {
             {"text": "خبرهای جدید", "callback_data": "report_new"},
         ],
         [
-            {"text": "گزارش جامع فعلی", "callback_data": "report_comprehensive"},
-            {"text": "آخرین گزارش", "callback_data": "latest"},
+            {"text": "فقط تلگرام", "callback_data": "report_telegram"},
+            {"text": "فقط X", "callback_data": "report_x"},
         ],
-        [{"text": "راهنمای گزارش‌ها", "callback_data": "help"}],
+        [
+            {"text": "فقط وب‌سایت‌ها", "callback_data": "report_web"},
+            {"text": "فقط GitHub", "callback_data": "report_github"},
+        ],
+        [
+            {"text": "فقط Reddit", "callback_data": "report_reddit"},
+            {"text": "گزارش جامع فعلی", "callback_data": "report_comprehensive"},
+        ],
+        [
+            {"text": "آخرین گزارش", "callback_data": "latest"},
+            {"text": "راهنمای گزارش‌ها", "callback_data": "help"},
+        ],
     ]
 }
 
 HELP_TEXT = (
     "🤖 راهنمای گزارش‌های خبری\n\n"
-    "گزارش فوری — اخبار از آخرین گزارش زمان‌بندی‌شده\n"
-    "خبرهای جدید — فقط اخبار کاملاً جدید\n"
-    "گزارش جامع فعلی — گزارش گسترده فعلی\n"
+    "گزارش فوری — اخبار برنامه‌نویسی با تمرکز ویژه بر تلگرام\n"
+    "خبرهای جدید — فقط خبرهای برنامه‌نویسیِ تحویل‌نشده\n"
+    "گزارش جامع — نسخه گسترده از همه منابع\n"
+    "/report telegram — گزارش جامع فقط از تلگرام\n"
+    "/report x — گزارش جامع فقط از X\n"
+    "/report web — گزارش جامع فقط از وب‌سایت‌ها و RSS\n"
+    "/report github — پروژه‌ها و انتشارهای GitHub\n"
+    "/report reddit — گزارش جامع فقط از Reddit\n"
     "آخرین گزارش — آخرین گزارش تولید شده\n"
     "/status — وضعیت سرویس‌ها\n"
     "/sources — آمار منابع\n"
@@ -260,19 +276,27 @@ class TelegramBot:
         if cmd == "/collect" or cmd == "collect":
             return await self._handle_collect(chat_id)
 
-        if cmd in ("/report", "/report new", "/report comprehensive") or cmd in (
-            "report_now", "report_new", "report_comprehensive"
-        ):
+        report_modes = {
+            "/report": "manual",
+            "report_now": "manual",
+            "/report new": "manual_new",
+            "report_new": "manual_new",
+            "/report comprehensive": "manual_comprehensive",
+            "report_comprehensive": "manual_comprehensive",
+            "/report telegram": "platform_telegram",
+            "report_telegram": "platform_telegram",
+            "/report x": "platform_x",
+            "report_x": "platform_x",
+            "/report web": "platform_web",
+            "report_web": "platform_web",
+            "/report github": "platform_github",
+            "report_github": "platform_github",
+            "/report reddit": "platform_reddit",
+            "report_reddit": "platform_reddit",
+        }
+        if cmd in report_modes:
             # Map command to pipeline mode
-            mode_map = {
-                "/report": "manual",
-                "report_now": "manual",
-                "/report new": "manual_new",
-                "report_new": "manual_new",
-                "/report comprehensive": "manual_comprehensive",
-                "report_comprehensive": "manual_comprehensive",
-            }
-            mode = mode_map.get(cmd, "manual")
+            mode = report_modes[cmd]
             return await self._handle_report(chat_id, mode, user_id, update_id)
 
         # Unknown command — show menu
@@ -493,7 +517,13 @@ class TelegramBot:
 
         if result.get("status") != "ok":
             self._finish_request(request_key, "error", None, None)
-            await self._send_text(chat_id, "❌ خطا در تولید گزارش.")
+            if result.get("status") == "ai_unavailable":
+                await self._send_text(
+                    chat_id,
+                    "⏳ مدل هوش مصنوعی در دسترس نبود؛ برای جلوگیری از ارسال گزارش بی‌کیفیت چیزی ارسال نشد.",
+                )
+            else:
+                await self._send_text(chat_id, "❌ خطا در تولید گزارش.")
             return "error"
 
         result_report_id = result.get("report_id")

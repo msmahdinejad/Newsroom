@@ -43,6 +43,11 @@ def test_menu_keyboard_callback_data():
     assert "report_now" in callbacks
     assert "report_new" in callbacks
     assert "report_comprehensive" in callbacks
+    assert "report_telegram" in callbacks
+    assert "report_x" in callbacks
+    assert "report_web" in callbacks
+    assert "report_github" in callbacks
+    assert "report_reddit" in callbacks
     assert "latest" in callbacks
     assert "help" in callbacks
 
@@ -129,6 +134,28 @@ async def test_dispatch_report_comprehensive():
     result = await bot._dispatch_command(123, "report_comprehensive", 999, 1, "callback")
     assert result == "ok"
     bot._handle_report.assert_called_once_with(123, "manual_comprehensive", 999, 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("command", "mode"),
+    [
+        ("/report telegram", "platform_telegram"),
+        ("/report x", "platform_x"),
+        ("/report web", "platform_web"),
+        ("/report github", "platform_github"),
+        ("/report reddit", "platform_reddit"),
+    ],
+)
+async def test_dispatch_platform_report(command, mode):
+    bot = make_bot()
+    bot._handle_report = AsyncMock(return_value="ok")
+    bot._send_text = AsyncMock()
+
+    result = await bot._dispatch_command(123, command, 999, 1, "message")
+
+    assert result == "ok"
+    bot._handle_report.assert_called_once_with(123, mode, 999, 1)
 
 
 @pytest.mark.asyncio

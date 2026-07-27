@@ -12,6 +12,11 @@ import hashlib
 from sqlalchemy.orm import Session
 
 from newsroom.config import settings
+from newsroom.editorial.report_profiles import (
+    is_programming_material,
+    is_usable_editorial_material,
+    resolve_report_profile,
+)
 from newsroom.editorial.schema import (
     EVIDENCE_SCHEMA_VERSION,
     SYSTEM_PROMPT_VERSION,
@@ -20,7 +25,15 @@ from newsroom.editorial.schema import (
     EvidenceStoryPacket,
 )
 from newsroom.logging import get_logger
-from newsroom.storage.models import Evidence, NormalizedItem, Story, StoryItem, TelegramChannel
+from newsroom.storage.models import (
+    Evidence,
+    NormalizedItem,
+    RawItem,
+    Source,
+    Story,
+    StoryItem,
+    TelegramChannel,
+)
 
 logger = get_logger(__name__)
 
@@ -37,6 +50,7 @@ def build_evidence_set(
     Respects editorial cost controls: max stories per call, max evidence
     per story, max excerpt length.
     """
+    profile = resolve_report_profile(report_mode)
     max_stories = max_stories or settings.editorial_max_stories_per_call
     max_evidence = settings.editorial_max_evidence_per_story
     max_excerpt = settings.editorial_max_excerpt_length
@@ -54,14 +68,36 @@ def build_evidence_set(
 
     for story in stories:
         # Get normalized items for this story
-        items = (
+        item_query = (
             db.query(NormalizedItem)
             .join(StoryItem, StoryItem.item_id == NormalizedItem.id)
+            .join(RawItem, NormalizedItem.raw_item_id == RawItem.id)
+            .join(Source, RawItem.source_id == Source.id)
             .filter(StoryItem.story_id == story.id)
-            .order_by(NormalizedItem.published_at.desc())
-            .limit(max_evidence)
-            .all()
         )
+        if profile.source_types is not None:
+            item_query = item_query.filter(Source.type.in_(profile.source_types))
+        candidate_items = item_query.order_by(
+            NormalizedItem.published_at.desc()
+        ).all()
+        if profile.programming_only:
+            candidate_items = [
+                item
+                for item in candidate_items
+                if item.raw_item
+                and item.raw_item.source
+                and is_usable_editorial_material(
+                    title=item.title,
+                    description=item.description or "",
+                )
+                and is_programming_material(
+                    source_type=item.raw_item.source.type,
+                    category=item.raw_item.source.category or "",
+                    title=item.title,
+                    description=item.description or "",
+                )
+            ]
+        items = candidate_items[:max_evidence]
 
         sources: list[EvidenceSourceItem] = []
         for seq, item in enumerate(items):

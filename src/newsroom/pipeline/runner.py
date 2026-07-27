@@ -39,6 +39,11 @@ def generation_method_for_attempt(attempt: Any) -> str:
     return "ai" if used_ai else "deterministic"
 
 
+def delivery_allowed_for_attempt(attempt: Any) -> bool:
+    """Only validated AI copy may cross the public delivery boundary."""
+    return generation_method_for_attempt(attempt) == "ai"
+
+
 def report_story_ids_for_attempt(selected_story_ids: list[int], attempt: Any) -> list[int]:
     """Persist only stories actually present in the validated final output."""
     output = getattr(attempt, "output", None)
@@ -206,16 +211,15 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
     stage("cluster", "ok", f"{processed.clustered} items clustered in claimed batch")
 
     stage("report", "starting")
-    from newsroom.config import settings as runtime_settings
+    from newsroom.editorial.report_profiles import resolve_report_profile
     from newsroom.editorial.selection import select_stories_for_report
 
     report_mode = result["report_mode"]
-    # A Telegram digest is intentionally compact: stay within one validated
-    # editorial call so every selected story receives reader-facing AI copy.
+    report_profile = resolve_report_profile(report_mode)
     selection = select_stories_for_report(
         session,
         report_mode,
-        max_stories=runtime_settings.editorial_max_stories_per_call,
+        max_stories=report_profile.max_stories,
     )
     story_ids = selection.story_ids
 
@@ -370,6 +374,12 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
         "selected": selection.selected_count,
         "omitted": selection.omitted_count,
     }
+
+    if not delivery_allowed_for_attempt(editorial_attempt):
+        result["status"] = "ai_unavailable"
+        result["error"] = "validated AI editorial unavailable; fallback retained for audit"
+        stage("deliver", "skipped", "deterministic fallback is not public copy")
+        return
 
     stage("deliver", "starting")
     delivery_id = await _deliver(session, report.id)

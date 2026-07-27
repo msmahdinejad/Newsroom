@@ -4,6 +4,7 @@ Uses weighted Jaccard with version-compound keywords. Also handles
 cross-language clustering by normalizing Persian/English common terms.
 """
 
+import html
 import re
 from collections import Counter
 
@@ -21,6 +22,10 @@ _STOPWORDS = {
     "been", "being", "have", "has", "had", "do", "does", "did", "will",
     "would", "could", "should", "may", "might", "must", "can", "this",
     "that", "these", "those", "i", "you", "he", "she", "it", "we", "they",
+    # Feed/HTML boilerplate — never evidence that two posts describe one event.
+    "http", "https", "www", "com", "href", "table", "submitted", "user",
+    "reddit", "comments", "comment", "share", "vote", "permalink", "source",
+    "score", "hours", "link", "video", "fact", "checker",
     # Persian stopwords
     "در", "از", "به", "که", "این", "را", "برای", "با", "است", "شد",
     "می", "آن", "یک", "تا", "بر", "یا", "هم", "نیز", "اما", "هر",
@@ -53,8 +58,10 @@ class Clusterer:
 
         item_keywords: dict[int, set[str]] = {}
         for item in new_items:
-            text = item.title + " " + (item.description or "")
-            item_keywords[item.id] = self._extract_keywords(text)
+            # Feed descriptions often repeat a channel-wide footer/template.
+            # A title is the stable event identity; evidence uses descriptions
+            # later, after clustering.
+            item_keywords[item.id] = self._extract_keywords(item.title)
 
         # Build clusters
         clusters: list[list[int]] = []
@@ -94,7 +101,10 @@ class Clusterer:
 
     def _extract_keywords(self, text: str) -> set[str]:
         """Extract significant keywords with version compounds."""
-        words = re.findall(r"[\w\u0600-\u06FF]+", text.lower())
+        clean = html.unescape(text)
+        clean = re.sub(r"<[^>]+>", " ", clean)
+        clean = re.sub(r"https?://\S+|www\.\S+", " ", clean)
+        words = re.findall(r"[\w\u0600-\u06FF]+", clean.lower())
         keywords = {w for w in words if len(w) > 2 and w not in _STOPWORDS}
 
         # Version compounds: "python 3.13" → "python-3.13"

@@ -767,8 +767,11 @@ def test_is_private_ip_detects_private_ranges():
 
 
 def test_web_ssrf_accepts_public_domain():
-    # Should not raise for a public domain
-    _validate_public_url("https://example.com/")
+    # Host DNS may intentionally route public domains through a private proxy.
+    # Keep this unit test independent from that external network policy.
+    public_dns = [(2, 1, 6, "", ("93.184.216.34", 0))]
+    with patch("socket.getaddrinfo", return_value=public_dns):
+        _validate_public_url("https://example.com/")
 
 
 def test_web_adapter_rejects_url_with_control_chars():
@@ -921,6 +924,8 @@ def test_reddit_post_normalization_uses_stable_post_id():
         "published": "2026-07-18T12:00:00+00:00",
     }
     norm = normalizer.normalize(raw)
+    assert norm["title"] == "Some post"
+    assert norm["description"] == "Post text"
     assert norm["content_hash"] == normalizer._compute_hash("reddit:MachineLearning:abc123")
 
 
