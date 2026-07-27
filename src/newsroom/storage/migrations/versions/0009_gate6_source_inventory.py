@@ -1,7 +1,7 @@
-"""Gate 6 — authoritative source workbook inventory + source identity linkage.
+"""Production — authoritative source workbook inventory + source identity linkage.
 
 Adds the ``source_inventory`` table (one row per reviewed workbook source,
-expected 1344) and extends ``sources`` with a stable normalized identity
+and extends ``sources`` with a stable normalized identity
 that is independent of display name, plus workbook linkage columns.
 
 The inventory is the reconciliation authority: every workbook row is

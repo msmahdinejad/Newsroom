@@ -188,7 +188,20 @@ class MultiProviderRouter(EditorialProvider):
         repaired.fallback_used = False
         return RoutedEditorialResponse(response=repaired, repaired=True)
 
-    def validate_models(self) -> list[ModelValidationResult]:
+    def validate_models(
+        self,
+        *,
+        provider: str | None = None,
+        models: tuple[str, ...] = (),
+    ) -> list[ModelValidationResult]:
+        """Run bounded validation for the requested configured routes."""
+        selected_models = frozenset(models)
+        routes = [
+            route
+            for route in self.routes
+            if (provider is None or route.provider == provider)
+            and (not selected_models or route.model in selected_models)
+        ]
         validator = ModelValidator(
             transport=self.transport,
             dispatcher=self.dispatcher,
@@ -196,7 +209,7 @@ class MultiProviderRouter(EditorialProvider):
             clock=self.clock,
             sink=self.state_sink,
         )
-        return validator.validate_all(self.routes)
+        return validator.validate_all(routes)
 
     def validate_access_values(self) -> list[AccessValidationResult]:
         validator = ModelValidator(

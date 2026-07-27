@@ -30,4 +30,4 @@ def authorized_user_ids() -> set[int]:
 
 def deny_message() -> str:
     """Generic denial message with no infrastructure details."""
-    return "⛔ دسترسی غیرمجاز."
+    return "⛔ \u062f\u0633\u062a\u0631\u0633\u06cc \u063a\u06cc\u0631\u0645\u062c\u0627\u0632."

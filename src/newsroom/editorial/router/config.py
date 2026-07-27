@@ -124,7 +124,7 @@ def load_router_config(path: str | Path = ".env.providers.local") -> RouterConfi
             limits = RateLimits(
                 rpm=max(1, math.floor(advertised_rpm * headroom)),
                 tpm=max(1, math.floor(advertised_tpm * headroom)),
-                # Gate 6 explicitly reserves 50 of 500 daily requests.
+                # Production explicitly reserves 50 of 500 daily requests.
                 rpd=max(1, math.floor(advertised_rpd * _float(values, "GEMINI_RPD_HEADROOM", 0.9))),
             )
             concurrency = _int(values, "LLM_GEMINI_CONCURRENCY", 1)

@@ -1,4 +1,4 @@
-"""Gate 3 — Telegram MTProto ingestion: channel registry, gaps, raw item identity.
+"""MTProto — Telegram MTProto ingestion: channel registry, gaps, raw item identity.
 
 Revision ID: 0004_gate3_mtproto
 Revises: 0003_gate2_telegram

@@ -1,4 +1,4 @@
-"""Safe public types for the Gate 6 multi-provider editorial router."""
+"""Safe public types for the Production multi-provider editorial router."""
 
 from __future__ import annotations
 

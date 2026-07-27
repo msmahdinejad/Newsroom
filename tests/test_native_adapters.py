@@ -1,4 +1,4 @@
-"""Deterministic tests for the Gate 6 native read-only adapters.
+"""Deterministic tests for the Production native read-only adapters.
 
 DB-free, network-free: httpx is mocked. Covers the native HTML reader,
 Reddit subreddit JSON collector, and YouTube RSS collector (parsing + error

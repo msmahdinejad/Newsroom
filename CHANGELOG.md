@@ -7,9 +7,29 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-07-27
+
+### Added
+
+- Cross-platform idempotent bootstrap with empty, default, selected-default,
+  and custom source modes.
+- Credential-free starter source catalog and generic CLI source lifecycle.
+- Safe provider validation and health commands.
+- English-only public repository audit for tracked data and protected values.
+
 ### Changed
 
-- Nothing yet.
+- Public documentation and project structure were consolidated around supported
+  operator and contributor workflows.
+- Production images no longer contain tests, developer tooling, or maintenance
+  scripts.
+- Authenticated social collection is disabled by default.
+- Report and bot localization now supports English and Persian by configuration.
+
+### Removed
+
+- Historical gate evidence, local diagnostics, agent-specific skills,
+  production snapshots, and duplicate command wrappers.
 
 ## [2.0.0] - 2026-07-24
 
@@ -24,7 +44,7 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Persistent Gemini, Mistral, Groq, and NVIDIA editorial routing with bounded
   queues, safe key pools, quota accounting, cooldowns, circuit breakers,
   schema repair, and deterministic fallback.
-- Hierarchical evidence-grounded Persian report generation.
+- Hierarchical evidence-grounded localized report generation.
 - Tehran 00:00/06:00/12:00/18:00 scheduling and idempotent Telegram delivery.
 - Owner-restricted Telegram operational commands.
 - Docker Compose production services, health checks, persistent volumes, and
@@ -47,4 +67,4 @@ and the project uses [Semantic Versioning](https://semver.org/).
   before starting workers.
 - Copy new variable names from the example files into ignored local
   configuration; never overwrite existing access values with examples.
-- The production source workbook remains private and must be supplied locally.
+- Optional operator source workbooks remain local and must be supplied per deployment.

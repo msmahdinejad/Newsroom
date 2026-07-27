@@ -26,11 +26,11 @@ def test_menu_keyboard_has_persian_labels():
         for row in MENU_KEYBOARD["inline_keyboard"]
         for btn in row
     ]
-    assert "گزارش فوری" in labels
-    assert "خبرهای جدید" in labels
-    assert "گزارش جامع فعلی" in labels
-    assert "آخرین گزارش" in labels
-    assert "راهنمای گزارش‌ها" in labels
+    assert "\u06af\u0632\u0627\u0631\u0634 \u0641\u0648\u0631\u06cc" in labels
+    assert "\u062e\u0628\u0631\u0647\u0627\u06cc \u062c\u062f\u06cc\u062f" in labels
+    assert "\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 \u0641\u0639\u0644\u06cc" in labels
+    assert "\u0622\u062e\u0631\u06cc\u0646 \u06af\u0632\u0627\u0631\u0634" in labels
+    assert "\u0631\u0627\u0647\u0646\u0645\u0627\u06cc \u06af\u0632\u0627\u0631\u0634‌\u0647\u0627" in labels
 
 
 def test_menu_keyboard_callback_data():
@@ -53,9 +53,9 @@ def test_menu_keyboard_callback_data():
 
 
 def test_help_text_is_persian():
-    assert "راهنما" in HELP_TEXT
-    assert "گزارش" in HELP_TEXT
-    assert "تهران" in HELP_TEXT
+    assert "\u0631\u0627\u0647\u0646\u0645\u0627" in HELP_TEXT
+    assert "\u06af\u0632\u0627\u0631\u0634" in HELP_TEXT
+    assert "\u062a\u0647\u0631\u0627\u0646" in HELP_TEXT
 
 
 def test_help_text_no_secrets():

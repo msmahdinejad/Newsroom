@@ -1,9 +1,9 @@
-"""Deterministic tests for the Gate 6 workbook importer and source inventory.
+"""Deterministic tests for the extended workbook source inventory.
 
 These tests are DB-free: they cover pure functions (stable identity,
 platform→type mapping, row validation, workbook parsing from a synthetic
 XLSX) and do not require PostgreSQL. Real-DB import/activation is covered by
-tests/integration/test_gate6_source_inventory.py.
+tests/integration/test_source_inventory_db.py.
 """
 
 from __future__ import annotations
@@ -12,8 +12,6 @@ from pathlib import Path
 
 from newsroom.sources.inventory import (
     AUTHORITATIVE_SHEET,
-    EXPECTED_PLATFORM_COUNTS,
-    EXPECTED_TOTAL,
     _parse_rows,
     _validate_row,
     mapped_type_for,
@@ -187,11 +185,3 @@ def test_parse_rows_skips_empty_and_headerless():
     parsed = _parse_rows(rows)
     assert len(parsed) == 1
     Path(fp).unlink(missing_ok=True)
-
-
-def test_expected_constants_match_spec():
-    assert EXPECTED_TOTAL == 1344
-    assert EXPECTED_PLATFORM_COUNTS == {
-        "Telegram": 159, "Reddit": 204, "Community": 45, "Community / Forum": 19,
-        "X / Twitter": 144, "Website / Newsletter": 464, "GitHub": 246, "YouTube / Social": 63,
-    }

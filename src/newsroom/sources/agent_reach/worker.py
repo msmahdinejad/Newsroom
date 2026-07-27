@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from newsroom.config import settings
 from newsroom.logging import get_logger, setup_logging
-from newsroom.pipeline.gate5_collect import collect_agent_reach_sources
+from newsroom.pipeline.social_collect import collect_agent_reach_sources
 from newsroom.sources.agent_reach.adapters import (
     apply_default_production_decisions,
     upgrade_x_to_production,

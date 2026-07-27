@@ -1,4 +1,4 @@
-"""Gate 5X — X/Twitter account state for production timeline ingestion.
+"""X ingestion — X/Twitter account state for production timeline ingestion.
 
 Adds the x_account_state table to persist stable account IDs, resolved
 handles, and per-account health separately from the generic source state.

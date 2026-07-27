@@ -1,4 +1,4 @@
-"""Gate 6 production connector ownership, bounds, and secret-scope tests."""
+"""Production production connector ownership, bounds, and secret-scope tests."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ PIN = "1494c2ab239e7355a77e7cceaf3271453a1f34b5"
 def test_compose_has_single_mtproto_owner_and_isolated_x_env() -> None:
     compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
     collector = compose.split("  collector:", 1)[1].split("  report-worker:", 1)[0]
-    ingestor = compose.split("  telegram-ingestor:", 1)[1].split("  # Gate 5:", 1)[0]
+    ingestor = compose.split("  telegram-ingestor:", 1)[1].split("  # Social collection:", 1)[0]
     agent_worker = compose.split("  agent-reach-worker:", 1)[1].split(
         "  # One-time authorization", 1
     )[0]
@@ -40,7 +40,7 @@ def test_compose_scopes_protected_configuration_to_required_services() -> None:
     telegram_bot = compose.split("  telegram-bot:", 1)[1].split(
         "  telegram-ingestor:", 1
     )[0]
-    ingestor = compose.split("  telegram-ingestor:", 1)[1].split("  # Gate 5:", 1)[0]
+    ingestor = compose.split("  telegram-ingestor:", 1)[1].split("  # Social collection:", 1)[0]
     agent_worker = compose.split("  agent-reach-worker:", 1)[1].split(
         "  # One-time authorization", 1
     )[0]
@@ -196,7 +196,7 @@ def test_incomplete_mtproxy_fails_closed() -> None:
 
 def test_compose_passes_safe_telegram_transport_controls() -> None:
     compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
-    ingestor = compose.split("  telegram-ingestor:", 1)[1].split("  # Gate 5:", 1)[0]
+    ingestor = compose.split("  telegram-ingestor:", 1)[1].split("  # Social collection:", 1)[0]
     authorize = compose.split("  telegram-authorize:", 1)[1].split("volumes:", 1)[0]
     for service in (ingestor, authorize):
         assert "TELEGRAM_PROXY_TYPE:" in service
@@ -457,7 +457,7 @@ def test_x_activation_persists_only_safe_env_references(monkeypatch) -> None:
 
 
 def test_x_failures_are_reduced_to_safe_categories() -> None:
-    from newsroom.pipeline.gate5_collect import _safe_collection_failure_category
+    from newsroom.pipeline.social_collect import _safe_collection_failure_category
     from newsroom.sources.base import CollectionError
 
     assert (

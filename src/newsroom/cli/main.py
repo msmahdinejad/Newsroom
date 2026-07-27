@@ -1,4 +1,4 @@
-"""Command-line interface — V2."""
+"""Newsroom command-line interface."""
 
 import argparse
 import asyncio
@@ -38,7 +38,7 @@ def db_migrate() -> int:
 
 def main() -> int:
     """Main CLI entry point."""
-    parser = argparse.ArgumentParser(description="Persian AI Newsroom v2")
+    parser = argparse.ArgumentParser(description="Newsroom")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     subparsers.add_parser("health", help="Check system health")
@@ -63,7 +63,7 @@ def main() -> int:
 
     report_parser = subparsers.add_parser("report", help="Report generation")
     report_sub = report_parser.add_subparsers(dest="report_command")
-    report_generate = report_sub.add_parser("generate", help="Generate Persian report")
+    report_generate = report_sub.add_parser("generate", help="Generate a localized report")
     report_generate.add_argument(
         "--source",
         choices=["default", "all", "telegram", "x", "web", "github", "reddit"],
@@ -75,20 +75,96 @@ def main() -> int:
     pipeline_sub = pipeline_parser.add_subparsers(dest="pipeline_command")
     pipeline_sub.add_parser("run", help="Run full pipeline")
 
-    sources_parser = subparsers.add_parser("sources", help="Source inventory management")
+    providers_parser = subparsers.add_parser(
+        "providers",
+        help="Editorial provider validation and safe health",
+    )
+    providers_sub = providers_parser.add_subparsers(dest="providers_command")
+    providers_validate = providers_sub.add_parser(
+        "validate",
+        help="Run bounded validation for configured models",
+    )
+    providers_validate.add_argument(
+        "--provider",
+        help="Configured provider name; omit to validate every configured provider",
+    )
+    providers_validate.add_argument(
+        "--model",
+        action="append",
+        help="Exact provider model ID; repeat to validate multiple models",
+    )
+    providers_validate.add_argument(
+        "--validate-keys",
+        action="store_true",
+        help="Also probe each configured key through a validated route",
+    )
+    providers_sub.add_parser("status", help="Show persisted safe provider health")
+
+    sources_parser = subparsers.add_parser("sources", help="Source registry management")
     sources_sub = sources_parser.add_subparsers(dest="sources_command")
-    sources_import = sources_sub.add_parser("import", help="Import source workbook")
-    sources_import.add_argument(
+
+    sources_sub.add_parser("catalog", help="List packaged starter sources")
+    sources_initialize = sources_sub.add_parser(
+        "initialize",
+        help="Initialize an empty, default, or custom source registry",
+    )
+    sources_initialize.add_argument(
+        "--mode",
+        choices=["empty", "default", "custom"],
+        required=True,
+    )
+    sources_initialize.add_argument("--file", help="CSV/XLSX file for custom mode")
+    sources_initialize.add_argument(
+        "--select",
+        help="Comma-separated starter keys; omit to use the default subset",
+    )
+    sources_initialize.add_argument(
+        "--replace",
+        action="store_true",
+        help="Disable existing sources before applying the selection",
+    )
+
+    sources_import = sources_sub.add_parser("import", help="Import a CSV/XLSX source file")
+    sources_import.add_argument("--file", required=True)
+    sources_list = sources_sub.add_parser("list", help="List configured sources")
+    sources_list.add_argument("--type")
+    sources_list.add_argument("--enabled", choices=["all", "yes", "no"], default="all")
+    sources_list.add_argument("--page", type=int, default=1)
+    sources_list.add_argument("--page-size", type=int, default=20)
+    for action in ("enable", "disable"):
+        source_action = sources_sub.add_parser(action, help=f"{action.title()} one source")
+        source_action.add_argument("source_id", type=int)
+    source_delete = sources_sub.add_parser(
+        "delete",
+        help="Archive one source while retaining collected lineage",
+    )
+    source_delete.add_argument("source_id", type=int)
+    source_delete.add_argument("--confirm", action="store_true", required=True)
+
+    inventory_import = sources_sub.add_parser(
+        "inventory-import",
+        help="Import the optional extended inventory workbook",
+    )
+    inventory_import.add_argument(
         "--workbook",
         help="Workbook path (or set NEWSROOM_SOURCE_WORKBOOK)",
     )
-    sources_sub.add_parser("activate", help="Activate accessible sources")
-    sources_reconcile = sources_sub.add_parser("reconcile", help="Import + activate in one step")
-    sources_reconcile.add_argument(
+    sources_sub.add_parser(
+        "inventory-activate",
+        help="Activate usable rows from the extended inventory",
+    )
+    inventory_reconcile = sources_sub.add_parser(
+        "inventory-reconcile",
+        help="Import and activate an extended inventory",
+    )
+    inventory_reconcile.add_argument(
         "--workbook",
         help="Workbook path (or set NEWSROOM_SOURCE_WORKBOOK)",
     )
-    sources_sub.add_parser("status", help="Print reconciliation summary")
+    sources_sub.add_parser(
+        "inventory-status",
+        help="Show extended-inventory reconciliation status",
+    )
 
     args = parser.parse_args()
 
@@ -108,6 +184,9 @@ def main() -> int:
     elif args.command == "pipeline" and args.pipeline_command == "run":
         from newsroom.cli.commands.pipeline import pipeline_run_command
         return pipeline_run_command(args)
+    elif args.command == "providers":
+        from newsroom.cli.commands.providers import providers_command
+        return providers_command(args)
     elif args.command == "sources":
         from newsroom.cli.commands.sources import sources_command
         return sources_command(args)

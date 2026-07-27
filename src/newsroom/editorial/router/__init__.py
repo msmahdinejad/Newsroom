@@ -1,4 +1,4 @@
-"""Gate 6 multi-provider editorial routing public API."""
+"""Production multi-provider editorial routing public API."""
 
 from newsroom.editorial.router.config import DEFAULT_MODELS, load_router_config
 from newsroom.editorial.router.factory import create_router_from_local_env

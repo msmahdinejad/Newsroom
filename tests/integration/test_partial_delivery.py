@@ -60,7 +60,7 @@ def _cleanup(db, report_id, delivery_id=None):
 
 def _make_long_report(db, content=None):
     if content is None:
-        para = "این یک پاراگراف فارسی است. " * 30
+        para = "\u0627\u06cc\u0646 \u06cc\u06a9 \u067e\u0627\u0631\u0627\u06af\u0631\u0627\u0641 \u0641\u0627\u0631\u0633\u06cc \u0627\u0633\u062a. " * 30
         content = "\n\n".join([para] * 25)
     report = Report(
         content_fa=content,
@@ -188,9 +188,9 @@ def test_retry_sends_only_the_missing_chunk(db_session):
     """A persisted gap must not cause already-confirmed later chunks to resend."""
     content = "\n\n".join(
         [
-            "بخش اول " + "a" * 3700,
-            "بخش دوم " + "b" * 3700,
-            "بخش سوم " + "c" * 3700,
+            "\u0628\u062e\u0634 \u0627\u0648\u0644 " + "a" * 3700,
+            "\u0628\u062e\u0634 \u062f\u0648\u0645 " + "b" * 3700,
+            "\u0628\u062e\u0634 \u0633\u0648\u0645 " + "c" * 3700,
         ]
     )
     report = _make_long_report(db_session, content=content)
@@ -292,7 +292,7 @@ def test_cursor_advances_on_complete_delivery(db_session):
 
 def test_cursor_does_not_advance_on_partial(db_session):
     """Partial delivery must not advance cursor."""
-    content = "\n\n".join(["پاراگراف " + "x" * 800] * 6)
+    content = "\n\n".join(["\u067e\u0627\u0631\u0627\u06af\u0631\u0627\u0641 " + "x" * 800] * 6)
     report = _make_long_report(db_session, content=content)
 
     td = TelegramDelivery(client=_FailOnChunk2())

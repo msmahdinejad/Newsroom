@@ -17,16 +17,16 @@ logger = get_logger(__name__)
 
 # Persian/Arabic character normalization map
 _PERSIAN_MAP = {
-    "ي": "ی",  # Arabic Yeh → Persian Yeh
-    "ك": "ک",  # Arabic Kaf → Persian Kaf
-    "أ": "ا",
-    "إ": "ا",
-    "آ": "ا",
-    "ة": "ه",
-    "ؤ": "و",
-    "ئ": "ی",
-    "۰": "0", "۱": "1", "۲": "2", "۳": "3", "۴": "4",
-    "۵": "5", "۶": "6", "۷": "7", "۸": "8", "۹": "9",
+    "\u064a": "\u06cc",  # Arabic Yeh → Persian Yeh
+    "\u0643": "\u06a9",  # Arabic Kaf → Persian Kaf
+    "\u0623": "\u0627",
+    "\u0625": "\u0627",
+    "\u0622": "\u0627",
+    "\u0629": "\u0647",
+    "\u0624": "\u0648",
+    "\u0626": "\u06cc",
+    "\u06f0": "0", "\u06f1": "1", "\u06f2": "2", "\u06f3": "3", "\u06f4": "4",
+    "\u06f5": "5", "\u06f6": "6", "\u06f7": "7", "\u06f8": "8", "\u06f9": "9",
 }
 
 _TRACKING_PARAMS = {

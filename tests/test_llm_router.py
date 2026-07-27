@@ -1,4 +1,4 @@
-"""Deterministic Gate 6 multi-provider router contract tests.
+"""Deterministic Production multi-provider router contract tests.
 
 The public seams under test are the local-file config loader, key pool, quota
 controller, queued dispatcher, HTTP payload builder, and MultiProviderRouter.
@@ -82,8 +82,8 @@ def _response(provider: str, model: str) -> EditorialResponse:
         stories=[
             StoryEditorialResult(
                 story_id=1,
-                headline_fa="مدل جدید منتشر شد",
-                summary_fa="این مدل به صورت محدود منتشر شده است.",
+                headline_fa="\u0645\u062f\u0644 \u062c\u062f\u06cc\u062f \u0645\u0646\u062a\u0634\u0631 \u0634\u062f",
+                summary_fa="\u0627\u06cc\u0646 \u0645\u062f\u0644 \u0628\u0647 \u0635\u0648\u0631\u062a \u0645\u062d\u062f\u0648\u062f \u0645\u0646\u062a\u0634\u0631 \u0634\u062f\u0647 \u0627\u0633\u062a.",
                 source_ref_ids=["ev-1-0"],
                 source_links=["https://example.test/release"],
                 key_claims=[

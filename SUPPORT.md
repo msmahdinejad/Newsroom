@@ -5,10 +5,10 @@
 For usage questions:
 
 1. Read [README.md](README.md) and
-   [docs/FINAL_PRODUCTION_RUNBOOK.md](docs/FINAL_PRODUCTION_RUNBOOK.md).
+   [docs/deployment.md](docs/deployment.md).
 2. Run the safe diagnostics:
 
-   ```powershell
+   ```bash
    uv run newsroom health
    docker compose ps
    ```

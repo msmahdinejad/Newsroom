@@ -189,12 +189,12 @@ def _has_unsupported_numbers(
 
     This is a conservative heuristic — false positives are better than
     letting unsupported claims through.
-    Handles both Latin (0-9) and Persian-Indic (۰-۹) digit variants.
+    Handles both Latin (0-9) and Persian-Indic (\u06f0-\u06f9) digit variants.
     """
     import re
 
     # Normalize Persian-Indic digits to Latin for comparison
-    persian_map = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+    persian_map = str.maketrans("\u06f0\u06f1\u06f2\u06f3\u06f4\u06f5\u06f6\u06f7\u06f8\u06f9\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669", "01234567890123456789")
 
     def normalize_num(s: str) -> str:
         return s.translate(persian_map)

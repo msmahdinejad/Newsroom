@@ -164,7 +164,7 @@ def test_job_run_persistence(db: Session) -> None:
 def test_delivery_idempotency_record(db: Session) -> None:
     from newsroom.storage.models import Delivery, Report
 
-    report = Report(content_fa="تست", story_ids=[], report_mode="manual")
+    report = Report(content_fa="\u062a\u0633\u062a", story_ids=[], report_mode="manual")
     db.add(report)
     db.flush()
     d = Delivery(

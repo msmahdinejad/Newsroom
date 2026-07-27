@@ -398,7 +398,7 @@ class TelegramBot:
                 )
             language = self._language()
             heading = (
-                f"📚 منابع — صفحه {page} از {total} رکورد"
+                f"📚 \u0645\u0646\u0627\u0628\u0639 — \u0635\u0641\u062d\u0647 {page} \u0627\u0632 {total} \u0631\u06a9\u0648\u0631\u062f"
                 if language == "fa"
                 else f"📚 Sources — page {page}, {total} records"
             )
@@ -457,9 +457,9 @@ class TelegramBot:
                     result = control.delete_source(source_id, confirmed=True)
             localized_action = {
                 "fa": {
-                    "enabled": "فعال شد",
-                    "disabled": "غیرفعال شد",
-                    "deleted": "آرشیو شد",
+                    "enabled": "\u0641\u0639\u0627\u0644 \u0634\u062f",
+                    "disabled": "\u063a\u06cc\u0631\u0641\u0639\u0627\u0644 \u0634\u062f",
+                    "deleted": "\u0622\u0631\u0634\u06cc\u0648 \u0634\u062f",
                 },
                 "en": {
                     "enabled": "enabled",

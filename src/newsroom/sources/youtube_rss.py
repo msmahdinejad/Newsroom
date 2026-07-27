@@ -59,7 +59,7 @@ class NativeYouTubeRssCollector(SourceCollector):
                 # resolution step uses a crawler UA that YouTube serves to
                 # without the EU consent wall (browser UAs are gated behind a
                 # consent redirect). Read-only public channel metadata only.
-                "User-Agent": "Mozilla/5.0 (compatible; newsroom/2.0; +https://github.com/newsroom)",
+                "User-Agent": "Mozilla/5.0 (compatible; newsroom/3.0; +https://github.com/newsroom)",
                 "Accept": "text/html,application/atom+xml,application/xml",
                 "Accept-Language": "en-US,en;q=0.9",
             },

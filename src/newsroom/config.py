@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     collection_timeout_connect: int = 30
     collection_timeout_read: int = 60
     collection_max_size_mb: int = 2
-    collection_user_agent: str = "newsroom/2.0"
+    collection_user_agent: str = "newsroom/3.0"
     collection_proxy_url: str = ""
 
     # Processing
@@ -45,11 +45,11 @@ class Settings(BaseSettings):
     schedule_evening: str = "21:00"
     timezone: str = "Asia/Tehran"
 
-    # Gate 6: six-hour reporting cadence (00/06/12/18 Tehran). The four
+    # Production: six-hour reporting cadence (00/06/12/18 Tehran). The four
     # scheduled jobs are registered in newsroom.scheduler with these hours.
     schedule_report_hours: str = "0,6,12,18"
 
-    # Gate 6: safe per-platform collection intervals (seconds).
+    # Production: safe per-platform collection intervals (seconds).
     # Telegram/X: frequent incremental; RSS: conditional; websites: conservative;
     # GitHub: release polling; YouTube: channel incremental; Reddit/forums: bounded.
     collect_interval_telegram_seconds: int = 300
@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     telegram_bot_enabled: bool = False
     telegram_ingestor_enabled: bool = False
 
-    # Gate 2: delivery config
+    # Delivery: delivery config
     telegram_chunk_size: int = 3800  # safe below 4096 limit
     telegram_parse_mode: str = "HTML"  # HTML for safe entity escaping
     telegram_poll_timeout: int = 30  # long-poll seconds
@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     telegram_retry_base_delay: float = 1.0  # base backoff seconds
     telegram_test_chat_id: str = ""  # optional explicit test chat
 
-    # Telegram MTProto (source collector — Gate 3, not Gate 2)
+    # Telegram MTProto (source collector — MTProto, not Delivery)
     telegram_api_id: str = ""
     telegram_api_hash: str = ""
     telegram_phone: str = ""
@@ -115,7 +115,7 @@ class Settings(BaseSettings):
     # Pipeline lock timeout (seconds) — advisory lock is session-held; timeout is soft doc
     pipeline_lock_timeout: int = 300
 
-    # Gate 4: AI editorial layer
+    # Editorial: AI editorial layer
     editorial_enabled: bool = False
     editorial_timeout_seconds: int = 60
     editorial_max_retries: int = 2
@@ -131,7 +131,7 @@ class Settings(BaseSettings):
     editorial_scheduled_run_budget: int = 1
     editorial_manual_run_budget: int = 3
 
-    # Gate 4 scalable: hierarchical editorial controls
+    # Editorial scalable: hierarchical editorial controls
     editorial_max_stories_per_shard: int = 8
     editorial_max_map_calls_per_report: int = 12
     editorial_max_reduction_calls_per_report: int = 4
@@ -144,7 +144,7 @@ class Settings(BaseSettings):
     editorial_max_pending_jobs: int = 3
     editorial_stale_job_timeout_seconds: int = 600
 
-    # Gate 5: Agent-Reach capability layer (external internet/social platforms)
+    # Social collection: Agent-Reach capability layer (external internet/social platforms)
     # Agent-Reach is a capability-selection, diagnostics, and backend-routing layer.
     # Newsroom owns source config, cursors, retries, normalization, persistence, and security.
     agent_reach_enabled: bool = False

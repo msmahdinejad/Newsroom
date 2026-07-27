@@ -1,6 +1,6 @@
-"""Gate 6 — authoritative XLSX workbook importer and production source registry.
+"""Optional extended XLSX inventory importer and source registry.
 
-Parses the reviewed source workbook (``All Sources`` sheet is authoritative),
+Parses an operator-supplied workbook (``All Sources`` sheet is authoritative),
 preserves every workbook row in the ``source_inventory`` table with a stable
 normalized identity (independent of display name), validates each row, and
 activates accessible sources into the existing ``sources`` collector registry.
@@ -36,19 +36,8 @@ from newsroom.storage.models import Source, SourceInventory
 
 logger = get_logger(__name__)
 
-# Expected authoritative sheet and reconciliation totals.
+# Extended inventory schema.
 AUTHORITATIVE_SHEET = "All Sources"
-EXPECTED_TOTAL = 1344
-EXPECTED_PLATFORM_COUNTS: dict[str, int] = {
-    "Telegram": 159,
-    "Reddit": 204,
-    "Community": 45,
-    "Community / Forum": 19,
-    "X / Twitter": 144,
-    "Website / Newsletter": 464,
-    "GitHub": 246,
-    "YouTube / Social": 63,
-}
 
 # Workbook column header names (exact strings from the workbook).
 COL_ID = "ID"
@@ -72,8 +61,7 @@ COL_DISCOVERY = "Discovery Source"
 COL_TIER = "Tier"
 COL_COVERAGE = "Coverage Score"
 
-# Workbook search paths (relative to repo root or absolute).
-WORKBOOK_GLOB = "tech_ai_programming_source_radar_global_2026*.xlsx"
+# Workbook location (relative to repo root or absolute).
 SOURCE_WORKBOOK_ENV = "NEWSROOM_SOURCE_WORKBOOK"
 IMPORT_DEST = Path("config/import/source-radar.xlsx")
 
@@ -298,13 +286,6 @@ def find_workbook(
     if canonical.is_file():
         return canonical
 
-    search: list[Path] = [root, root / "config/import"]
-    for d in search:
-        if not d.exists():
-            continue
-        for p in sorted(d.glob(WORKBOOK_GLOB)):
-            if p.is_file():
-                return p.resolve()
     return None
 
 
@@ -759,10 +740,11 @@ def reconciliation_summary(session: Session) -> dict[str, Any]:
         by_state[inv.operational_state] = by_state.get(inv.operational_state, 0) + 1
         if inv.inactive_reason:
             inactive_reasons[inv.inactive_reason] = inactive_reasons.get(inv.inactive_reason, 0) + 1
+    accounted = sum(by_state.values())
     return {
         "total": total,
-        "expected_total": EXPECTED_TOTAL,
-        "reconciled": total == EXPECTED_TOTAL,
+        "accounted": accounted,
+        "reconciled": total == accounted,
         "by_platform": by_platform,
         "by_state": by_state,
         "inactive_reasons": inactive_reasons,
@@ -771,8 +753,6 @@ def reconciliation_summary(session: Session) -> dict[str, Any]:
 
 __all__ = [
     "AUTHORITATIVE_SHEET",
-    "EXPECTED_PLATFORM_COUNTS",
-    "EXPECTED_TOTAL",
     "IMPORT_DEST",
     "SOURCE_WORKBOOK_ENV",
     "ActivationReport",

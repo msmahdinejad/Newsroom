@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-Persian AI Newsroom is distributed under the MIT License. The project depends
+Newsroom is distributed under the MIT License. The project depends
 on third-party software that remains under its own license. This notice is
 informational and does not replace the license text distributed by each
 upstream project.

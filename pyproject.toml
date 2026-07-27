@@ -1,11 +1,11 @@
 [project]
 name = "newsroom"
-version = "2.0.0"
-description = "Persian AI Newsroom - Local-first automated news digest system"
+version = "3.0.0"
+description = "Local-first, multi-source news collection and AI reporting"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
-keywords = ["newsroom", "persian", "ai", "telegram", "news-aggregation"]
+keywords = ["newsroom", "ai", "telegram", "news-aggregation", "llm-router"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "License :: OSI Approved :: MIT License",
@@ -62,7 +62,6 @@ allow-direct-references = true
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-exclude = [".diagnostics"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM"]

@@ -1,0 +1,32 @@
+key,name,type,url,language,category,trust_class,default_enabled
+python-insider,Python Insider,rss,https://blog.python.org/feeds/posts/default,en,python,official,true
+github-blog,GitHub Blog,rss,https://github.blog/feed/,en,developer-tools,official,true
+cloudflare-blog,Cloudflare Blog,rss,https://blog.cloudflare.com/rss/,en,infrastructure,official,true
+rust-blog,Rust Blog,rss,https://blog.rust-lang.org/feed.xml,en,rust,official,true
+django-news,Django News,rss,https://www.djangoproject.com/rss/weblog/,en,python,official,true
+kubernetes-blog,Kubernetes Blog,rss,https://kubernetes.io/feed.xml,en,cloud,official,true
+mozilla-hacks,Mozilla Hacks,rss,https://hacks.mozilla.org/feed/,en,web-development,official,true
+cpython,python/cpython,github_releases,https://github.com/python/cpython,en,python,official,true
+uv,astral-sh/uv,github_releases,https://github.com/astral-sh/uv,en,python,official,true
+pydantic,pydantic/pydantic,github_releases,https://github.com/pydantic/pydantic,en,python,official,true
+fastapi,fastapi/fastapi,github_releases,https://github.com/fastapi/fastapi,en,python,official,true
+django,django/django,github_releases,https://github.com/django/django,en,python,official,true
+httpx,encode/httpx,github_releases,https://github.com/encode/httpx,en,python,official,true
+nodejs,nodejs/node,github_releases,https://github.com/nodejs/node,en,javascript,official,true
+deno,denoland/deno,github_releases,https://github.com/denoland/deno,en,javascript,official,true
+rust,rust-lang/rust,github_releases,https://github.com/rust-lang/rust,en,rust,official,true
+typescript,microsoft/TypeScript,github_releases,https://github.com/microsoft/TypeScript,en,typescript,official,true
+vite,vitejs/vite,github_releases,https://github.com/vitejs/vite,en,javascript,official,true
+nextjs,vercel/next.js,github_releases,https://github.com/vercel/next.js,en,javascript,official,true
+kubernetes,kubernetes/kubernetes,github_releases,https://github.com/kubernetes/kubernetes,en,cloud,official,true
+docker-compose,docker/compose,github_releases,https://github.com/docker/compose,en,devops,official,true
+transformers,huggingface/transformers,github_releases,https://github.com/huggingface/transformers,en,ai-development,official,true
+ollama,ollama/ollama,github_releases,https://github.com/ollama/ollama,en,ai-development,official,true
+telegram-coding-news,Coding News,telegram,https://t.me/codingnews,en,programming,community,false
+telegram-coding-at-night,Coding at Night,telegram,https://t.me/codingatnight,en,programming,community,false
+telegram-frontend-info,Frontend Info,telegram,https://t.me/frontend_info,en,web-development,community,false
+telegram-aspnet-core,ASP.NET Core,telegram,https://t.me/aspnetvnext,en,dotnet,community,false
+telegram-graph-ml,Graph Machine Learning,telegram,https://t.me/graphml,en,ai-development,community,false
+reddit-programming,r/programming,reddit_subreddit,https://www.reddit.com/r/programming/,en,programming,community,false
+reddit-python,r/Python,reddit_subreddit,https://www.reddit.com/r/Python/,en,python,community,false
+reddit-rust,r/rust,reddit_subreddit,https://www.reddit.com/r/rust/,en,rust,community,false

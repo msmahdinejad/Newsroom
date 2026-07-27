@@ -24,7 +24,7 @@ def telegram_bot_status() -> dict[str, Any]:
             "status": "blocked_by_credentials",
             "feature": "telegram_bot",
             "missing": "TELEGRAM_BOT_TOKEN",
-            "healthy": True,  # Gate 1: blocked is a valid mode
+            "healthy": True,  # Foundation: blocked is a valid mode
         }
 
     # Enabled — deep health

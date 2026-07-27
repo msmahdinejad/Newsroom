@@ -1,0 +1,3 @@
+name,type,url,language,category,trust_class,enabled
+Example Engineering Feed,rss,https://example.invalid/feed.xml,en,programming,community,false
+Example Repository,github_releases,https://github.com/example/example,en,developer-tools,community,false

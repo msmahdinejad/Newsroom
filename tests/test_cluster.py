@@ -46,10 +46,10 @@ def test_extract_keywords_filters_short(clusterer):
 
 def test_extract_keywords_persian(clusterer):
     """Persian chars in \u0600-\u06FF range are captured."""
-    kws = clusterer._extract_keywords("پایتون نسخه جدید")
-    assert "پایتون" in kws
-    assert "نسخه" in kws
-    assert "جدید" in kws
+    kws = clusterer._extract_keywords("\u067e\u0627\u06cc\u062a\u0648\u0646 \u0646\u0633\u062e\u0647 \u062c\u062f\u06cc\u062f")
+    assert "\u067e\u0627\u06cc\u062a\u0648\u0646" in kws
+    assert "\u0646\u0633\u062e\u0647" in kws
+    assert "\u062c\u062f\u06cc\u062f" in kws
 
 
 def test_extract_keywords_version_compound_persian_stopword(clusterer):

@@ -1,4 +1,4 @@
-"""Gate 2 — Telegram delivery: idempotency, per-chunk state, delivery cursor.
+"""Delivery — Telegram delivery: idempotency, per-chunk state, delivery cursor.
 
 Revision ID: 0003_gate2_telegram
 Revises: 0002_v2_stories_reports

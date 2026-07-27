@@ -1,4 +1,4 @@
-"""Source seed idempotency + story relationship smoke on real DB."""
+"""Source catalog idempotency and story relationship checks."""
 
 from __future__ import annotations
 
@@ -10,28 +10,21 @@ from newsroom.storage.models import NormalizedItem, RawItem, Source, Story, Stor
 pytestmark = pytest.mark.integration
 
 
-def test_seed_sources_idempotent(db: Session) -> None:
-    import importlib.util
-    from pathlib import Path
-
-    path = Path(__file__).resolve().parents[2] / "scripts" / "seed_sources.py"
-    spec = importlib.util.spec_from_file_location("seed_sources", path)
-    assert spec and spec.loader
-    seed_mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(seed_mod)
+def test_default_catalog_is_idempotent(db: Session) -> None:
+    from newsroom.control import SourceCatalog
 
     before = db.query(Source).count()
-    seed_mod.seed()
+    SourceCatalog(db).apply("default")
     mid = db.query(Source).count()
-    seed_mod.seed()
+    SourceCatalog(db).apply("default")
     after = db.query(Source).count()
     assert after == mid
     assert after >= before
-    assert after >= 30
+    assert after >= 20
 
 
 def test_story_item_relationship(db: Session) -> None:
-    name = "__gate1_story_src__"
+    name = "__test_story_source__"
     src = db.query(Source).filter_by(name=name).first()
     if not src:
         src = Source(name=name, type="rss", url="https://example.com/s.xml")

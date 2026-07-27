@@ -1,20 +1,15 @@
-"""CLI command: source workbook import, activation, and reconciliation.
-
-  newsroom sources import     locate + copy the workbook, import all rows
-  newsroom sources activate   activate accessible sources into the registry
-  newsroom sources reconcile   import + activate in one idempotent step
-  newsroom sources status     print reconciliation and state summary
-
-No manual database or YAML editing required.
-"""
+"""Source catalog and registry command adapter."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import sys
+from dataclasses import asdict
+from pathlib import Path
 
-from newsroom.logging import get_logger, setup_logging
+from newsroom.control import NewsroomControl, SourceCatalog
+from newsroom.logging import setup_logging
 from newsroom.sources.inventory import (
     activate_inventory_sources,
     copy_workbook_to_import_dir,
@@ -24,66 +19,138 @@ from newsroom.sources.inventory import (
 )
 from newsroom.storage.database import get_db
 
-logger = get_logger(__name__)
 
-
-def _print(obj: object) -> None:
-    print(json.dumps(obj, ensure_ascii=False, indent=2, default=str))
+def _print(value: object) -> None:
+    print(json.dumps(value, ensure_ascii=True, indent=2, default=str))
 
 
 def sources_command(args: argparse.Namespace) -> int:
+    """Dispatch a source command through the control and catalog interfaces."""
     setup_logging()
-    action = getattr(args, "sources_command", "status")
-    if action == "import":
-        return _do_import(getattr(args, "workbook", None))
-    if action == "activate":
-        return _do_activate()
-    if action == "reconcile":
-        rc = _do_import(getattr(args, "workbook", None))
-        if rc != 0:
-            return rc
-        return _do_activate()
-    if action == "status":
-        return _do_status()
-    print("unknown sources subcommand")
-    return 1
+    action = getattr(args, "sources_command", None)
+    try:
+        if action == "catalog":
+            return _catalog()
+        if action == "initialize":
+            return _initialize(args)
+        if action == "import":
+            return _import_file(args.file)
+        if action == "list":
+            return _list_sources(args)
+        if action in {"enable", "disable", "delete"}:
+            return _change_source(args)
+        if action == "inventory-import":
+            return _inventory_import(args.workbook)
+        if action == "inventory-activate":
+            return _inventory_activate()
+        if action == "inventory-reconcile":
+            result = _inventory_import(args.workbook)
+            return result if result else _inventory_activate()
+        if action == "inventory-status":
+            return _inventory_status()
+    except (LookupError, TypeError, ValueError) as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 2
+    print("FAIL: a source subcommand is required", file=sys.stderr)
+    return 2
 
 
-def _do_import(workbook: str | None = None) -> int:
-    src = find_workbook(".", workbook)
-    if src is None:
-        logger.error("workbook not found in searched paths")
-        print(
-            "FAIL: workbook not found. Use --workbook, set NEWSROOM_SOURCE_WORKBOOK, "
-            "or place it in . or config/import.",
-            file=sys.stderr,
-        )
-        return 1
-    dest = copy_workbook_to_import_dir(src, ".")
-    logger.info("workbook copied into the local import directory")
+def _catalog() -> int:
     with get_db() as db:
-        report = import_workbook(db, dest)
-    _print(report.to_dict())
-    print(f"[OK] imported {report.upserted} rows ({report.total_rows} total)")
-    if report.duplicate_by_identity:
-        print(f"[WARN] {report.duplicate_by_identity} duplicate stable identities skipped")
-    if report.invalid:
-        print(f"[WARN] {len(report.invalid)} invalid rows reported")
+        entries = SourceCatalog(db).available()
+    _print([asdict(entry) for entry in entries])
     return 0
 
 
-def _do_activate() -> int:
+def _initialize(args: argparse.Namespace) -> int:
+    selected = tuple(
+        part.strip()
+        for part in str(args.select or "").split(",")
+        if part.strip()
+    )
+    source_file = Path(args.file) if args.file else None
+    with get_db() as db:
+        result = SourceCatalog(db).apply(
+            args.mode,
+            selection=selected,
+            custom_file=source_file,
+            replace=bool(args.replace),
+        )
+    _print(asdict(result))
+    return 0 if not result.errors else 1
+
+
+def _import_file(filename: str) -> int:
+    path = Path(filename).expanduser().resolve()
+    if not path.is_file():
+        raise ValueError(f"source file does not exist: {filename}")
+    with get_db() as db:
+        result = NewsroomControl(db).import_sources(path.name, path.read_bytes())
+    _print(asdict(result))
+    return 0 if not result.errors else 1
+
+
+def _list_sources(args: argparse.Namespace) -> int:
+    enabled = {"yes": True, "no": False, "all": None}[args.enabled]
+    with get_db() as db:
+        rows, total = NewsroomControl(db).list_sources(
+            source_type=args.type,
+            enabled=enabled,
+            page=args.page,
+            page_size=args.page_size,
+        )
+        payload = [
+            {
+                "id": source.id,
+                "name": source.name,
+                "type": source.type,
+                "url": source.url,
+                "language": source.language,
+                "enabled": source.enabled,
+                "health": source.health_status,
+                "inactive_reason": source.inactive_reason,
+            }
+            for source in rows
+        ]
+    _print({"page": args.page, "page_size": args.page_size, "total": total, "sources": payload})
+    return 0
+
+
+def _change_source(args: argparse.Namespace) -> int:
+    with get_db() as db:
+        control = NewsroomControl(db)
+        if args.sources_command == "enable":
+            result = control.set_source_enabled(args.source_id, True)
+        elif args.sources_command == "disable":
+            result = control.set_source_enabled(args.source_id, False)
+        else:
+            result = control.delete_source(args.source_id, confirmed=bool(args.confirm))
+    _print(asdict(result))
+    return 0
+
+
+def _inventory_import(workbook: str | None) -> int:
+    source = find_workbook(".", workbook)
+    if source is None:
+        raise ValueError(
+            "inventory workbook not found; pass --workbook or set NEWSROOM_SOURCE_WORKBOOK"
+        )
+    destination = copy_workbook_to_import_dir(source, ".")
+    with get_db() as db:
+        report = import_workbook(db, destination)
+    _print(report.to_dict())
+    return 0
+
+
+def _inventory_activate() -> int:
     with get_db() as db:
         report = activate_inventory_sources(db)
     _print(report.to_dict())
-    print(f"[OK] active={report.active} inactive={report.inactive} invalid={report.invalid} total={report.total}")
     return 0
 
 
-def _do_status() -> int:
+def _inventory_status() -> int:
     with get_db() as db:
         summary = reconciliation_summary(db)
     _print(summary)
-    ok = summary["reconciled"]
-    print(f"[{'OK' if ok else 'WARN'}] total={summary['total']} expected={summary['expected_total']}")
-    return 0 if ok else 1
+    return 0 if summary["reconciled"] else 1

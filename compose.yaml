@@ -1,7 +1,6 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: newsroom-postgres
     environment:
       POSTGRES_DB: newsroom
       POSTGRES_USER: newsroom
@@ -24,7 +23,6 @@ services:
 
   migrate:
     build: .
-    container_name: newsroom-migrate
     depends_on:
       postgres:
         condition: service_healthy
@@ -40,7 +38,6 @@ services:
 
   collector:
     build: .
-    container_name: newsroom-collector
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,7 +55,7 @@ services:
       COLLECTION_TIMEOUT_CONNECT: ${COLLECTION_TIMEOUT_CONNECT:-30}
       COLLECTION_TIMEOUT_READ: ${COLLECTION_TIMEOUT_READ:-60}
       COLLECTION_MAX_SIZE_MB: ${COLLECTION_MAX_SIZE_MB:-2}
-      COLLECTION_USER_AGENT: ${COLLECTION_USER_AGENT:-newsroom/2.0}
+      COLLECTION_USER_AGENT: ${COLLECTION_USER_AGENT:-newsroom/3.0}
       COLLECTION_PROXY_URL: ${COLLECTION_PROXY_URL:-}
       COLLECT_LOOP_SECONDS: ${COLLECT_LOOP_SECONDS:-900}
     command:
@@ -103,7 +100,6 @@ services:
 
   report-worker:
     build: .
-    container_name: newsroom-report-worker
     depends_on:
       postgres:
         condition: service_healthy
@@ -135,7 +131,6 @@ services:
 
   scheduler:
     build: .
-    container_name: newsroom-scheduler
     depends_on:
       postgres:
         condition: service_healthy
@@ -161,7 +156,7 @@ services:
       EDITORIAL_CONCURRENCY_LIMIT: ${EDITORIAL_CONCURRENCY_LIMIT:-1}
       EDITORIAL_SCHEDULED_RUN_BUDGET: ${EDITORIAL_SCHEDULED_RUN_BUDGET:-1}
       EDITORIAL_MANUAL_RUN_BUDGET: ${EDITORIAL_MANUAL_RUN_BUDGET:-3}
-      # Gate 6: scalable editorial + six-hour schedule + collection bounds.
+      # Scalable editorial, six-hour scheduling, and collection bounds.
       EDITORIAL_MAX_STORIES_PER_SHARD: ${EDITORIAL_MAX_STORIES_PER_SHARD:-8}
       EDITORIAL_MAX_MAP_CALLS_PER_REPORT: ${EDITORIAL_MAX_MAP_CALLS_PER_REPORT:-12}
       EDITORIAL_MAX_REDUCTION_CALLS_PER_REPORT: ${EDITORIAL_MAX_REDUCTION_CALLS_PER_REPORT:-4}
@@ -193,7 +188,6 @@ services:
 
   telegram-bot:
     build: .
-    container_name: newsroom-telegram-bot
     depends_on:
       postgres:
         condition: service_healthy
@@ -249,7 +243,6 @@ services:
 
   telegram-ingestor:
     build: .
-    container_name: newsroom-telegram-ingestor
     depends_on:
       postgres:
         condition: service_healthy
@@ -290,7 +283,7 @@ services:
         max-size: "5m"
         max-file: "3"
 
-  # Gate 5: Agent-Reach worker — isolated runtime for external internet and
+  # Isolated Agent-Reach runtime for external internet and
   # social-platform capability calls. Non-root, no Docker socket, no access
   # to the Telegram MTProto session volume, no access to editorial API
   # credentials, bounded CPU and memory, isolated writable config directory.
@@ -298,7 +291,6 @@ services:
   # processes here; source content and editorial AI cannot produce commands.
   agent-reach-worker:
     build: .
-    container_name: newsroom-agent-reach-worker
     depends_on:
       postgres:
         condition: service_healthy
@@ -309,16 +301,16 @@ services:
         required: false
     environment:
       DATABASE_URL: postgresql+psycopg://newsroom:${POSTGRES_PASSWORD:-newsroom_dev}@postgres:5432/newsroom
-      AGENT_REACH_ENABLED: "true"
+      AGENT_REACH_ENABLED: ${AGENT_REACH_ENABLED:-false}
       AGENT_REACH_EXECUTABLE: agent-reach
       AGENT_REACH_CONFIG_DIR: /data/agent-reach
       AGENT_REACH_TIMEOUT_SECONDS: ${AGENT_REACH_TIMEOUT_SECONDS:-60}
       AGENT_REACH_MAX_OUTPUT_BYTES: ${AGENT_REACH_MAX_OUTPUT_BYTES:-2097152}
       AGENT_REACH_MAX_RETRIES: ${AGENT_REACH_MAX_RETRIES:-1}
       AGENT_REACH_CONCURRENCY_LIMIT: ${AGENT_REACH_CONCURRENCY_LIMIT:-2}
-      AGENT_REACH_ALLOWED_CHANNELS: ${AGENT_REACH_WORKER_ALLOWED_CHANNELS:-web,rss,github,youtube,x}
+      AGENT_REACH_ALLOWED_CHANNELS: ${AGENT_REACH_WORKER_ALLOWED_CHANNELS:-web,rss,github,youtube}
       AGENT_REACH_PINNED_VERSION: 1494c2ab239e7355a77e7cceaf3271453a1f34b5
-      AGENT_REACH_ALLOW_AUTHENTICATED_CHANNELS: "true"
+      AGENT_REACH_ALLOW_AUTHENTICATED_CHANNELS: ${AGENT_REACH_ALLOW_AUTHENTICATED_CHANNELS:-false}
       AGENT_REACH_HEALTH_INTERVAL_SECONDS: ${AGENT_REACH_HEALTH_INTERVAL_SECONDS:-300}
       X_WORKER_POLL_SECONDS: ${X_WORKER_POLL_SECONDS:-900}
       X_WORKER_BATCH_SIZE: ${X_WORKER_BATCH_SIZE:-12}
@@ -354,7 +346,6 @@ services:
   telegram-authorize:
     profiles: ["authorize"]
     build: .
-    container_name: newsroom-telegram-authorize
     depends_on:
       postgres:
         condition: service_healthy

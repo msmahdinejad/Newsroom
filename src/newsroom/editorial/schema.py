@@ -1,4 +1,4 @@
-"""Versioned schemas for Gate 4 editorial layer.
+"""Versioned schemas for Editorial editorial layer.
 
 Evidence schema: bounded structured input sent to the AI provider.
 Output schema: versioned structured editorial response.

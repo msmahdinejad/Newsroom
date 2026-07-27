@@ -45,8 +45,8 @@ def render_persian_report(
         other = other[promoted_count:]
 
     title = _EN_TITLES.get(report_mode, "Programming News") if language == "en" else profile.title_fa
-    important_label = "🔥 Top stories" if language == "en" else "🔥 خبرهای مهم"
-    other_label = "📰 More stories" if language == "en" else "📰 خبرهای دیگر"
+    important_label = "🔥 Top stories" if language == "en" else "🔥 \u062e\u0628\u0631\u0647\u0627\u06cc \u0645\u0647\u0645"
+    other_label = "📰 More stories" if language == "en" else "📰 \u062e\u0628\u0631\u0647\u0627\u06cc \u062f\u06cc\u06af\u0631"
     lines = [
         f"📰 {title}",
         f"📅 {rendered_at.strftime('%Y-%m-%d')}",
@@ -74,9 +74,9 @@ def _render_story(story: StoryEditorialResult) -> str:
 def _compact(value: str) -> str:
     compact = " ".join(value.split())
     # Small models occasionally emit a detached first letter before the same
-    # Persian word ("انت انتشار", "د دوره"). It is never meaningful prose.
+    # Persian word ("\u0627\u0646\u062a \u0627\u0646\u062a\u0634\u0627\u0631", "\u062f \u062f\u0648\u0631\u0647"). It is never meaningful prose.
     return re.sub(
-        r"(?<!\S)([آ-ی]{1,3})\s+(?=\1[آ-ی])",
+        r"(?<!\S)([\u0622-\u06cc]{1,3})\s+(?=\1[\u0622-\u06cc])",
         "",
         compact,
     )

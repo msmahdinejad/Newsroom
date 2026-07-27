@@ -16,16 +16,16 @@ def test_escape_html_basic():
 
 
 def test_escape_html_persian():
-    text = "این یک متن فارسی است"
+    text = "\u0627\u06cc\u0646 \u06cc\u06a9 \u0645\u062a\u0646 \u0641\u0627\u0631\u0633\u06cc \u0627\u0633\u062a"
     assert escape_html(text) == text
 
 
 def test_escape_html_mixed():
-    text = "اخبار <script>alert(1)</script> فناوری"
+    text = "\u0627\u062e\u0628\u0627\u0631 <script>alert(1)</script> \u0641\u0646\u0627\u0648\u0631\u06cc"
     escaped = escape_html(text)
     assert "<script>" not in escaped
-    assert "اخبار" in escaped
-    assert "فناوری" in escaped
+    assert "\u0627\u062e\u0628\u0627\u0631" in escaped
+    assert "\u0641\u0646\u0627\u0648\u0631\u06cc" in escaped
 
 
 def test_format_link_safe():
@@ -91,19 +91,19 @@ def test_render_chunks_preserves_paragraphs():
 def test_render_chunks_headline_with_link_not_split():
     """Headline and its source link must not be in different chunks."""
     # Simulate a story: headline line + link line, as one paragraph
-    story = "🔹 خبر مهم\n🔗 https://example.com/story1"
+    story = "🔹 \u062e\u0628\u0631 \u0645\u0647\u0645\n🔗 https://example.com/story1"
     # Make it long enough to need chunking
     stories = "\n\n".join([story] * 50)
     chunks = render_chunks(stories, max_size=500)
     for c in chunks:
         # If a chunk contains the headline, it must also contain its link
-        if "🔹 خبر مهم" in c:
+        if "🔹 \u062e\u0628\u0631 \u0645\u0647\u0645" in c:
             assert "🔗 https://example.com/story1" in c
 
 
 def test_render_report_html_escapes_content():
     """Report content with HTML chars is escaped."""
-    content = "اخبار <b>مهم</b> & فناوری"
+    content = "\u0627\u062e\u0628\u0627\u0631 <b>\u0645\u0647\u0645</b> & \u0641\u0646\u0627\u0648\u0631\u06cc"
     chunks = render_report_html(content)
     assert len(chunks) == 1
     assert "&lt;b&gt;" in chunks[0]
@@ -112,7 +112,7 @@ def test_render_report_html_escapes_content():
 
 def test_render_report_html_long_content():
     """Long report content is split into multiple chunks."""
-    para = "این یک پاراگراف فارسی است. " * 20  # ~640 chars
+    para = "\u0627\u06cc\u0646 \u06cc\u06a9 \u067e\u0627\u0631\u0627\u06af\u0631\u0627\u0641 \u0641\u0627\u0631\u0633\u06cc \u0627\u0633\u062a. " * 20  # ~640 chars
     text = "\n\n".join([para] * 20)  # ~12800 chars
     chunks = render_report_html(text)
     assert len(chunks) >= 3

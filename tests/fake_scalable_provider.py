@@ -129,16 +129,16 @@ class FakeScalableProvider(EditorialProvider):
                 ))
 
             # Persian headline
-            headline_fa = f"خبر {sp.story_id}"
-            summary_fa = f"خلاصه خبر {sp.story_id}"
-            why_fa = "این خبر مهم است"
+            headline_fa = f"\u062e\u0628\u0631 {sp.story_id}"
+            summary_fa = f"\u062e\u0644\u0627\u0635\u0647 \u062e\u0628\u0631 {sp.story_id}"
+            why_fa = "\u0627\u06cc\u0646 \u062e\u0628\u0631 \u0645\u0647\u0645 \u0627\u0633\u062a"
 
             stories.append(StoryEditorialResult(
                 story_id=sp.story_id,
                 headline_fa=headline_fa,
                 summary_fa=summary_fa,
                 why_it_matters_fa=why_fa,
-                practical_impact_fa="کاربرد عملی",
+                practical_impact_fa="\u06a9\u0627\u0631\u0628\u0631\u062f \u0639\u0645\u0644\u06cc",
                 target_audience="developers",
                 confidence_level=sp.confidence,
                 verification_status=sp.trust_status,

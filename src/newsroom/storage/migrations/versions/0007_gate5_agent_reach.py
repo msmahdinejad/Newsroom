@@ -1,4 +1,4 @@
-"""Gate 5 — Agent-Reach capability layer: backend state, source extension.
+"""Social collection — Agent-Reach capability layer: backend state, source extension.
 
 Revision ID: 0007_gate5_agent_reach
 Revises: 0006_gate4_scalable
@@ -44,7 +44,7 @@ def upgrade() -> None:
         # production_ready flips to true only after a bounded real read succeeds.
         # doctor detecting an executable is NOT sufficient.
         sa.Column("production_ready", sa.Boolean, nullable=False, server_default="false"),
-        # production_approval is the final Gate 5 decision string from
+        # production_approval is the final Social collection decision string from
         # ProductionApproval (approved / approved_with_auth /
         # manual_discovery_only / deferred / rejected).
         sa.Column("production_approval", sa.String(60), nullable=False, server_default="deferred"),

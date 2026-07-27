@@ -594,7 +594,7 @@ class XPublicReadCollector(SourceCollector):
     web reader (Jina Reader). No persistent authentication, no cookies, no
     timeline monitoring.
 
-    Production classification per the gate spec:
+    Production classification per the module contract:
         - 'available for manual discovery, deferred for unattended production
           ingestion' unless an explicit curated account list exists AND
           the Agent-Reach backend passes real bounded tests AND dedicated
@@ -656,7 +656,7 @@ class XPublicReadCollector(SourceCollector):
 
         Profile URLs (e.g. https://x.com/someuser) are not collected — only
         individual public posts are. This avoids collecting personal profile
-        pages, which are out of scope for the gate spec.
+        pages, which are out of scope for the module contract.
         """
         try:
             parsed = urlparse(url)
@@ -692,7 +692,7 @@ class RedditPublicReadCollector(SourceCollector):
     """Read a single public Reddit post URL via the Agent-Reach-selected
     web reader (Jina Reader). No login state, no subreddit monitoring.
 
-    Production classification per the gate spec:
+    Production classification per the module contract:
         'manual research capability only' unless an explicit curated
         subreddit list exists, a stable authenticated backend passes
         real bounded tests, dedicated account is configured, durable
@@ -792,7 +792,7 @@ class LinkedInPublicReadCollector(SourceCollector):
     """Public-page enrichment only for LinkedIn via the Agent-Reach-selected
     web reader. No logged-in automation, no profile collection, no jobs.
 
-    Production classification per the gate spec:
+    Production classification per the module contract:
         'public-page enrichment only, not scheduled production ingestion'.
     """
 
@@ -869,11 +869,11 @@ class LinkedInPublicReadCollector(SourceCollector):
 def apply_default_production_decisions(
     registry: AgentReachCapabilityRegistry,
 ) -> AgentReachCapabilityRegistry:
-    """Apply the Gate 5 preferred-scope production decisions to a registry.
+    """Apply the Social collection preferred-scope production decisions to a registry.
 
     These are defaults; live verification may flip a channel from DEFERRED
     to APPROVED or from MANUAL_DISCOVERY to DEFERRED. The defaults follow
-    the gate spec's preferred fast-track outcome.
+    the module contract's preferred fast-track outcome.
     """
     # Web: production ingestion approved (allowlisted reading only)
     registry.set_production_approval(
@@ -929,7 +929,7 @@ def apply_default_production_decisions(
         registry.set_production_approval(
             ch,
             ProductionApproval.DEFERRED,
-            notes="No documented unique-value case for the Persian AI newsroom yet",
+            notes="No documented unique-value case for this integration yet",
         )
     # Search: production ingestion approved when live verification passes
     registry.set_production_approval(
@@ -971,7 +971,7 @@ def upgrade_x_to_production(
 # ── X / Twitter production timeline collector ───────────────────
 
 
-# Bounded defaults per the gate spec.
+# Bounded defaults per the module contract.
 X_DEFAULT_POLL_INTERVAL_MINUTES = 30
 X_DEFAULT_MAX_POSTS_PER_POLL = 20
 X_DEFAULT_INITIAL_BACKFILL = 30

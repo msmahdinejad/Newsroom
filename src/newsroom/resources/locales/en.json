@@ -1,0 +1,123 @@
+{
+  "all_sources": "all enabled sources",
+  "commands": [
+    {
+      "command": "start",
+      "description": "Open the Newsroom menu"
+    },
+    {
+      "command": "help",
+      "description": "Help and settings"
+    },
+    {
+      "command": "report",
+      "description": "Generate a programming report"
+    },
+    {
+      "command": "latest",
+      "description": "Show the latest report"
+    },
+    {
+      "command": "settings",
+      "description": "Configure language, count, sources and times"
+    },
+    {
+      "command": "sources",
+      "description": "View and manage sources"
+    },
+    {
+      "command": "schedule",
+      "description": "Show report schedule"
+    },
+    {
+      "command": "status",
+      "description": "Show safe system status"
+    },
+    {
+      "command": "collect",
+      "description": "Collect sources now"
+    }
+  ],
+  "help": "\ud83d\udc4b Welcome to Newsroom\n\nA programming-first newsroom that collects, verifies, summarizes and delivers grounded reports with strong Telegram coverage.\n\nREPORTS\n/report \u2014 default programming report\n/report new \u2014 only undelivered stories\n/report comprehensive \u2014 extended report\n/report telegram|x|web|github|reddit \u2014 platform-only report\n/latest \u2014 last delivered report\n\nSETTINGS\n/settings \u2014 current preferences\n/settings language fa|en\n/settings count 1..50\n/settings schedule HH:MM,HH:MM or off\n/settings sources all|telegram,x,web,github,reddit,youtube\n\nSOURCES\n/sources \u2014 inventory summary\n/sources list [type] [page]\n/source enable|disable <id>\n/source delete <id> confirm \u2014 safe archive; history is retained\nUpload CSV/XLSX with caption /sources import. Columns: name,type,url,language,category,trust_class,enabled\n\nOPERATIONS\n/status \u00b7 /collect \u00b7 /schedule\n\nCurrent: language=en \u00b7 stories={story_count} \u00b7 sources={source_scope} \u00b7 Tehran schedule={schedule}",
+  "menu": [
+    [
+      {
+        "callback_data": "report_now",
+        "text": "Report now"
+      },
+      {
+        "callback_data": "report_new",
+        "text": "New stories"
+      }
+    ],
+    [
+      {
+        "callback_data": "report_telegram",
+        "text": "Telegram only"
+      },
+      {
+        "callback_data": "report_x",
+        "text": "X only"
+      }
+    ],
+    [
+      {
+        "callback_data": "report_web",
+        "text": "Web only"
+      },
+      {
+        "callback_data": "report_github",
+        "text": "GitHub only"
+      }
+    ],
+    [
+      {
+        "callback_data": "report_reddit",
+        "text": "Reddit only"
+      },
+      {
+        "callback_data": "report_comprehensive",
+        "text": "Comprehensive"
+      }
+    ],
+    [
+      {
+        "callback_data": "latest",
+        "text": "Latest report"
+      },
+      {
+        "callback_data": "help",
+        "text": "Help & settings"
+      }
+    ]
+  ],
+  "messages": {
+    "ai_unavailable": "\u23f3 No validated AI route returned acceptable copy; no low-quality report was sent.",
+    "bad_settings": "\u274c Invalid setting: {error}",
+    "collect_error": "\u274c Source collection failed.",
+    "collected": "\u2705 Collection complete: {items} new items from {sources} sources; {failed} failures.",
+    "collecting": "\u23f3 Source collection started\u2026",
+    "cooldown": "\u23f3 A recent request is still valid; please try again in a few minutes.",
+    "existing_report": "\u2705 Report #{report_id} was already generated.",
+    "generating": "\u23f3 The AI report is being generated\u2026",
+    "generation_error": "\u274c Report generation failed.",
+    "import_caption": "Send a CSV or XLSX file with the caption /sources import.",
+    "import_done": "\u2705 {filename}: {created} created, {updated} updated, {skipped} rejected.",
+    "import_error": "\u274c Source import failed: {error}",
+    "import_too_large": "\u274c Source files must be no larger than 5 MiB.",
+    "latest_error": "\u274c The latest report could not be loaded.",
+    "no_news": "\ud83d\udced No new reportable stories were found in this period.",
+    "no_report": "\ud83d\udced No report has been generated yet.",
+    "pipeline_busy": "\u23f3 The pipeline is busy; please try again shortly.",
+    "report_delivered": "\u2705 Report #{report_id} was generated and delivered to Telegram.",
+    "report_not_delivered": "\u2705 Report #{report_id} was generated; no Telegram destination is configured.",
+    "schedule_error": "\u274c Schedule information could not be loaded.",
+    "settings_saved": "\u2705 Settings saved.",
+    "source_changed": "\u2705 Source #{source_id} \u201c{name}\u201d was {action}.",
+    "source_command_error": "\u274c Source operation failed: {error}",
+    "source_delete_confirm": "\u26a0\ufe0f Repeat the command with confirm to archive this source:\n/source delete {source_id} confirm",
+    "source_not_found": "\u274c Source not found.",
+    "sources_error": "\u274c Source information could not be loaded.",
+    "status_error": "\u274c System status could not be loaded."
+  }
+}

@@ -336,7 +336,7 @@ def test_stable_post_id_identity(monkeypatch):
     _set_auth_env(monkeypatch)
     import hashlib
 
-    from newsroom.pipeline.gate5_collect import agent_reach_raw_content_hash
+    from newsroom.pipeline.social_collect import agent_reach_raw_content_hash
 
     a = {"type": "x_post", "post_id": "1234567890", "text": "Hello"}
     b = {"type": "x_post", "post_id": "1234567890", "text": "Different text"}
@@ -366,7 +366,7 @@ def test_stable_account_id_preserved(monkeypatch):
 
 def test_handle_not_used_as_identity():
     """The handle is metadata, not part of the content hash."""
-    from newsroom.pipeline.gate5_collect import agent_reach_raw_content_hash
+    from newsroom.pipeline.social_collect import agent_reach_raw_content_hash
 
     a = {"type": "x_post", "post_id": "123", "handle": "user1"}
     b = {"type": "x_post", "post_id": "123", "handle": "user2"}
@@ -561,7 +561,7 @@ def test_restart_cursor_advance():
 
 def test_handle_change_does_not_break_dedup():
     """When an account is renamed, the stable account_id and post_id stay the same."""
-    from newsroom.pipeline.gate5_collect import agent_reach_raw_content_hash
+    from newsroom.pipeline.social_collect import agent_reach_raw_content_hash
 
     # Same post_id, different handle → same content_hash
     a = {"type": "x_post", "post_id": "123", "handle": "old_name"}
@@ -598,7 +598,7 @@ def test_handle_resolution_uses_cached_account_id(monkeypatch):
 
 def test_edited_post_same_id_same_hash():
     """An edited post (same post_id, different text) has the same content_hash."""
-    from newsroom.pipeline.gate5_collect import agent_reach_raw_content_hash
+    from newsroom.pipeline.social_collect import agent_reach_raw_content_hash
 
     a = {"type": "x_post", "post_id": "123", "text": "original text"}
     b = {"type": "x_post", "post_id": "123", "text": "edited text"}
@@ -798,9 +798,9 @@ def test_rate_limit_recoverable(monkeypatch):
 def test_source_failure_isolated(monkeypatch):
     """A failing X source does not affect the collect_agent_reach_sources loop."""
     _set_auth_env(monkeypatch)
-    from newsroom.pipeline.gate5_collect import collect_agent_reach_sources
+    from newsroom.pipeline.social_collect import collect_agent_reach_sources
 
-    with patch("newsroom.pipeline.gate5_collect.settings") as mock_settings:
+    with patch("newsroom.pipeline.social_collect.settings") as mock_settings:
         mock_settings.agent_reach_ready.return_value = True
         mock_settings.agent_reach_enabled = True
         mock_settings.agent_reach_pinned_version = "1.5.0"
@@ -841,7 +841,7 @@ def test_source_failure_isolated(monkeypatch):
                 }
             ]
 
-        with patch("newsroom.pipeline.gate5_collect.XTimelineCollector") as mock_cls:
+        with patch("newsroom.pipeline.social_collect.XTimelineCollector") as mock_cls:
             mock_collector = MagicMock()
             call_count = [0]
 
@@ -855,11 +855,11 @@ def test_source_failure_isolated(monkeypatch):
             mock_collector.collect = side_effect_collect
             mock_cls.return_value = mock_collector
 
-            with patch("newsroom.pipeline.gate5_collect.load_cursor", return_value={}), \
-                 patch("newsroom.pipeline.gate5_collect.save_cursor"), \
-                 patch("newsroom.pipeline.gate5_collect._ensure_source_state") as mock_state, \
-                 patch("newsroom.pipeline.gate5_collect._update_state_failure"), \
-                 patch("newsroom.pipeline.gate5_collect._update_state_success"):
+            with patch("newsroom.pipeline.social_collect.load_cursor", return_value={}), \
+                 patch("newsroom.pipeline.social_collect.save_cursor"), \
+                 patch("newsroom.pipeline.social_collect._ensure_source_state") as mock_state, \
+                 patch("newsroom.pipeline.social_collect._update_state_failure"), \
+                 patch("newsroom.pipeline.social_collect._update_state_success"):
                 mock_state.return_value = MagicMock()
                 import asyncio
 
@@ -896,7 +896,7 @@ def test_prompt_injection_in_text_remains_data(monkeypatch):
     # The injection text is in the text field, treated as data
     assert "Ignore previous instructions" in items[0]["text"]
     # The content hash is based on post_id, not the injection text
-    from newsroom.pipeline.gate5_collect import agent_reach_raw_content_hash
+    from newsroom.pipeline.social_collect import agent_reach_raw_content_hash
 
     h = agent_reach_raw_content_hash(items[0])
     expected = agent_reach_raw_content_hash(

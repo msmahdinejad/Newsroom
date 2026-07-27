@@ -418,8 +418,8 @@ def _empty_report(report_mode: str, report_language: str = "fa") -> str:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 No new reportable stories were found in this period."""
-    return f"""📰 اخبار فناوری
+    return f"""📰 \u0627\u062e\u0628\u0627\u0631 \u0641\u0646\u0627\u0648\u0631\u06cc
 📅 {now.strftime('%Y-%m-%d')}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-در این بازه خبر تازه‌ای برای گزارش پیدا نشد."""
+\u062f\u0631 \u0627\u06cc\u0646 \u0628\u0627\u0632\u0647 \u062e\u0628\u0631 \u062a\u0627\u0632\u0647‌\u0627\u06cc \u0628\u0631\u0627\u06cc \u06af\u0632\u0627\u0631\u0634 \u067e\u06cc\u062f\u0627 \u0646\u0634\u062f."""

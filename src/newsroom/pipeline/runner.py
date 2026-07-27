@@ -170,9 +170,9 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
         session.commit()
         stage("collect", "ok", f"{coll['new_items']} new / {coll['sources']} sources")
 
-    # Gate 5: Agent-Reach-backed external sources (YouTube, web, etc.).
+    # Social collection: Agent-Reach-backed external sources (YouTube, web, etc.).
     # Skipped cleanly when Agent-Reach is disabled or no AR sources configured.
-    from newsroom.pipeline.gate5_collect import collect_agent_reach_sources
+    from newsroom.pipeline.social_collect import collect_agent_reach_sources
 
     if skip_collect:
         stage("collect_agent_reach", "skipped", "NEWSROOM_SKIP_COLLECT set")
@@ -285,7 +285,7 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
             stage("deliver", "skipped", "telegram disabled or not configured")
         return
 
-    # Gate 4: editorial layer — hierarchical for large sets, single-call for small
+    # Editorial: editorial layer — hierarchical for large sets, single-call for small
     from newsroom.config import settings as _cfg
     from newsroom.editorial.orchestrator import generate_editorial
 

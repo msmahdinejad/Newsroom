@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for helping improve Persian AI Newsroom. Contributions should keep
+Thank you for helping improve Newsroom. Contributions should keep
 collection bounded, preserve evidence and identity, and avoid requiring live
 private access in the default test suite.
 
@@ -16,17 +16,15 @@ private access in the default test suite.
 
 ## Development setup
 
-```powershell
-Copy-Item .env.example .env
-Copy-Item .env.providers.example .env.providers.local
+```bash
+python scripts/bootstrap.py --configuration-only --source-mode empty
 uv sync --frozen --extra dev --extra telegram
-docker compose up -d postgres
+docker compose up -d --wait postgres
 uv run alembic upgrade head
 ```
 
-On POSIX systems, use `cp` instead of `Copy-Item`. Leave access-dependent
-integrations disabled. A full production inventory is not required for
-deterministic tests.
+Leave access-dependent integrations disabled. A production inventory is not
+required for deterministic tests.
 
 ## Making a change
 
@@ -34,18 +32,19 @@ deterministic tests.
 2. Add or update tests for behavior changes.
 3. Preserve stable IDs, cursors, evidence lineage, retry bounds, and
    idempotency at collector/editorial/delivery boundaries.
-4. Add an ADR under `docs/adr/` for an enduring architectural decision.
+4. Update architecture documentation for an enduring design change.
 5. Update user-facing documentation and `CHANGELOG.md` when behavior changes.
 6. Keep live checks opt-in and redact all protected values.
 
 ## Required checks
 
-```powershell
+```bash
 uv run ruff check src tests
 uv run mypy src/newsroom
 uv run pytest tests -m "not integration"
 uv run pytest tests/integration
 docker compose config --quiet
+uv run python scripts/audit_public_release.py
 ```
 
 Run `docker build --tag newsroom:local .` when changing dependencies,

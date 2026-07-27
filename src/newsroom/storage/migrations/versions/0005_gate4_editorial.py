@@ -1,4 +1,4 @@
-"""Gate 4 — AI editorial: editorial attempts, health, cache.
+"""Editorial — AI editorial: editorial attempts, health, cache.
 
 Revision ID: 0005_gate4_editorial
 Revises: 0004_gate3_mtproto

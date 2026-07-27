@@ -49,10 +49,17 @@ def test_copy_workbook_is_idempotent_when_already_canonical(tmp_path: Path) -> N
 
 
 def test_sources_command_forwards_explicit_workbook() -> None:
-    args = Namespace(sources_command="import", workbook="private/inventory.xlsx")
-    with patch.object(sources_cli, "_do_import", return_value=0) as do_import:
+    args = Namespace(
+        sources_command="inventory-import",
+        workbook="private/inventory.xlsx",
+    )
+    with patch.object(
+        sources_cli,
+        "_inventory_import",
+        return_value=0,
+    ) as inventory_import:
         assert sources_cli.sources_command(args) == 0
-    do_import.assert_called_once_with("private/inventory.xlsx")
+    inventory_import.assert_called_once_with("private/inventory.xlsx")
 
 
 def test_import_report_does_not_expose_absolute_owner_path(tmp_path: Path) -> None:

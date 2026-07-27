@@ -1,4 +1,4 @@
-"""Gate 6 multi-provider router reliability and source validation state.
+"""Production multi-provider router reliability and source validation state.
 
 Only safe operational metadata is stored. Provider access values, request
 headers, prompts, responses, and raw provider errors have no columns here.

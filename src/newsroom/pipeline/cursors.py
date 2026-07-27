@@ -115,7 +115,7 @@ def filter_new_items(
             out.append(it)
         return out
 
-    # Gate 5/6: Agent-Reach-backed and native external sources. Identity is a
+    # Social collection/6: Agent-Reach-backed and native external sources. Identity is a
     # stable platform-native item ID; we keep an overlap band for safety.
     if source_type in (
         "youtube",
@@ -196,7 +196,7 @@ def advance_cursor_from_items(
             next_c["last_message_id"] = str(max(max_mid, prev_mid))
         return next_c
 
-    # Gate 5/6: Agent-Reach-backed and native external sources. Track seen
+    # Social collection/6: Agent-Reach-backed and native external sources. Track seen
     # stable item IDs in a bounded set (last 200). last_stable_item_id is the
     # most recent.
     if source_type in (

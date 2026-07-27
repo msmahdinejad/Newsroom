@@ -22,7 +22,7 @@ class ReportProfile:
 
 _DEFAULT = ReportProfile(
     mode="scheduled",
-    title_fa="اخبار برنامه‌نویسی و ابزارهای توسعه",
+    title_fa="\u0627\u062e\u0628\u0627\u0631 \u0628\u0631\u0646\u0627\u0645\u0647‌\u0646\u0648\u06cc\u0633\u06cc \u0648 \u0627\u0628\u0632\u0627\u0631\u0647\u0627\u06cc \u062a\u0648\u0633\u0639\u0647",
     source_types=None,
     programming_only=True,
     comprehensive=False,
@@ -36,7 +36,7 @@ _PROFILES = {
     "manual_new": _DEFAULT,
     "manual_comprehensive": ReportProfile(
         mode="manual_comprehensive",
-        title_fa="گزارش جامع برنامه‌نویسی",
+        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 \u0628\u0631\u0646\u0627\u0645\u0647‌\u0646\u0648\u06cc\u0633\u06cc",
         source_types=None,
         programming_only=True,
         comprehensive=True,
@@ -45,7 +45,7 @@ _PROFILES = {
     ),
     "platform_telegram": ReportProfile(
         mode="platform_telegram",
-        title_fa="گزارش جامع برنامه‌نویسی از تلگرام",
+        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 \u0628\u0631\u0646\u0627\u0645\u0647‌\u0646\u0648\u06cc\u0633\u06cc \u0627\u0632 \u062a\u0644\u06af\u0631\u0627\u0645",
         source_types=frozenset({"telegram"}),
         programming_only=True,
         comprehensive=True,
@@ -54,7 +54,7 @@ _PROFILES = {
     ),
     "platform_x": ReportProfile(
         mode="platform_x",
-        title_fa="گزارش جامع برنامه‌نویسی از X",
+        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 \u0628\u0631\u0646\u0627\u0645\u0647‌\u0646\u0648\u06cc\u0633\u06cc \u0627\u0632 X",
         source_types=frozenset({"x_timeline"}),
         programming_only=True,
         comprehensive=True,
@@ -63,7 +63,7 @@ _PROFILES = {
     ),
     "platform_web": ReportProfile(
         mode="platform_web",
-        title_fa="گزارش جامع برنامه‌نویسی از وب‌سایت‌ها",
+        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 \u0628\u0631\u0646\u0627\u0645\u0647‌\u0646\u0648\u06cc\u0633\u06cc \u0627\u0632 \u0648\u0628‌\u0633\u0627\u06cc\u062a‌\u0647\u0627",
         source_types=frozenset({"web_page", "rss"}),
         programming_only=True,
         comprehensive=True,
@@ -72,7 +72,7 @@ _PROFILES = {
     ),
     "platform_github": ReportProfile(
         mode="platform_github",
-        title_fa="گزارش جامع پروژه‌ها و انتشارهای GitHub",
+        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 \u067e\u0631\u0648\u0698\u0647‌\u0647\u0627 \u0648 \u0627\u0646\u062a\u0634\u0627\u0631\u0647\u0627\u06cc GitHub",
         source_types=frozenset({"github_releases"}),
         programming_only=True,
         comprehensive=True,
@@ -81,7 +81,7 @@ _PROFILES = {
     ),
     "platform_reddit": ReportProfile(
         mode="platform_reddit",
-        title_fa="گزارش جامع برنامه‌نویسی از Reddit",
+        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 \u0628\u0631\u0646\u0627\u0645\u0647‌\u0646\u0648\u06cc\u0633\u06cc \u0627\u0632 Reddit",
         source_types=frozenset({"reddit_subreddit"}),
         programming_only=True,
         comprehensive=True,
@@ -136,9 +136,9 @@ _PROGRAMMING_TEXT_RE = re.compile(
     r"debug|compiler|runtime|dependency|vulnerability|self[\s-]?host|terminal|"
     r"powershell|forensics|"
     r"free\s+api|ai\s+(?:model|tool|agent)|llm|rag|inference)\b"
-    r"|برنامه[‌\s-]?نویسی|توسعه[‌\s-]?دهنده|کدنویسی|متن[‌\s-]?باز|"
-    r"کتابخانه|چارچوب|پروژه|مخزن|ابزار|مدل هوش مصنوعی|رابط برنامه[‌\s-]?نویسی|"
-    r"ای[‌\s-]?پی[‌\s-]?آی|انتشار نسخه|رفع باگ|آسیب[‌\s-]?پذیری"
+    r"|\u0628\u0631\u0646\u0627\u0645\u0647[‌\s-]?\u0646\u0648\u06cc\u0633\u06cc|\u062a\u0648\u0633\u0639\u0647[‌\s-]?\u062f\u0647\u0646\u062f\u0647|\u06a9\u062f\u0646\u0648\u06cc\u0633\u06cc|\u0645\u062a\u0646[‌\s-]?\u0628\u0627\u0632|"
+    r"\u06a9\u062a\u0627\u0628\u062e\u0627\u0646\u0647|\u0686\u0627\u0631\u0686\u0648\u0628|\u067e\u0631\u0648\u0698\u0647|\u0645\u062e\u0632\u0646|\u0627\u0628\u0632\u0627\u0631|\u0645\u062f\u0644 \u0647\u0648\u0634 \u0645\u0635\u0646\u0648\u0639\u06cc|\u0631\u0627\u0628\u0637 \u0628\u0631\u0646\u0627\u0645\u0647[‌\s-]?\u0646\u0648\u06cc\u0633\u06cc|"
+    r"\u0627\u06cc[‌\s-]?\u067e\u06cc[‌\s-]?\u0622\u06cc|\u0627\u0646\u062a\u0634\u0627\u0631 \u0646\u0633\u062e\u0647|\u0631\u0641\u0639 \u0628\u0627\u06af|\u0622\u0633\u06cc\u0628[‌\s-]?\u067e\u0630\u06cc\u0631\u06cc"
 )
 
 _NON_ARTICLE_RE = re.compile(
@@ -147,8 +147,8 @@ _NON_ARTICLE_RE = re.compile(
     r"|<\s*(?:table|div|span|a|img)\b"
     r"|submitted\s+by"
     r"|share\s+(?:on|to)"
-    r"|اشتراک[‌\s-]?گذاری|به\s+اشتراک\s+گذاشتن"
-    r"|در پنجر[ۀه] تازه باز می[‌\s-]?شود"
+    r"|\u0627\u0634\u062a\u0631\u0627\u06a9[‌\s-]?\u06af\u0630\u0627\u0631\u06cc|\u0628\u0647\s+\u0627\u0634\u062a\u0631\u0627\u06a9\s+\u06af\u0630\u0627\u0634\u062a\u0646"
+    r"|\u062f\u0631 \u067e\u0646\u062c\u0631[\u06c0\u0647] \u062a\u0627\u0632\u0647 \u0628\u0627\u0632 \u0645\u06cc[‌\s-]?\u0634\u0648\u062f"
     r"|this\s+channels?\s+is\s+for"
     r"|join\s+(?:our|this|the)\s+channel"
     r"|^done\b.*\breact\s+for\s+more"

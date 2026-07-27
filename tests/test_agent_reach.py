@@ -6,7 +6,7 @@ boundary: shell=False enforcement, allowlists, validation, timeout,
 oversized output rejection, credential redaction, prompt-injection
 isolation, and the platform adapters' normalization behavior.
 
-Per the gate spec section 12, the tests cover:
+Per the module contract section 12, the tests cover:
 
 - Agent-Reach disabled
 - Agent-Reach executable absent
@@ -189,13 +189,13 @@ def test_agent_reach_disabled_runner_refuses():
 
 def test_provider_disabled_stack_startup_is_healthy():
     """A disabled provider stack is a healthy idle state, not a failure."""
-    with patch("newsroom.pipeline.gate5_collect.settings") as mock_settings_collect, \
+    with patch("newsroom.pipeline.social_collect.settings") as mock_settings_collect, \
          patch("newsroom.sources.agent_reach.runner.settings") as mock_settings_runner:
         mock_settings_collect.agent_reach_ready.return_value = False
         mock_settings_runner.agent_reach_ready.return_value = False
-        # Disabled mode should not raise; the gate5_collect no-op returns
+        # Disabled mode should not raise; the social_collect no-op returns
         # disabled=True for every Agent-Reach source when Agent-Reach is off.
-        from newsroom.pipeline.gate5_collect import collect_agent_reach_sources
+        from newsroom.pipeline.social_collect import collect_agent_reach_sources
 
         # Create one Agent-Reach source so the disabled path is exercised.
         s = _make_source(source_id=1, name="yt_source", source_type="youtube", url="https://example.com")
@@ -1059,7 +1059,7 @@ def test_web_page_normalization_uses_url_as_identity():
 
 def test_duplicate_youtube_item_skipped_by_content_hash():
     """Two items with the same video_id produce the same raw_content_hash."""
-    from newsroom.pipeline.gate5_collect import agent_reach_raw_content_hash
+    from newsroom.pipeline.social_collect import agent_reach_raw_content_hash
 
     a = {"type": "youtube", "video_id": "dQw4w9WgXcQ", "channel_id": "UC123"}
     b = {"type": "youtube", "video_id": "dQw4w9WgXcQ", "channel_id": "UC123"}
@@ -1067,7 +1067,7 @@ def test_duplicate_youtube_item_skipped_by_content_hash():
 
 
 def test_duplicate_x_post_skipped_by_post_id():
-    from newsroom.pipeline.gate5_collect import agent_reach_raw_content_hash
+    from newsroom.pipeline.social_collect import agent_reach_raw_content_hash
 
     a = {"type": "x_post", "post_id": "123"}
     b = {"type": "x_post", "post_id": "123"}
@@ -1137,7 +1137,7 @@ def test_repeated_polling_advances_cursor():
 
 def test_youtube_edit_changes_raw_content_hash_only_if_id_changes():
     """Same video_id, different title → same raw_content_hash (no edit change)."""
-    from newsroom.pipeline.gate5_collect import agent_reach_raw_content_hash
+    from newsroom.pipeline.social_collect import agent_reach_raw_content_hash
 
     a = {"type": "youtube", "video_id": "vid1", "channel_id": "UC1", "title": "old"}
     b = {"type": "youtube", "video_id": "vid1", "channel_id": "UC1", "title": "new"}
@@ -1168,9 +1168,9 @@ def test_rate_limit_state_recorded_in_backend_state():
 
 def test_source_failure_does_not_stop_other_sources():
     """A failing Agent-Reach source records its failure and continues."""
-    from newsroom.pipeline.gate5_collect import collect_agent_reach_sources
+    from newsroom.pipeline.social_collect import collect_agent_reach_sources
 
-    with patch("newsroom.pipeline.gate5_collect.settings") as mock_settings_collect, \
+    with patch("newsroom.pipeline.social_collect.settings") as mock_settings_collect, \
          patch("newsroom.sources.agent_reach.runner.settings") as mock_settings_runner:
         mock_settings_collect.agent_reach_ready.return_value = True
         mock_settings_collect.agent_reach_enabled = True
@@ -1224,9 +1224,9 @@ def test_source_failure_does_not_stop_other_sources():
             ]
 
         with patch(
-            "newsroom.pipeline.gate5_collect.YouTubeCollector"
+            "newsroom.pipeline.social_collect.YouTubeCollector"
         ) as mock_yt_cls, patch(
-            "newsroom.pipeline.gate5_collect.WebPageReader"
+            "newsroom.pipeline.social_collect.WebPageReader"
         ) as mock_web_cls:
             mock_yt = MagicMock()
             mock_yt.collect = fake_collect_youtube
@@ -1237,15 +1237,15 @@ def test_source_failure_does_not_stop_other_sources():
 
             # Mock cursor and state helpers so we don't touch DB
             with patch(
-                "newsroom.pipeline.gate5_collect.load_cursor", return_value={}
+                "newsroom.pipeline.social_collect.load_cursor", return_value={}
             ), patch(
-                "newsroom.pipeline.gate5_collect.save_cursor"
+                "newsroom.pipeline.social_collect.save_cursor"
             ), patch(
-                "newsroom.pipeline.gate5_collect._ensure_source_state"
+                "newsroom.pipeline.social_collect._ensure_source_state"
             ) as mock_state, patch(
-                "newsroom.pipeline.gate5_collect._update_state_failure"
+                "newsroom.pipeline.social_collect._update_state_failure"
             ), patch(
-                "newsroom.pipeline.gate5_collect._update_state_success"
+                "newsroom.pipeline.social_collect._update_state_success"
             ):
                 mock_state.return_value = MagicMock()
                 import asyncio
@@ -1262,7 +1262,7 @@ def test_ssrf_failure_uses_dedicated_safe_path():
     """SSRFError must not be swallowed by the generic CollectionError handler."""
     import asyncio
 
-    from newsroom.pipeline.gate5_collect import collect_agent_reach_sources
+    from newsroom.pipeline.social_collect import collect_agent_reach_sources
     from newsroom.sources.agent_reach.adapters import SSRFError
 
     source = _make_source(
@@ -1282,11 +1282,11 @@ def test_ssrf_failure_uses_dedicated_safe_path():
         raise SSRFError("private redirect rejected", _source.url, recoverable=False)
 
     with (
-        patch("newsroom.pipeline.gate5_collect.settings") as mock_settings,
-        patch("newsroom.pipeline.gate5_collect.WebPageReader") as reader_cls,
-        patch("newsroom.pipeline.gate5_collect._ensure_source_state") as ensure_state,
-        patch("newsroom.pipeline.gate5_collect._update_state_failure"),
-        patch("newsroom.pipeline.gate5_collect._update_x_state_failure"),
+        patch("newsroom.pipeline.social_collect.settings") as mock_settings,
+        patch("newsroom.pipeline.social_collect.WebPageReader") as reader_cls,
+        patch("newsroom.pipeline.social_collect._ensure_source_state") as ensure_state,
+        patch("newsroom.pipeline.social_collect._update_state_failure"),
+        patch("newsroom.pipeline.social_collect._update_x_state_failure"),
     ):
         mock_settings.agent_reach_ready.return_value = True
         mock_settings.agent_reach_allowed_channels_set.return_value = {"web"}
@@ -1304,7 +1304,7 @@ def test_ssrf_failure_uses_dedicated_safe_path():
 
 def test_prompt_injection_in_source_content_does_not_affect_command():
     """Source content containing agent-injection text is treated as data."""
-    from newsroom.pipeline.gate5_collect import agent_reach_raw_content_hash
+    from newsroom.pipeline.social_collect import agent_reach_raw_content_hash
 
     malicious = {
         "type": "youtube",

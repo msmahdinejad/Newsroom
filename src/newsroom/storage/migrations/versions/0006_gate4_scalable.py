@@ -1,4 +1,4 @@
-"""Gate 4 scalable editorial: material version, jobs, shards, artifacts, lineage.
+"""Editorial scalable editorial: material version, jobs, shards, artifacts, lineage.
 
 Revision ID: 0006_gate4_scalable
 Revises: 0005_gate4_editorial

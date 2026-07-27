@@ -48,7 +48,7 @@ class Source(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     config: Mapped[dict] = mapped_column(JSONB, default=dict)  # adapter-specific config
 
-    # Gate 6: workbook linkage + stable identity (independent of display name).
+    # Production: workbook linkage + stable identity (independent of display name).
     # stable_identity is a deterministic hash of (platform, normalized handle/URL)
     # so a source survives handle renames and duplicate display names.
     stable_identity: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
@@ -127,7 +127,7 @@ class RawItem(Base):
     raw_data: Mapped[dict] = mapped_column(JSONB, nullable=False)  # structured JSON, not str(dict)
     collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     content_hash: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)  # pre-normalization hash for raw dedup
-    # Gate 3: Telegram message identity for edit idempotency
+    # MTProto: Telegram message identity for edit idempotency
     telegram_channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     telegram_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -310,7 +310,7 @@ class ProcessingError(Base):
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-# ── Gate 2: Telegram delivery state ────────────────────────────────
+# ── Delivery: Telegram delivery state ────────────────────────────────
 
 class TelegramUpdate(Base):
     """Idempotency record for processed Telegram updates."""
@@ -407,7 +407,7 @@ class NewsroomControlSettings(Base):
     )
 
 
-# ── Gate 3: Telegram MTProto ingestion state ──────────────────────
+# ── MTProto: Telegram MTProto ingestion state ──────────────────────
 
 class TelegramChannel(Base):
     """Extended Telegram channel metadata tied to sources.
@@ -461,7 +461,7 @@ class TelegramMessageGap(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-# ── Gate 4: AI editorial state ────────────────────────────────────
+# ── Editorial: AI editorial state ────────────────────────────────────
 
 class EditorialAttempt(Base):
     """Audit record for every editorial generation attempt.
@@ -529,7 +529,7 @@ class EditorialHealth(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
-# Gate 6: multi-provider router reliability state.
+# Production: multi-provider router reliability state.
 
 
 class ProviderModelHealth(Base):
@@ -711,7 +711,7 @@ class ProviderRouteAttempt(Base):
     )
 
 
-# Gate 4 scalable: editorial jobs, shards, artifacts.
+# Editorial scalable: editorial jobs, shards, artifacts.
 
 
 class EditorialJob(Base):
@@ -875,7 +875,7 @@ class EditorialArtifactLineage(Base):
     )
 
 
-# ── Gate 5: Agent-Reach capability layer state ─────────────────────
+# ── Social collection: Agent-Reach capability layer state ─────────────────────
 
 class AgentReachBackendState(Base):
     """Per-channel Agent-Reach backend state — Newsroom-owned durability.
@@ -942,7 +942,7 @@ class AgentReachSourceState(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
-# ── Gate 5X: X/Twitter account state for production timeline ingestion ──
+# ── X ingestion: X/Twitter account state for production timeline ingestion ──
 
 
 class XAccountState(Base):
@@ -975,16 +975,15 @@ class XAccountState(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
-# ── Gate 6: authoritative source workbook inventory ───────────────
+# Extended source workbook inventory
 
 
 class SourceInventory(Base):
-    """Authoritative production source registry — one row per workbook row.
+    """Optional extended source registry with one row per workbook row.
 
-    Holds every reviewed workbook source (expected 1344) with all preserved
-    workbook metadata, a stable normalized identity (independent of display
-    name), validation result, operational state, and a link to the active
-    collector row in ``sources`` when the source is activated.
+    Preserves workbook metadata, a stable normalized identity independent of
+    display name, validation result, operational state, and a link to the
+    active collector row in ``sources`` when activated.
 
     Repeated import is idempotent by ``stable_identity``: no duplicates, no
     silent row disappearance. Disabling a source never removes its historical

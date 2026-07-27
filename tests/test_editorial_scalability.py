@@ -434,4 +434,4 @@ class TestHierarchicalPipelineNoDB:
 
 
 # ── Integration tests requiring PostgreSQL ───────────────────────
-# These are in tests/integration/test_gate4_scalable.py to access the `db` fixture.
+# These are in tests/integration/test_editorial_scalability_db.py to access the `db` fixture.

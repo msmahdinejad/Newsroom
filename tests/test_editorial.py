@@ -1,6 +1,6 @@
 """Credential-independent editorial tests — fake providers, fixture responses.
 
-Covers 30+ scenarios per Gate 4 spec section 19:
+Covers 30+ scenarios per Editorial spec section 19:
 - editorial disabled / missing config
 - deterministic fallback
 - valid structured response
@@ -143,10 +143,10 @@ def make_output(
         stories.append(
             StoryEditorialResult(
                 story_id=sp.story_id,
-                headline_fa=headline_override or f"عنوان فارسی {sp.story_id}",
-                summary_fa="خلاصه فارسی",
-                why_it_matters_fa="چون مهم است",
-                practical_impact_fa="کاربرد عملی",
+                headline_fa=headline_override or f"\u0639\u0646\u0648\u0627\u0646 \u0641\u0627\u0631\u0633\u06cc {sp.story_id}",
+                summary_fa="\u062e\u0644\u0627\u0635\u0647 \u0641\u0627\u0631\u0633\u06cc",
+                why_it_matters_fa="\u0686\u0648\u0646 \u0645\u0647\u0645 \u0627\u0633\u062a",
+                practical_impact_fa="\u06a9\u0627\u0631\u0628\u0631\u062f \u0639\u0645\u0644\u06cc",
                 target_audience="developers",
                 confidence_level=confidence,
                 verification_status=sp.trust_status,
@@ -261,7 +261,7 @@ def test_selected_report_language_reaches_prompt_and_renderer() -> None:
     )
     assert "Programming & Developer Tools" in rendered
     assert "Top stories" in rendered
-    assert "خبرهای مهم" not in rendered
+    assert "\u062e\u0628\u0631\u0647\u0627\u06cc \u0645\u0647\u0645" not in rendered
 
 
 # ── 1. Editorial disabled / missing config ────────────────────────
@@ -726,7 +726,7 @@ def test_provider_outage_triggers_fallback():
         content, attempt = generate_editorial(mock_db, [1], "scheduled", cache_check=False)
         assert attempt.fallback_used
         assert attempt.status == "fallback"
-        assert "خبر" in content or "گزارش" in content
+        assert "\u062e\u0628\u0631" in content or "\u06af\u0632\u0627\u0631\u0634" in content
 
 
 # ── 23. Safety refusal ─────────────────────────────────────────────
@@ -735,7 +735,7 @@ def test_provider_outage_triggers_fallback():
 def test_grounding_scrub_keeps_nonempty_ai_reader_copy():
     """Unsafe internal claims do not discard a complete grounded AI digest."""
     evidence = make_evidence_set([1])
-    output = make_output(evidence, claim_text_override="ادعای تأییدنشده با عدد ۹۹۹۹")
+    output = make_output(evidence, claim_text_override="\u0627\u062f\u0639\u0627\u06cc \u062a\u0623\u06cc\u06cc\u062f\u0646\u0634\u062f\u0647 \u0628\u0627 \u0639\u062f\u062f \u06f9\u06f9\u06f9\u06f9")
     fake_response = EditorialResponse(output=output, model="fake-model", provider="fake")
     fake_provider = FakeProvider(name="fake", response=fake_response)
 
@@ -932,7 +932,7 @@ def test_invalid_priority_repaired_to_medium():
 
 def test_persian_unicode_in_output():
     """Persian Unicode text is preserved in output."""
-    persian_text = "هوش مصنوعی تحولی در پردازش زبان فارسی ایجاد کرده است"
+    persian_text = "\u0647\u0648\u0634 \u0645\u0635\u0646\u0648\u0639\u06cc \u062a\u062d\u0648\u0644\u06cc \u062f\u0631 \u067e\u0631\u062f\u0627\u0632\u0634 \u0632\u0628\u0627\u0646 \u0641\u0627\u0631\u0633\u06cc \u0627\u06cc\u062c\u0627\u062f \u06a9\u0631\u062f\u0647 \u0627\u0633\u062a"
     evidence = make_evidence_set([1], facts=[persian_text])
     provider = DeterministicEditorialProvider()
     request = EditorialRequest(evidence=evidence)
@@ -946,7 +946,7 @@ def test_persian_unicode_in_output():
 
 def test_rtl_content_preserved():
     """RTL content is preserved through the pipeline."""
-    rtl_text = "این یک متن فارسی با کاراکترهای راست‌چین است"
+    rtl_text = "\u0627\u06cc\u0646 \u06cc\u06a9 \u0645\u062a\u0646 \u0641\u0627\u0631\u0633\u06cc \u0628\u0627 \u06a9\u0627\u0631\u0627\u06a9\u062a\u0631\u0647\u0627\u06cc \u0631\u0627\u0633\u062a‌\u0686\u06cc\u0646 \u0627\u0633\u062a"
     evidence = make_evidence_set([1], facts=[rtl_text])
     messages = build_prompt(evidence)
     assert rtl_text in messages[1]["content"]
@@ -979,7 +979,7 @@ def test_telegram_report_renders_titles_summaries_and_links_without_legacy_field
     output = make_output(make_evidence_set([1, 2, 3]))
     for story, priority in zip(output.stories, ("high", "medium", "low"), strict=True):
         story.suggested_priority = priority
-        story.summary_fa = f"خلاصهٔ فارسی خبر {story.story_id}"
+        story.summary_fa = f"\u062e\u0644\u0627\u0635\u0647\u0654 \u0641\u0627\u0631\u0633\u06cc \u062e\u0628\u0631 {story.story_id}"
 
     content = _render_persian_report(output, "scheduled")
 
@@ -989,12 +989,12 @@ def test_telegram_report_renders_titles_summaries_and_links_without_legacy_field
         assert story.source_links[0] in content
 
     for legacy_label in (
-        "وضعیت:",
-        "اطمینان:",
-        "چه اتفاقی افتاد:",
-        "چرا مهم است:",
-        "کاربرد عملی:",
-        "ریزخبرها",
+        "\u0648\u0636\u0639\u06cc\u062a:",
+        "\u0627\u0637\u0645\u06cc\u0646\u0627\u0646:",
+        "\u0686\u0647 \u0627\u062a\u0641\u0627\u0642\u06cc \u0627\u0641\u062a\u0627\u062f:",
+        "\u0686\u0631\u0627 \u0645\u0647\u0645 \u0627\u0633\u062a:",
+        "\u06a9\u0627\u0631\u0628\u0631\u062f \u0639\u0645\u0644\u06cc:",
+        "\u0631\u06cc\u0632\u062e\u0628\u0631\u0647\u0627",
     ):
         assert legacy_label not in content
 
@@ -1003,15 +1003,15 @@ def test_presentation_repairs_detached_persian_letter_and_promotes_top_news():
     from newsroom.editorial.orchestrator import _render_persian_report
 
     output = make_output(make_evidence_set([1, 2, 3, 4, 5]))
-    output.stories[0].headline_fa = "انت انتشار نسخه جدید کتابخانه"
+    output.stories[0].headline_fa = "\u0627\u0646\u062a \u0627\u0646\u062a\u0634\u0627\u0631 \u0646\u0633\u062e\u0647 \u062c\u062f\u06cc\u062f \u06a9\u062a\u0627\u0628\u062e\u0627\u0646\u0647"
     for story in output.stories:
         story.suggested_priority = "medium"
 
     content = _render_persian_report(output, "platform_telegram")
 
-    assert "انت انتشار" not in content
-    assert "انتشار نسخه جدید کتابخانه" in content
-    assert "🔥 خبرهای مهم" in content
+    assert "\u0627\u0646\u062a \u0627\u0646\u062a\u0634\u0627\u0631" not in content
+    assert "\u0627\u0646\u062a\u0634\u0627\u0631 \u0646\u0633\u062e\u0647 \u062c\u062f\u06cc\u062f \u06a9\u062a\u0627\u0628\u062e\u0627\u0646\u0647" in content
+    assert "🔥 \u062e\u0628\u0631\u0647\u0627\u06cc \u0645\u0647\u0645" in content
 
 
 def test_prompt_requests_only_reader_facing_persian_copy():
@@ -1022,8 +1022,8 @@ def test_prompt_requests_only_reader_facing_persian_copy():
     assert '"summary_fa"' in system_prompt
     assert '"why_it_matters_fa"' not in system_prompt
     assert '"practical_impact_fa"' not in system_prompt
-    assert "چرا مهم است" not in system_prompt
-    assert "کاربرد عملی" not in system_prompt
+    assert "\u0686\u0631\u0627 \u0645\u0647\u0645 \u0627\u0633\u062a" not in system_prompt
+    assert "\u06a9\u0627\u0631\u0628\u0631\u062f \u0639\u0645\u0644\u06cc" not in system_prompt
 
 
 def test_prompt_requires_copy_for_each_selected_story_id():
@@ -1172,7 +1172,7 @@ def test_fallback_not_labeled_as_ai():
     from newsroom.editorial.orchestrator import _render_persian_report
     content = _render_persian_report(response.output, "scheduled")
     # Should not say "AI-generated" for deterministic
-    assert "هوش مصنوعی" not in content or "سیستم خبرخوان" in content
+    assert "\u0647\u0648\u0634 \u0645\u0635\u0646\u0648\u0639\u06cc" not in content or "\u0633\u06cc\u0633\u062a\u0645 \u062e\u0628\u0631\u062e\u0648\u0627\u0646" in content
 
 
 # ── 38. Source trust not changed by source content ────────────────

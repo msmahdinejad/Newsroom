@@ -58,7 +58,7 @@ def _next_tehran_boundary(schedule_times: tuple[str, ...]) -> str:
                 cand = cand + timedelta(days=1)
             if nxt is None or cand < nxt:
                 nxt = cand
-        return nxt.strftime("%Y-%m-%d %H:%M") + " (تهران)" if nxt else "—"
+        return nxt.strftime("%Y-%m-%d %H:%M") + " (\u062a\u0647\u0631\u0627\u0646)" if nxt else "—"
     except Exception:
         return "—"
 
@@ -83,7 +83,7 @@ def source_totals(db: Session) -> dict[str, dict[str, int]]:
 
 
 def inventory_totals(db: Session) -> dict[str, Any]:
-    """Reconciliation totals from the authoritative source_inventory."""
+    """Reconciliation totals from the optional extended inventory."""
     total = db.query(SourceInventory).count()
     by_state: dict[str, int] = {}
     by_platform: dict[str, dict[str, int]] = {}
@@ -94,10 +94,11 @@ def inventory_totals(db: Session) -> dict[str, Any]:
         ps[inv.operational_state] = ps.get(inv.operational_state, 0) + 1
         if inv.inactive_reason:
             inactive_reasons[inv.inactive_reason] = inactive_reasons.get(inv.inactive_reason, 0) + 1
+    accounted = sum(by_state.values())
     return {
         "total": total,
-        "expected": 1344,
-        "reconciled": total == 1344,
+        "accounted": accounted,
+        "reconciled": total == accounted,
         "by_state": by_state,
         "by_platform": by_platform,
         "inactive_reasons": inactive_reasons,
@@ -177,7 +178,7 @@ def status_text(db: Session, language: str = "fa") -> str:
                 f"Active collectors: {active_sources}",
                 f"Inactive sources: {inactive_sources}",
                 f"Unhealthy active sources: {unhealthy}",
-                f"Inventory: {inv['total']}/{inv['expected']} ({'✓' if inv['reconciled'] else '✗'})",
+                f"Inventory: {inv['total']} ({inv['accounted']} accounted)",
                 f"Inactive/invalid queue: {inv_inactive}",
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
                 f"Last collection: {last['status']} @ {last['started_at']} ({last['items']} items)",
@@ -189,20 +190,20 @@ def status_text(db: Session, language: str = "fa") -> str:
             ]
         )
     lines = [
-        "📊 وضعیت سیستم خبرخوان",
+        "📊 \u0648\u0636\u0639\u06cc\u062a \u0633\u06cc\u0633\u062a\u0645 \u062e\u0628\u0631\u062e\u0648\u0627\u0646",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"منابع فعال (collectors): {active_sources}",
-        f"منابع غیرفعال: {inactive_sources}",
-        f"منابع ناسالم: {unhealthy}",
-        f"موجودی منابع: {inv['total']}/{inv['expected']} ({'✓' if inv['reconciled'] else '✗'})",
-        f"صف غیرفعال/نامعتبر: {inv_inactive}",
+        f"\u0645\u0646\u0627\u0628\u0639 \u0641\u0639\u0627\u0644 (collectors): {active_sources}",
+        f"\u0645\u0646\u0627\u0628\u0639 \u063a\u06cc\u0631\u0641\u0639\u0627\u0644: {inactive_sources}",
+        f"\u0645\u0646\u0627\u0628\u0639 \u0646\u0627\u0633\u0627\u0644\u0645: {unhealthy}",
+        f"\u0645\u0648\u062c\u0648\u062f\u06cc \u0645\u0646\u0627\u0628\u0639: {inv['total']} ({inv['accounted']})",
+        f"\u0635\u0641 \u063a\u06cc\u0631\u0641\u0639\u0627\u0644/\u0646\u0627\u0645\u0639\u062a\u0628\u0631: {inv_inactive}",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"آخرین جمع‌آوری: {last['status']} @ {last['started_at']} ({last['items']} آیتم)",
-        f"هوش مصنوعی تحریریه: {'فعال' if ed.get('enabled') else 'غیرفعال'} | {ed.get('provider','deterministic')}",
-        f"آخرین تحویل: {dlv['status']} @ {dlv['delivered_at']} ({dlv['message_ids_count']} پیام)",
-        f"نشانگر زمان‌بندی: {dlv['cursor_advanced_at']}",
+        f"\u0622\u062e\u0631\u06cc\u0646 \u062c\u0645\u0639‌\u0622\u0648\u0631\u06cc: {last['status']} @ {last['started_at']} ({last['items']} \u0622\u06cc\u062a\u0645)",
+        f"\u0647\u0648\u0634 \u0645\u0635\u0646\u0648\u0639\u06cc \u062a\u062d\u0631\u06cc\u0631\u06cc\u0647: {'\u0641\u0639\u0627\u0644' if ed.get('enabled') else '\u063a\u06cc\u0631\u0641\u0639\u0627\u0644'} | {ed.get('provider','deterministic')}",
+        f"\u0622\u062e\u0631\u06cc\u0646 \u062a\u062d\u0648\u06cc\u0644: {dlv['status']} @ {dlv['delivered_at']} ({dlv['message_ids_count']} \u067e\u06cc\u0627\u0645)",
+        f"\u0646\u0634\u0627\u0646\u06af\u0631 \u0632\u0645\u0627\u0646‌\u0628\u0646\u062f\u06cc: {dlv['cursor_advanced_at']}",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"گزارش بعدی: {_next_tehran_boundary(control.schedule_times) if control.schedule_enabled else 'خاموش'}",
+        f"\u06af\u0632\u0627\u0631\u0634 \u0628\u0639\u062f\u06cc: {_next_tehran_boundary(control.schedule_times) if control.schedule_enabled else '\u062e\u0627\u0645\u0648\u0634'}",
     ]
     return "\n".join(lines)
 
@@ -212,7 +213,7 @@ def sources_text(db: Session, language: str = "fa") -> str:
     if language == "en":
         lines = [
             "📚 Source inventory",
-            f"Total: {inv['total']}/{inv['expected']}",
+            f"Total: {inv['total']} ({inv['accounted']} accounted)",
             f"Active: {inv['by_state'].get('active', 0)} | "
             f"Inactive: {inv['by_state'].get('inactive', 0)} | "
             f"Invalid: {inv['by_state'].get('invalid', 0)}",
@@ -225,13 +226,13 @@ def sources_text(db: Session, language: str = "fa") -> str:
             lines.append(f"• {platform}: " + " | ".join(parts))
         return "\n".join(lines)
     lines = [
-        "📚 آمار منابع",
-        f"مجموع: {inv['total']}/{inv['expected']}",
-        f"فعال: {inv['by_state'].get('active', 0)} | "
-        f"غیرفعال: {inv['by_state'].get('inactive', 0)} | "
-        f"نامعتبر: {inv['by_state'].get('invalid', 0)}",
+        "📚 \u0622\u0645\u0627\u0631 \u0645\u0646\u0627\u0628\u0639",
+        f"\u0645\u062c\u0645\u0648\u0639: {inv['total']} ({inv['accounted']})",
+        f"\u0641\u0639\u0627\u0644: {inv['by_state'].get('active', 0)} | "
+        f"\u063a\u06cc\u0631\u0641\u0639\u0627\u0644: {inv['by_state'].get('inactive', 0)} | "
+        f"\u0646\u0627\u0645\u0639\u062a\u0628\u0631: {inv['by_state'].get('invalid', 0)}",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        "به تفکیک پلتفرم:",
+        "\u0628\u0647 \u062a\u0641\u06a9\u06cc\u06a9 \u067e\u0644\u062a\u0641\u0631\u0645:",
     ]
     for plat in sorted(inv["by_platform"]):
         ps = inv["by_platform"][plat]
@@ -239,7 +240,7 @@ def sources_text(db: Session, language: str = "fa") -> str:
         lines.append(f"• {plat}: " + " | ".join(parts))
     if inv["inactive_reasons"]:
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("دلایل غیرفعالی:")
+        lines.append("\u062f\u0644\u0627\u06cc\u0644 \u063a\u06cc\u0631\u0641\u0639\u0627\u0644\u06cc:")
         for reason, cnt in sorted(inv["inactive_reasons"].items(), key=lambda x: -x[1]):
             lines.append(f"• {reason}: {cnt}")
     return "\n".join(lines)
@@ -270,17 +271,17 @@ def schedule_text(db: Session, language: str = "fa") -> str:
                 "The cursor advances only after complete delivery.",
             ]
         )
-    schedule = schedule.translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹"))
+    schedule = schedule.translate(str.maketrans("0123456789", "\u06f0\u06f1\u06f2\u06f3\u06f4\u06f5\u06f6\u06f7\u06f8\u06f9"))
     lines = [
-        "⏰ زمان‌بندی گزارش‌ها",
+        "⏰ \u0632\u0645\u0627\u0646‌\u0628\u0646\u062f\u06cc \u06af\u0632\u0627\u0631\u0634‌\u0647\u0627",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"گزارش‌های خودکار (تهران): {schedule}",
-        f"گزارش بعدی: {next_boundary}",
-        f"تعداد خبر در گزارش پیش‌فرض: {control.report_story_count}",
+        f"\u06af\u0632\u0627\u0631\u0634‌\u0647\u0627\u06cc \u062e\u0648\u062f\u06a9\u0627\u0631 (\u062a\u0647\u0631\u0627\u0646): {schedule}",
+        f"\u06af\u0632\u0627\u0631\u0634 \u0628\u0639\u062f\u06cc: {next_boundary}",
+        f"\u062a\u0639\u062f\u0627\u062f \u062e\u0628\u0631 \u062f\u0631 \u06af\u0632\u0627\u0631\u0634 \u067e\u06cc\u0634‌\u0641\u0631\u0636: {control.report_story_count}",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"آخرین تحویل موفق: {dlv['cursor_advanced_at']}",
-        f"گزارش نشانگر زمان‌بندی: #{dlv['cursor_report_id'] or '—'}",
-        "محدوده فقط پس از تحویل کامل پیش می‌رود.",
+        f"\u0622\u062e\u0631\u06cc\u0646 \u062a\u062d\u0648\u06cc\u0644 \u0645\u0648\u0641\u0642: {dlv['cursor_advanced_at']}",
+        f"\u06af\u0632\u0627\u0631\u0634 \u0646\u0634\u0627\u0646\u06af\u0631 \u0632\u0645\u0627\u0646‌\u0628\u0646\u062f\u06cc: #{dlv['cursor_report_id'] or '—'}",
+        "\u0645\u062d\u062f\u0648\u062f\u0647 \u0641\u0642\u0637 \u067e\u0633 \u0627\u0632 \u062a\u062d\u0648\u06cc\u0644 \u06a9\u0627\u0645\u0644 \u067e\u06cc\u0634 \u0645\u06cc‌\u0631\u0648\u062f.",
     ]
     return "\n".join(lines)
 

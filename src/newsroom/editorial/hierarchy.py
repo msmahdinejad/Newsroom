@@ -1188,7 +1188,7 @@ def _empty_hierarchical_result(
     db.flush()
 
     return HierarchicalResult(
-        content="📰 گزارش خبری هوش مصنوعی و فناوری\n\nخبر جدیدی در این دوره یافت نشد.",
+        content="📰 \u06af\u0632\u0627\u0631\u0634 \u062e\u0628\u0631\u06cc \u0647\u0648\u0634 \u0645\u0635\u0646\u0648\u0639\u06cc \u0648 \u0641\u0646\u0627\u0648\u0631\u06cc\n\n\u062e\u0628\u0631 \u062c\u062f\u06cc\u062f\u06cc \u062f\u0631 \u0627\u06cc\u0646 \u062f\u0648\u0631\u0647 \u06cc\u0627\u0641\u062a \u0646\u0634\u062f.",
         attempt=EditorialAttempt(
             provider="deterministic",
             model="deterministic-v1",

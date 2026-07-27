@@ -62,7 +62,7 @@ def test_multiple_authorized_users():
 
 def test_deny_message_no_infrastructure_details():
     msg = deny_message()
-    assert "دسترسی" in msg
+    assert "\u062f\u0633\u062a\u0631\u0633\u06cc" in msg
     # Must not contain infrastructure details
     assert "token" not in msg.lower()
     assert "database" not in msg.lower()

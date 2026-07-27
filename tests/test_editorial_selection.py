@@ -1,7 +1,7 @@
 """Unit tests for /report new delivered-story semantics (no DB required).
 
 Tests detect_material_change logic. Integration tests with real PostgreSQL
-are in tests/integration/test_gate4_report_new.py.
+are in tests/integration/test_report_selection_db.py.
 """
 
 from __future__ import annotations

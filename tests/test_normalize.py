@@ -14,30 +14,30 @@ def normalizer():
 # ── Persian/Arabic character normalization ───────────────────────
 
 def test_arabic_yeh_to_persian(normalizer):
-    """Arabic Yeh ي → Persian Yeh ی."""
-    assert normalizer._normalize_text("علي") == "علی"
+    """Arabic Yeh \u064a → Persian Yeh \u06cc."""
+    assert normalizer._normalize_text("\u0639\u0644\u064a") == "\u0639\u0644\u06cc"
 
 
 def test_arabic_kaf_to_persian(normalizer):
-    """Arabic Kaf ك → Persian Kaf ک."""
-    assert normalizer._normalize_text("كتاب") == "کتاب"
+    """Arabic Kaf \u0643 → Persian Kaf \u06a9."""
+    assert normalizer._normalize_text("\u0643\u062a\u0627\u0628") == "\u06a9\u062a\u0627\u0628"
 
 
 def test_arabic_alef_variants(normalizer):
-    """أ, إ, آ → ا."""
-    assert normalizer._normalize_text("أحمد") == "احمد"
-    assert normalizer._normalize_text("إبراهيم") == "ابراهیم"
-    assert normalizer._normalize_text("آرام") == "ارام"
+    """\u0623, \u0625, \u0622 → \u0627."""
+    assert normalizer._normalize_text("\u0623\u062d\u0645\u062f") == "\u0627\u062d\u0645\u062f"
+    assert normalizer._normalize_text("\u0625\u0628\u0631\u0627\u0647\u064a\u0645") == "\u0627\u0628\u0631\u0627\u0647\u06cc\u0645"
+    assert normalizer._normalize_text("\u0622\u0631\u0627\u0645") == "\u0627\u0631\u0627\u0645"
 
 
 def test_arabic_teh_marbuta(normalizer):
-    """ة → ه."""
-    assert normalizer._normalize_text("مدرسة") == "مدرسه"
+    """\u0629 → \u0647."""
+    assert normalizer._normalize_text("\u0645\u062f\u0631\u0633\u0629") == "\u0645\u062f\u0631\u0633\u0647"
 
 
 def test_persian_digits_to_ascii(normalizer):
-    """Persian digits ۰-۹ → 0-9."""
-    assert normalizer._normalize_text("سال ۱۴۰۳") == "سال 1403"
+    """Persian digits \u06f0-\u06f9 → 0-9."""
+    assert normalizer._normalize_text("\u0633\u0627\u0644 \u06f1\u06f4\u06f0\u06f3") == "\u0633\u0627\u0644 1403"
 
 
 def test_whitespace_collapse(normalizer):
@@ -122,7 +122,7 @@ def test_hash_order_independent_parts(normalizer):
 # ── Language detection ───────────────────────────────────────────
 
 def test_detect_persian(normalizer):
-    assert normalizer._detect_language("این یک متن فارسی است") == "fa"
+    assert normalizer._detect_language("\u0627\u06cc\u0646 \u06cc\u06a9 \u0645\u062a\u0646 \u0641\u0627\u0631\u0633\u06cc \u0627\u0633\u062a") == "fa"
 
 
 def test_detect_english(normalizer):
@@ -192,7 +192,7 @@ def test_normalize_unknown_type_raises(normalizer):
 def test_normalize_telegram_item(normalizer):
     raw = {
         "type": "telegram",
-        "text": "اخبار جدید در مورد پایتون",
+        "text": "\u0627\u062e\u0628\u0627\u0631 \u062c\u062f\u06cc\u062f \u062f\u0631 \u0645\u0648\u0631\u062f \u067e\u0627\u06cc\u062a\u0648\u0646",
         "channel_name": "technews",
         "link": "https://t.me/technews/123",
         "date": "2026-07-13T12:00:00Z",

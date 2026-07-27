@@ -2,13 +2,13 @@
 
 ## Supported versions
 
-Security fixes are applied to the current `2.x` release line. Older,
+Security fixes are applied to the current `3.x` release line. Older,
 unmaintained snapshots are not supported.
 
 | Version | Supported |
 | --- | --- |
-| 2.x | Yes |
-| < 2.0 | No |
+| 3.x | Yes |
+| < 3.0 | No |
 
 ## Reporting a vulnerability
 
@@ -46,5 +46,6 @@ public disclosure.
   the Telethon session belongs in its Docker volume.
 - Safe health, logging, and database metadata must never contain access values.
 
-Operational hardening and threat details are documented in
-[docs/security/THREAT_MODEL.md](docs/security/THREAT_MODEL.md).
+Operational hardening is documented in
+[docs/deployment.md](docs/deployment.md) and
+[docs/configuration.md](docs/configuration.md).

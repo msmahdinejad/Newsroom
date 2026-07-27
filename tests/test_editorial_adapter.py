@@ -92,10 +92,10 @@ def make_valid_output_json(evidence: EditorialEvidenceSet) -> dict:
         "stories": [
             {
                 "story_id": sp.story_id,
-                "headline_fa": "عنوان فارسی",
-                "summary_fa": "خلاصه فارسی",
-                "why_it_matters_fa": "چون مهم است",
-                "practical_impact_fa": "کاربرد عملی",
+                "headline_fa": "\u0639\u0646\u0648\u0627\u0646 \u0641\u0627\u0631\u0633\u06cc",
+                "summary_fa": "\u062e\u0644\u0627\u0635\u0647 \u0641\u0627\u0631\u0633\u06cc",
+                "why_it_matters_fa": "\u0686\u0648\u0646 \u0645\u0647\u0645 \u0627\u0633\u062a",
+                "practical_impact_fa": "\u06a9\u0627\u0631\u0628\u0631\u062f \u0639\u0645\u0644\u06cc",
                 "target_audience": "developers",
                 "confidence_level": 0.85,
                 "verification_status": "confirmed",
@@ -858,8 +858,8 @@ class TestPersianDigitGrounding:
                 )
             ]
         )
-        # Claim uses Persian digits ۳.۱۳.۱ but evidence uses Latin 3.13.1
-        claim = "پایتون ۳.۱۳.۱ منتشر شد"
+        # Claim uses Persian digits \u06f3.\u06f1\u06f3.\u06f1 but evidence uses Latin 3.13.1
+        claim = "\u067e\u0627\u06cc\u062a\u0648\u0646 \u06f3.\u06f1\u06f3.\u06f1 \u0645\u0646\u062a\u0634\u0631 \u0634\u062f"
         assert not _has_unsupported_numbers(claim, evidence, 1)
 
     def test_unsupported_persian_number_rejected(self):
@@ -867,12 +867,12 @@ class TestPersianDigitGrounding:
         from newsroom.editorial.grounding import _has_unsupported_numbers
 
         evidence = make_evidence()
-        # ۹۹.۹ is not in evidence
-        claim = "نسخه ۹۹.۹ منتشر شد"
+        # \u06f9\u06f9.\u06f9 is not in evidence
+        claim = "\u0646\u0633\u062e\u0647 \u06f9\u06f9.\u06f9 \u0645\u0646\u062a\u0634\u0631 \u0634\u062f"
         assert _has_unsupported_numbers(claim, evidence, 1)
 
     def test_arabic_indic_digits_match(self):
-        """Arabic-Indic digits (٠-٩) also normalize correctly."""
+        """Arabic-Indic digits (\u0660-\u0669) also normalize correctly."""
         from newsroom.editorial.grounding import _has_unsupported_numbers
 
         # Build evidence that contains "3.13.1"
@@ -900,8 +900,8 @@ class TestPersianDigitGrounding:
                 )
             ]
         )
-        # Arabic-Indic ٣.١٣.١ should match Latin 3.13.1
-        claim = "النسخة ٣.١٣.١"
+        # Arabic-Indic \u0663.\u0661\u0663.\u0661 should match Latin 3.13.1
+        claim = "\u0627\u0644\u0646\u0633\u062e\u0629 \u0663.\u0661\u0663.\u0661"
         assert not _has_unsupported_numbers(claim, evidence, 1)
 
 

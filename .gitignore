@@ -19,6 +19,7 @@ build/
 .env.providers.local
 !.env.example
 !.env.providers.example
+!.env.x.example
 
 # IDE
 .vscode/
@@ -45,20 +46,19 @@ htmlcov/
 Thumbs.db
 backups/
 
-# Telegram MTProto sessions (Gate 3) — never commit, never bake into images
+# Telegram MTProto sessions: never commit or bake into images.
 data/sessions/
 *.session
 *.session-journal
 *.session-shm
 *.session-wal
 
-# Gate 5: Agent-Reach worker local state — cookies, tokens, upstream tool installs.
+# Agent-Reach worker state: cookies, tokens, and upstream tool installs.
 # Never commit, never bake into images, never share with editorial/Telegram containers.
 data/agent-reach/
 .agent-reach-venv/
 agent_reach_audit/
 
-# Gate 6: source workbook (source data + derived import copy).
-# The importer copies the original to config/import/source-radar.xlsx on import.
-tech_ai_programming_source_radar_global_2026*.xlsx
+# Private source inventories and derived import copies.
+*.xlsx
 config/import/
