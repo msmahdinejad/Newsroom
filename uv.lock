@@ -868,6 +868,7 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "pytest-httpx" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 external-sources = [
@@ -904,6 +905,7 @@ requires-dist = [
     { name = "pytest-httpx", marker = "extra == 'dev'", specifier = ">=0.36.2" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-socks", extras = ["asyncio"], marker = "extra == 'telegram'", specifier = ">=2.4.4" },
+    { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0" },
     { name = "socksio", specifier = ">=1.0.0" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },

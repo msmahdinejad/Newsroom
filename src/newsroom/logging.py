@@ -17,10 +17,17 @@ _REDACT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)(api[_-]?key|token|password|secret|auth)[=:]\s*[^\s&\"']+"),
     re.compile(r"Bearer\s+[A-Za-z0-9_.\-]+"),
 )
+_PROXY_URL_PATTERN = re.compile(
+    r"(?i)\b(proxy|via)\s+(?:https?|socks5h?)://[^\s\]\[\"']+"
+)
 
 
 def redact(message: str) -> str:
     """Redact known secret patterns from a log message."""
+    configured_proxy = settings.telegram_proxy_url.strip()
+    if configured_proxy:
+        message = message.replace(configured_proxy, "***")
+    message = _PROXY_URL_PATTERN.sub(r"\1 ***", message)
     for pat in _REDACT_PATTERNS:
         message = pat.sub("***", message)
     return message
@@ -31,13 +38,8 @@ class RedactingFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
-            if record.msg and isinstance(record.msg, str):
-                record.msg = redact(record.msg)
-            if record.args:
-                if isinstance(record.args, dict):
-                    record.args = {k: (redact(v) if isinstance(v, str) else v) for k, v in record.args.items()}
-                elif isinstance(record.args, tuple):
-                    record.args = tuple(redact(a) if isinstance(a, str) else a for a in record.args)
+            record.msg = redact(record.getMessage())
+            record.args = ()
         except Exception:
             pass
         return True
@@ -56,7 +58,7 @@ class JsonFormatter(logging.Formatter):
         if hasattr(record, "correlation_id"):
             log_data["correlation_id"] = record.correlation_id
         if record.exc_info:
-            log_data["exception"] = self.formatException(record.exc_info)
+            log_data["exception"] = redact(self.formatException(record.exc_info))
         return json.dumps(log_data, default=str, ensure_ascii=False)
 
 
