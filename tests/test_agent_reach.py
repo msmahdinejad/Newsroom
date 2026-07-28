@@ -526,7 +526,10 @@ def test_newline_injection_rejected_in_repo_identifier():
 def test_timeout_raises_with_timeout_category():
     """subprocess.TimeoutExpired is translated into killed=True + non-zero."""
     runner = ControlledRunner(allow_disabled=True, timeout_seconds=1, max_output_bytes=4096)
-    with patch("newsroom.sources.agent_reach.runner.subprocess.Popen") as mock_popen:
+    with (
+        patch("newsroom.sources.agent_reach.runner.subprocess.Popen") as mock_popen,
+        patch("newsroom.sources.agent_reach.runner._posix_terminate") as posix_terminate,
+    ):
         proc = MagicMock()
         proc.poll.return_value = None
         proc.returncode = -1
@@ -538,6 +541,8 @@ def test_timeout_raises_with_timeout_category():
         result = runner.run("yt-dlp", "dump-json", ["https://example.com"])
         assert result.killed is True
         assert result.ok is False
+        proc.terminate.assert_called_once()
+        posix_terminate.assert_not_called()
 
 
 # ── 14. Process termination on timeout ──────────────────────────

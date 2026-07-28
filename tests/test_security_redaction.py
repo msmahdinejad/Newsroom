@@ -1,10 +1,11 @@
 """Security and redaction tests — no secrets in code, logs, or stored data."""
 
+import logging
 import re
 from pathlib import Path
 
 from newsroom.delivery.client import redact_token
-from newsroom.logging import redact
+from newsroom.logging import RedactingFilter, redact
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = REPO_ROOT / "src"
@@ -36,6 +37,30 @@ def test_proxy_userinfo_is_redacted_from_operational_errors():
     redacted = redact(message)
     assert "proxy-user" not in redacted
     assert "proxy-password" not in redacted
+
+
+def test_proxy_endpoint_is_redacted_from_operational_errors():
+    message = "Could not connect to proxy socks5://proxy.internal:1080"
+    redacted = redact(message)
+    assert "proxy.internal" not in redacted
+    assert "proxy ***" in redacted
+
+
+def test_redacting_filter_scrubs_exception_arguments():
+    proxy_url = "socks5://proxy.internal:1080"
+    record = logging.LogRecord(
+        name="telethon.network.mtprotosender",
+        level=logging.WARNING,
+        pathname=__file__,
+        lineno=1,
+        msg="Attempt failed: %s",
+        args=(ConnectionError(f"Could not connect to proxy {proxy_url}"),),
+        exc_info=None,
+    )
+
+    assert RedactingFilter().filter(record)
+    assert proxy_url not in record.getMessage()
+    assert record.args == ()
 
 
 def test_env_example_has_empty_token():
