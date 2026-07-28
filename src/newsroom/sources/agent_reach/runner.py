@@ -726,6 +726,15 @@ class ControlledRunner:
         """Terminate the process and its children. Tries graceful then forceful."""
         if proc.poll() is not None:
             return
+        if not isinstance(proc, _POPEN_TYPE):
+            with contextlib.suppress(Exception):
+                proc.terminate()
+            with contextlib.suppress(Exception):
+                proc.wait(timeout=2)
+            if proc.poll() is None:
+                with contextlib.suppress(Exception):
+                    proc.kill()
+            return
         try:
             # Terminate the whole process group on POSIX; on Windows we only
             # have the leaf PID. Either way, communicate() drains pipes after.
