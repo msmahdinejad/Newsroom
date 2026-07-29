@@ -15,6 +15,8 @@ preferred validated model and healthy key
 ```
 
 The default provider preference is Gemini, Mistral, Groq, then NVIDIA.
+Operators may add provider names and exact models without changing code when
+their wire format is OpenAI-compatible, Gemini-native, or Anthropic-native.
 Different validated models may be used for map, reduction, and schema repair.
 
 ## Validation
@@ -36,6 +38,8 @@ Validate all configured routes, or a selected provider/model:
 uv run newsroom providers validate
 uv run newsroom providers validate --provider gemini --model gemini-2.5-flash
 uv run newsroom providers validate --validate-keys
+uv run newsroom providers discover
+uv run newsroom providers validate --discover
 uv run newsroom providers status
 ```
 

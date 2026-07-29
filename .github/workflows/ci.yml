@@ -30,12 +30,12 @@ jobs:
           - "3.12"
           - "3.13"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.11.24"
           enable-cache: true
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install deterministic test environment
@@ -69,12 +69,12 @@ jobs:
     env:
       DATABASE_URL: postgresql+psycopg://newsroom:ci-only-password@127.0.0.1:5432/newsroom_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.11.24"
           enable-cache: true
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Install test environment
@@ -90,10 +90,35 @@ jobs:
     name: Compose and production image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Create safe local configuration stubs
         run: python scripts/bootstrap.py --configuration-only --source-mode empty
       - name: Validate Compose
         run: docker compose config --quiet
       - name: Build production image
         run: docker build --tag newsroom:ci .
+
+  supply-chain:
+    name: Dependency audit and SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.24"
+          enable-cache: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install locked production environment
+        run: uv sync --frozen --extra telegram --extra external-sources
+      - name: Audit Python dependencies
+        uses: pypa/gh-action-pip-audit@v1.1.0
+        with:
+          virtual-environment: .venv
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: newsroom.spdx.json
