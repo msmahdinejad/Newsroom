@@ -8,8 +8,10 @@ summary, and the original source links for each story.
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
+from newsroom.config import settings
 from newsroom.editorial.report_profiles import resolve_report_profile
 from newsroom.editorial.schema import EditorialOutput, StoryEditorialResult
 
@@ -36,7 +38,7 @@ def render_persian_report(
     """Render an intentionally compact reader-facing Persian Telegram report."""
     profile = resolve_report_profile(report_mode)
     language = output.metadata.report_language or "fa"
-    rendered_at = now or datetime.now(UTC)
+    rendered_at = now or datetime.now(ZoneInfo(settings.timezone))
     high = [story for story in output.stories if story.suggested_priority == "high"]
     other = [story for story in output.stories if story.suggested_priority != "high"]
     if not high and other:

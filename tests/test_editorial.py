@@ -329,6 +329,34 @@ def test_valid_structured_response_passes_validation():
 # ── 4. Malformed JSON ──────────────────────────────────────────────
 
 
+def test_valid_english_structured_response_passes_validation():
+    """English output is validated against the requested language."""
+    evidence = make_evidence_set([1])
+    evidence.report_language = "en"
+    output = make_output(evidence).model_dump(mode="json")
+    output["stories"][0]["headline_fa"] = "Python 3.14 release improves the runtime"
+    output["stories"][0]["summary_fa"] = (
+        "The release adds runtime and typing improvements documented by the sources."
+    )
+
+    parsed, result = parse_and_validate(json.dumps(output), evidence)
+
+    assert result.valid
+    assert parsed is not None
+
+
+def test_english_report_rejects_non_english_reader_copy():
+    """The English locale still receives a bounded language check."""
+    evidence = make_evidence_set([1])
+    evidence.report_language = "en"
+    output = make_output(evidence).model_dump(mode="json")
+
+    parsed, result = parse_and_validate(json.dumps(output), evidence)
+
+    assert parsed is None
+    assert any("is not English" in issue for issue in result.issues)
+
+
 def test_malformed_json_rejected():
     """Malformed JSON is rejected."""
     evidence = make_evidence_set([1])

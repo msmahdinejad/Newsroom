@@ -17,6 +17,7 @@ import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
@@ -411,7 +412,7 @@ def _render_persian_report(output: EditorialOutput, report_mode: str) -> str:
 
 def _empty_report(report_mode: str, report_language: str = "fa") -> str:
     del report_mode
-    now = datetime.now(UTC)
+    now = datetime.now(ZoneInfo(settings.timezone))
     if report_language == "en":
         return f"""📰 Programming News
 📅 {now.strftime('%Y-%m-%d')}

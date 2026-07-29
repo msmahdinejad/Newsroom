@@ -37,7 +37,7 @@ def scheduled_boundary_job_id(job_label: str, when: datetime | None = None) -> s
 def scheduled_specs(
     schedule_times: tuple[str, ...] | list[str] | None = None,
 ) -> list[tuple[str, int, int, str, str]]:
-    """Return deterministic cron specs for validated Tehran schedule times."""
+    """Return deterministic cron specs for validated local schedule times."""
     times = (
         DEFAULT_SCHEDULE_TIMES
         if schedule_times is None
@@ -50,7 +50,13 @@ def scheduled_specs(
         job_id = f"report_{hour:02d}" if minute == 0 else f"report_{hour:02d}{minute:02d}"
         label = f"{hour:02d}:{minute:02d}"
         specs.append(
-            (job_id, hour, minute, label, f"Scheduled report ({label} Tehran)")
+            (
+                job_id,
+                hour,
+                minute,
+                label,
+                f"Scheduled report ({label} {settings.timezone})",
+            )
         )
     return specs
 

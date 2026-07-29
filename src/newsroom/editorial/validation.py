@@ -31,6 +31,7 @@ from newsroom.editorial.schema import (
 )
 
 _PERSIAN_RE = re.compile(r"[\u0600-\u06ff]")
+_LATIN_RE = re.compile(r"[A-Za-z]")
 _URL_RE = re.compile(r"(?:https?://|www\.)", re.IGNORECASE)
 
 
@@ -133,7 +134,10 @@ def parse_and_validate(
 
     for story in stories:
         sid = story.get("story_id", "?")
-        copy_issue = _reader_facing_copy_issue(story)
+        copy_issue = _reader_facing_copy_issue(
+            story,
+            report_language=evidence.report_language,
+        )
         if copy_issue:
             result.valid = False
             result.issues.append(f"story {sid}: reader-facing copy {copy_issue}")
@@ -194,7 +198,11 @@ def parse_and_validate(
     return (output, result)
 
 
-def _reader_facing_copy_issue(story: dict) -> str | None:
+def _reader_facing_copy_issue(
+    story: dict,
+    *,
+    report_language: str,
+) -> str | None:
     """Reject source-shaped output before it can reach the public renderer."""
     headline = story.get("headline_fa")
     summary = story.get("summary_fa")
@@ -206,8 +214,15 @@ def _reader_facing_copy_issue(story: dict) -> str | None:
         return "exceeds the compact-copy limit"
     if _URL_RE.search(headline):
         return "has a URL-shaped headline"
-    if not _PERSIAN_RE.search(headline) or not _PERSIAN_RE.search(summary):
+    language = report_language.casefold().split("-", maxsplit=1)[0]
+    if language == "fa" and (
+        not _PERSIAN_RE.search(headline) or not _PERSIAN_RE.search(summary)
+    ):
         return "is not Persian"
+    if language == "en" and (
+        not _LATIN_RE.search(headline) or not _LATIN_RE.search(summary)
+    ):
+        return "is not English"
     return None
 
 
