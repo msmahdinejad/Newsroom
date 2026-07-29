@@ -112,6 +112,8 @@ jobs:
           python-version: "3.12"
       - name: Install locked production environment
         run: uv sync --frozen --extra telegram --extra external-sources
+      - name: Seed pip for the audit action
+        run: uv pip install --python .venv/bin/python pip
       - name: Audit Python dependencies
         uses: pypa/gh-action-pip-audit@v1.1.0
         with:
