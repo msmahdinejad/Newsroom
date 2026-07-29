@@ -219,3 +219,18 @@ def test_provider_config_must_use_canonical_local_filename(
             subject="Open source database releases and engineering updates",
             platforms=("github",),
         )
+
+
+def test_default_provider_file_uses_container_mount_reference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_file = _provider_file(tmp_path)
+    monkeypatch.setenv("LLM_PROVIDER_ENV_FILE", str(provider_file))
+
+    discovery = GeminiSourceDiscovery(MagicMock())
+    provider, model = discovery._gemini_route()
+
+    assert Path(discovery.provider_file) == provider_file
+    assert provider.name == "gemini"
+    assert model == "gemini-3.6-flash"

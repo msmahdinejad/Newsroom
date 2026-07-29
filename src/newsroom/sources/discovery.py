@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import re
 import socket
 from dataclasses import dataclass
@@ -149,13 +150,20 @@ class GeminiSourceDiscovery:
         self,
         db: Session,
         *,
-        provider_file: str | Path = ".env.providers.local",
+        provider_file: str | Path | None = None,
         probe: SourceProbe | None = None,
         client_factory: type[httpx.Client] = httpx.Client,
         timeout_seconds: float = 45.0,
     ) -> None:
         self.db = db
-        self.provider_file = provider_file
+        self.provider_file = (
+            provider_file
+            if provider_file is not None
+            else os.environ.get(
+                "LLM_PROVIDER_ENV_FILE",
+                ".env.providers.local",
+            )
+        )
         self.probe = probe or SourceProbe()
         self.client_factory = client_factory
         self.timeout_seconds = max(1.0, timeout_seconds)
