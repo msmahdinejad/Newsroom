@@ -148,6 +148,8 @@ async def test_bounded_batch_selects_least_recently_attempted_source() -> None:
     older = source(1, "older", now - timedelta(days=1))
     query = MagicMock()
     query.filter.return_value = query
+    query.order_by.return_value = query
+    query.limit.return_value = query
     query.all.return_value = [newer, older]
     session = MagicMock()
     session.query.return_value = query

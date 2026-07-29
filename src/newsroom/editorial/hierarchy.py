@@ -29,15 +29,19 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session
 
 from newsroom.config import settings
+from newsroom.control.digests import DigestSnapshot
+from newsroom.editorial.attempt import EditorialAttempt
 from newsroom.editorial.evidence_builder import build_evidence_set
 from newsroom.editorial.grounding import validate_grounding
 from newsroom.editorial.orchestrator import (
-    EditorialAttempt,
     _render_persian_report,
     select_provider,
 )
 from newsroom.editorial.provider import EditorialError, EditorialProvider, EditorialRequest
-from newsroom.editorial.report_profiles import resolve_report_profile
+from newsroom.editorial.report_profiles import (
+    DEFAULT_INTEREST_POLICY,
+    resolve_report_profile,
+)
 from newsroom.editorial.schema import (
     EditorialEvidenceSet,
     EditorialOutput,
@@ -110,6 +114,7 @@ def run_hierarchical_editorial(
     report_mode: str = "scheduled",
     job_id: str | None = None,
     report_language: str = "fa",
+    digest: DigestSnapshot | None = None,
 ) -> HierarchicalResult:
     """Run the full hierarchical map/reduce editorial pipeline.
 
@@ -118,6 +123,8 @@ def run_hierarchical_editorial(
     """
 
     start = time.monotonic()
+    if digest is not None:
+        report_language = digest.output_language
     if not job_id:
         job_id = f"ej_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{hashlib.sha256(str(story_ids).encode()).hexdigest()[:8]}"
 
@@ -131,6 +138,11 @@ def run_hierarchical_editorial(
         report_mode,
         max_stories=len(story_ids),
         report_language=report_language,
+        digest_slug=digest.slug if digest else "default",
+        digest_name=digest.name if digest else "News digest",
+        interest=digest.interest if digest else DEFAULT_INTEREST_POLICY,
+        source_types=digest.source_types if digest else None,
+        source_ids=digest.source_ids if digest else None,
     )
 
     if not evidence.stories:
@@ -141,7 +153,11 @@ def run_hierarchical_editorial(
 
     # 3. Create persistent job
     job = _create_job(
-        db, job_id, report_mode, story_ids, sharding_result,
+        db,
+        job_id,
+        report_mode,
+        story_ids,
+        sharding_result,
     )
 
     # A delivery retry for the same scheduled boundary reuses the completed
@@ -154,14 +170,8 @@ def run_hierarchical_editorial(
             .order_by(EditorialAttemptRecord.id.desc())
             .first()
         )
-        if (
-            report is not None
-            and persisted_attempt is not None
-            and persisted_attempt.output_json
-        ):
-            cached_output = EditorialOutput.model_validate(
-                persisted_attempt.output_json
-            )
+        if report is not None and persisted_attempt is not None and persisted_attempt.output_json:
+            cached_output = EditorialOutput.model_validate(persisted_attempt.output_json)
             attempt = EditorialAttempt(
                 provider=persisted_attempt.provider,
                 model=persisted_attempt.model,
@@ -172,9 +182,7 @@ def run_hierarchical_editorial(
                 status=persisted_attempt.status,
                 fallback_used=persisted_attempt.fallback_used,
                 usage=(
-                    persisted_attempt.usage
-                    if isinstance(persisted_attempt.usage, dict)
-                    else None
+                    persisted_attempt.usage if isinstance(persisted_attempt.usage, dict) else None
                 ),
                 output=cached_output,
             )
@@ -254,7 +262,11 @@ def run_hierarchical_editorial(
             break
 
         result = _process_shard(
-            db, job, shard_spec, evidence, provider,
+            db,
+            job,
+            shard_spec,
+            evidence,
+            provider,
         )
         map_results.append(result)
 
@@ -327,8 +339,14 @@ def run_hierarchical_editorial(
             reduction_output_tokens,
             reduction_fallback,
         ) = _reduce_artifacts(
-            db, job, map_results, evidence, provider,
-            total_model_calls, total_input_tokens, total_output_tokens,
+            db,
+            job,
+            map_results,
+            evidence,
+            provider,
+            total_model_calls,
+            total_input_tokens,
+            total_output_tokens,
         )
         total_model_calls += reduction_calls
         total_input_tokens += reduction_input_tokens
@@ -348,7 +366,12 @@ def run_hierarchical_editorial(
     final_output.metadata.report_language = evidence.report_language
 
     # 7. Render localized report
-    content = _render_persian_report(final_output, report_mode)
+    content = _render_persian_report(
+        final_output,
+        report_mode,
+        digest_name=evidence.digest_name,
+        timezone=digest.timezone if digest else None,
+    )
 
     # 8. Build attempt metadata
     used_providers = {result.provider for result in map_results}
@@ -370,8 +393,11 @@ def run_hierarchical_editorial(
         retry_count=0,
         fallback_used=job.fallback_used,
         latency_ms=int((time.monotonic() - start) * 1000),
-        usage={"prompt_tokens": total_input_tokens, "completion_tokens": total_output_tokens,
-               "total_tokens": total_input_tokens + total_output_tokens},
+        usage={
+            "prompt_tokens": total_input_tokens,
+            "completion_tokens": total_output_tokens,
+            "total_tokens": total_input_tokens + total_output_tokens,
+        },
         output=final_output,
     )
 
@@ -460,6 +486,11 @@ def _process_shard(
         prompt_version=evidence.prompt_version,
         report_mode=evidence.report_mode,
         report_language=evidence.report_language,
+        digest_slug=evidence.digest_slug,
+        digest_name=evidence.digest_name,
+        topic_brief=evidence.topic_brief,
+        include_terms=evidence.include_terms,
+        exclude_terms=evidence.exclude_terms,
         stories=shard_stories,
     )
 
@@ -475,30 +506,29 @@ def _process_shard(
             if provider.name == "deterministic"
             else "validated-editorial-artifact"
         ),
-        (
-            "deterministic-v1"
-            if provider.name == "deterministic"
-            else "route-independent-v1"
-        ),
+        ("deterministic-v1" if provider.name == "deterministic" else "route-independent-v1"),
         temperature=settings.editorial_temperature,
         max_input_tokens=spec.effective_input_limit,
         max_output_tokens=spec.effective_output_limit,
     )
 
     # Check for cached artifact
-    existing = db.query(EditorialArtifact).filter_by(cache_key=cache_key, status="validated").first()
+    existing = (
+        db.query(EditorialArtifact).filter_by(cache_key=cache_key, status="validated").first()
+    )
     if existing:
         logger.debug(f"Shard {spec.shard_id} served from cache")
         cached_provider = existing.provider or "unknown"
         cached_model = existing.model or "unknown"
-        cached_fallback = (
-            cached_provider == "deterministic"
-            and provider.name != "deterministic"
+        cached_fallback = cached_provider == "deterministic" and provider.name != "deterministic"
+        current_shard = (
+            db.query(EditorialShard)
+            .filter_by(
+                job_db_id=job.id,
+                shard_id=spec.shard_id,
+            )
+            .first()
         )
-        current_shard = db.query(EditorialShard).filter_by(
-            job_db_id=job.id,
-            shard_id=spec.shard_id,
-        ).first()
         if current_shard is not None:
             current_shard.status = "completed"
             current_shard.artifact_id = existing.id
@@ -527,9 +557,9 @@ def _process_shard(
         )
 
     # Acquire lease
-    shard_record = db.query(EditorialShard).filter_by(
-        job_db_id=job.id, shard_id=spec.shard_id
-    ).first()
+    shard_record = (
+        db.query(EditorialShard).filter_by(job_db_id=job.id, shard_id=spec.shard_id).first()
+    )
     if shard_record:
         shard_record.status = "running"
         shard_record.lease_owner = job.job_id
@@ -675,12 +705,14 @@ def _persist_lineage(
             if ref_id not in ref_to_url:
                 continue
             url = ref_to_url.get(ref_id)
-            db.add(EditorialArtifactLineage(
-                artifact_id=artifact_id,
-                story_id=story_result.story_id,
-                evidence_ref_id=ref_id,
-                source_url=url,
-            ))
+            db.add(
+                EditorialArtifactLineage(
+                    artifact_id=artifact_id,
+                    story_id=story_result.story_id,
+                    evidence_ref_id=ref_id,
+                    source_url=url,
+                )
+            )
     db.flush()
 
 
@@ -714,7 +746,7 @@ def _reduce_artifacts(
         groups: list[list[MapResult]] = []
         group_size = 3
         for i in range(0, len(current_artifacts), group_size):
-            groups.append(current_artifacts[i:i + group_size])
+            groups.append(current_artifacts[i : i + group_size])
 
         reduced: list[MapResult] = []
         for i, group in enumerate(groups):
@@ -724,23 +756,30 @@ def _reduce_artifacts(
 
             merged = _merge_outputs(group, evidence)
             artifact = _persist_reduction(
-                db, job, f"reduction_l{level}_g{i}", merged, evidence,
-                "reduction_topic", level + 1,
+                db,
+                job,
+                f"reduction_l{level}_g{i}",
+                merged,
+                evidence,
+                "reduction_topic",
+                level + 1,
                 child_artifact_ids=[child.artifact_id for child in group],
             )
-            reduced.append(MapResult(
-                shard_id=f"reduction_l{level}_g{i}",
-                artifact_id=artifact.id,
-                output=merged,
-                story_ids=[s for r in group for s in r.story_ids],
-                evidence_ref_ids=[r for res in group for r in res.evidence_ref_ids],
-                latency_ms=0,
-                usage=None,
-                from_cache=False,
-                fallback_used=False,
-                provider=merged.metadata.provider or "deterministic_reducer",
-                model=merged.metadata.model_name or "deterministic-merge-v1",
-            ))
+            reduced.append(
+                MapResult(
+                    shard_id=f"reduction_l{level}_g{i}",
+                    artifact_id=artifact.id,
+                    output=merged,
+                    story_ids=[s for r in group for s in r.story_ids],
+                    evidence_ref_ids=[r for res in group for r in res.evidence_ref_ids],
+                    latency_ms=0,
+                    usage=None,
+                    from_cache=False,
+                    fallback_used=False,
+                    provider=merged.metadata.provider or "deterministic_reducer",
+                    model=merged.metadata.model_name or "deterministic-merge-v1",
+                )
+            )
 
         current_artifacts = reduced
         level += 1
@@ -773,11 +812,7 @@ def _final_reduction(
             cache_key=_reduction_cache_key(
                 "reduction_final",
                 evidence,
-                quality=(
-                    "deterministic"
-                    if provider.name == "deterministic"
-                    else "ai"
-                ),
+                quality=("deterministic" if provider.name == "deterministic" else "ai"),
             ),
             status="validated",
         )
@@ -920,6 +955,11 @@ def _bounded_reduction_evidence(
         prompt_version=evidence.prompt_version,
         report_mode=evidence.report_mode,
         report_language=evidence.report_language,
+        digest_slug=evidence.digest_slug,
+        digest_name=evidence.digest_name,
+        topic_brief=evidence.topic_brief,
+        include_terms=evidence.include_terms,
+        exclude_terms=evidence.exclude_terms,
         stories=selected,
     )
 
@@ -965,7 +1005,11 @@ def _reserve_telegram_story_results(
     retained = list(selected)
     while len(retained) + len(missing) > max_stories:
         removable = next(
-            (index for index in range(len(retained) - 1, -1) if retained[index].story_id not in telegram_ids),
+            (
+                index
+                for index in range(len(retained) - 1, -1)
+                if retained[index].story_id not in telegram_ids
+            ),
             None,
         )
         if removable is None:
@@ -1023,9 +1067,7 @@ def _merge_outputs(
 
     ranked_stories = all_stories
     # Limit to configured max stories while preserving Telegram coverage.
-    max_stories = max_stories or resolve_report_profile(
-        evidence.report_mode
-    ).max_stories
+    max_stories = max_stories or resolve_report_profile(evidence.report_mode).max_stories
     all_stories = _reserve_telegram_story_results(
         ranked_stories[:max_stories],
         ranked_stories,
@@ -1070,7 +1112,8 @@ def _persist_reduction(
     """Persist a reduction artifact."""
     quality = (
         "ai"
-        if provider in {
+        if provider
+        in {
             "gemini",
             "mistral",
             "groq",
@@ -1081,7 +1124,9 @@ def _persist_reduction(
         else "deterministic"
     )
     cache_key = _reduction_cache_key(shard_id, evidence, quality=quality)
-    existing = db.query(EditorialArtifact).filter_by(cache_key=cache_key, status="validated").first()
+    existing = (
+        db.query(EditorialArtifact).filter_by(cache_key=cache_key, status="validated").first()
+    )
     if existing is not None:
         return existing
 

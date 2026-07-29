@@ -107,6 +107,8 @@ def test_alembic_at_gate2_revision():
         "0010_gate6_router_reliability",
         "0011_gate7_identity_privacy",
         "0012_owner_control_plane",
+        "0013_digest_definitions",
+        "0014_source_discovery",
     )
     eng.dispose()
 

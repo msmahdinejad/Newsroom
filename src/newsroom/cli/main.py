@@ -68,8 +68,47 @@ def main() -> int:
         "--source",
         choices=["default", "all", "telegram", "x", "web", "github", "reddit"],
         default="default",
-        help="Generate a programming report scoped to one platform",
+        help="Scope the configured digest to one supported platform",
     )
+    report_generate.add_argument(
+        "--digest",
+        default="default",
+        help="Digest slug to generate",
+    )
+
+    digests_parser = subparsers.add_parser(
+        "digests",
+        help="Create and configure named news digests",
+    )
+    digests_sub = digests_parser.add_subparsers(dest="digests_command")
+    digests_sub.add_parser("list", help="List digest definitions")
+    digest_show = digests_sub.add_parser("show", help="Show one digest")
+    digest_show.add_argument("slug")
+    digest_create = digests_sub.add_parser("create", help="Create a digest")
+    digest_create.add_argument("slug")
+    digest_create.add_argument("--name", required=True)
+    digest_create.add_argument("--topic", required=True)
+    digest_create.add_argument("--language", choices=["fa", "en"], default="fa")
+    digest_create.add_argument("--timezone", default="Asia/Tehran")
+    digest_update = digests_sub.add_parser("update", help="Update a digest")
+    digest_update.add_argument("slug")
+    digest_update.add_argument("--name")
+    digest_update.add_argument("--topic")
+    digest_update.add_argument("--include")
+    digest_update.add_argument("--exclude")
+    digest_update.add_argument("--language", choices=["fa", "en"])
+    digest_update.add_argument("--timezone")
+    digest_update.add_argument("--sources")
+    digest_update.add_argument("--source-ids")
+    digest_update.add_argument("--count", type=int)
+    digest_update.add_argument("--telegram-min", type=int)
+    digest_update.add_argument("--schedule")
+    for action in ("enable", "disable"):
+        digest_action = digests_sub.add_parser(
+            action,
+            help=f"{action.title()} one digest",
+        )
+        digest_action.add_argument("slug")
 
     pipeline_parser = subparsers.add_parser("pipeline", help="Run complete pipeline")
     pipeline_sub = pipeline_parser.add_subparsers(dest="pipeline_command")
@@ -98,6 +137,23 @@ def main() -> int:
         action="store_true",
         help="Also probe each configured key through a validated route",
     )
+    providers_validate.add_argument(
+        "--discover",
+        action="store_true",
+        help="Discover generation-capable model IDs, then validate them before enabling",
+    )
+    providers_validate.add_argument(
+        "--max-discovered-models",
+        type=int,
+        default=50,
+        help="Bound discovered model validation per provider (1..100)",
+    )
+    providers_discover = providers_sub.add_parser(
+        "discover",
+        help="List generation-capable provider model IDs without enabling them",
+    )
+    providers_discover.add_argument("--provider")
+    providers_discover.add_argument("--max-models", type=int, default=50)
     providers_sub.add_parser("status", help="Show persisted safe provider health")
 
     sources_parser = subparsers.add_parser("sources", help="Source registry management")
@@ -126,6 +182,31 @@ def main() -> int:
 
     sources_import = sources_sub.add_parser("import", help="Import a CSV/XLSX source file")
     sources_import.add_argument("--file", required=True)
+    sources_add = sources_sub.add_parser(
+        "add",
+        help="Add one source from a supported platform",
+    )
+    sources_add.add_argument("--name", required=True)
+    sources_add.add_argument(
+        "--type",
+        required=True,
+        choices=[
+            "telegram",
+            "x_timeline",
+            "reddit_subreddit",
+            "github_releases",
+            "rss",
+            "web_page",
+        ],
+    )
+    sources_add.add_argument("--url", required=True)
+    sources_add.add_argument("--language", default="en")
+    sources_add.add_argument("--category", default="general")
+    sources_add.add_argument(
+        "--enable",
+        action="store_true",
+        help="Activate immediately; otherwise leave pending operator review",
+    )
     sources_list = sources_sub.add_parser("list", help="List configured sources")
     sources_list.add_argument("--type")
     sources_list.add_argument("--enabled", choices=["all", "yes", "no"], default="all")
@@ -140,6 +221,40 @@ def main() -> int:
     )
     source_delete.add_argument("source_id", type=int)
     source_delete.add_argument("--confirm", action="store_true", required=True)
+
+    source_discover = sources_sub.add_parser(
+        "discover",
+        help="Find grounded candidates with Gemini Search; approval is separate",
+    )
+    source_discover.add_argument("--subject", required=True)
+    source_discover.add_argument(
+        "--platforms",
+        default="all",
+        help="Comma-separated: telegram,x,reddit,github,web",
+    )
+    source_discover.add_argument("--mode", choices=["quick", "deep"], default="quick")
+    source_discover.add_argument("--max-candidates", type=int, default=20)
+    discovery_poll = sources_sub.add_parser(
+        "discovery-poll",
+        help="Poll a background deep-research discovery job",
+    )
+    discovery_poll.add_argument("job_id", type=int)
+    discovery_poll.add_argument("--max-candidates", type=int, default=20)
+    discovery_candidates = sources_sub.add_parser(
+        "candidates",
+        help="List discovered candidates awaiting an operator decision",
+    )
+    discovery_candidates.add_argument("--job", type=int)
+    discovery_candidates.add_argument(
+        "--status",
+        choices=["pending", "approved", "rejected"],
+    )
+    for action in ("approve", "reject"):
+        candidate_action = sources_sub.add_parser(
+            action,
+            help=f"{action.title()} one discovered candidate",
+        )
+        candidate_action.add_argument("candidate_id", type=int)
 
     inventory_import = sources_sub.add_parser(
         "inventory-import",
@@ -174,21 +289,31 @@ def main() -> int:
         return db_migrate()
     elif args.command == "collect":
         from newsroom.cli.commands.collect import collect_command
+
         return asyncio.run(collect_command(args))
     elif args.command == "process":
         from newsroom.cli.commands.process import process_command
+
         return process_command(args)
     elif args.command == "report" and args.report_command == "generate":
         from newsroom.cli.commands.report import report_command
+
         return report_command(args)
+    elif args.command == "digests":
+        from newsroom.cli.commands.digests import digests_command
+
+        return digests_command(args)
     elif args.command == "pipeline" and args.pipeline_command == "run":
         from newsroom.cli.commands.pipeline import pipeline_run_command
+
         return pipeline_run_command(args)
     elif args.command == "providers":
         from newsroom.cli.commands.providers import providers_command
+
         return providers_command(args)
     elif args.command == "sources":
         from newsroom.cli.commands.sources import sources_command
+
         return sources_command(args)
     else:
         parser.print_help()

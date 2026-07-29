@@ -19,33 +19,23 @@ from urllib.parse import urlparse, urlunparse
 
 from sqlalchemy.orm import Session
 
+from newsroom.control.digests import (
+    DigestCatalog,
+    DigestSnapshot,
+    DigestUpdate,
+)
+from newsroom.sources.platforms import (
+    COLLECTABLE_SOURCE_TYPES,
+    expand_platforms,
+    normalize_user_source_type,
+    platform_label,
+)
 from newsroom.storage.models import (
-    NewsroomControlSettings,
     Source,
     SourceInventory,
 )
 
-DEFAULT_SCHEDULE_TIMES = ("00:00", "06:00", "12:00", "18:00")
-SUPPORTED_LANGUAGES = frozenset({"fa", "en"})
-SUPPORTED_SOURCE_TYPES = frozenset(
-    {
-        "telegram",
-        "x_timeline",
-        "rss",
-        "web_page",
-        "github_releases",
-        "reddit_subreddit",
-        "youtube_rss",
-    }
-)
-SOURCE_GROUPS: dict[str, frozenset[str]] = {
-    "telegram": frozenset({"telegram"}),
-    "x": frozenset({"x_timeline"}),
-    "web": frozenset({"rss", "web_page"}),
-    "github": frozenset({"github_releases"}),
-    "reddit": frozenset({"reddit_subreddit"}),
-    "youtube": frozenset({"youtube_rss"}),
-}
+SUPPORTED_SOURCE_TYPES = COLLECTABLE_SOURCE_TYPES
 MAX_IMPORT_BYTES = 5 * 1024 * 1024
 MAX_IMPORT_ROWS = 2_000
 
@@ -74,6 +64,16 @@ class ControlSnapshot:
     report_story_count: int
     schedule_times: tuple[str, ...]
     schedule_enabled: bool
+    digest_slug: str = "default"
+    digest_name: str = "Default digest"
+    topic_brief: str = ""
+    include_terms: tuple[str, ...] = ()
+    exclude_terms: tuple[str, ...] = ()
+    timezone: str = "Asia/Tehran"
+    source_ids: tuple[int, ...] = ()
+    minimum_telegram_stories: int = 0
+    provider_policy: dict[str, object] | None = None
+    delivery_config: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -99,18 +99,10 @@ class NewsroomControl:
 
     def __init__(self, db: Session) -> None:
         self.db = db
+        self.digests = DigestCatalog(db)
 
     def settings(self) -> ControlSnapshot:
-        row = self.db.get(NewsroomControlSettings, 1)
-        if not isinstance(row, NewsroomControlSettings):
-            return ControlSnapshot(
-                report_language="fa",
-                report_source_types=(),
-                report_story_count=15,
-                schedule_times=DEFAULT_SCHEDULE_TIMES,
-                schedule_enabled=True,
-            )
-        return _snapshot(row)
+        return _control_snapshot(self.digests.get())
 
     def configure(
         self,
@@ -120,36 +112,36 @@ class NewsroomControl:
         story_count: int | None = None,
         schedule_times: str | list[str] | tuple[str, ...] | None = None,
         schedule_enabled: bool | None = None,
+        name: str | None = None,
+        topic_brief: str | None = None,
+        include_terms: str | list[str] | tuple[str, ...] | None = None,
+        exclude_terms: str | list[str] | tuple[str, ...] | None = None,
+        timezone: str | None = None,
+        source_ids: list[int] | tuple[int, ...] | None = None,
+        minimum_telegram_stories: int | None = None,
     ) -> ControlSnapshot:
-        row = self.db.get(NewsroomControlSettings, 1)
-        if not isinstance(row, NewsroomControlSettings):
-            row = NewsroomControlSettings(id=1)
-            self.db.add(row)
-
-        if language is not None:
-            normalized_language = language.strip().lower()
-            if normalized_language not in SUPPORTED_LANGUAGES:
-                raise ValueError("language must be one of: fa, en")
-            row.report_language = normalized_language
-
-        if source_groups is not None:
-            row.report_source_types = list(_expand_source_groups(source_groups))
-
-        if story_count is not None:
-            if not 1 <= int(story_count) <= 50:
-                raise ValueError("story count must be between 1 and 50")
-            row.report_story_count = int(story_count)
-
-        if schedule_times is not None:
-            normalized_times = _normalize_schedule_times(schedule_times)
-            row.schedule_times = list(normalized_times)
-            row.schedule_enabled = bool(normalized_times)
-
-        if schedule_enabled is not None:
-            row.schedule_enabled = bool(schedule_enabled)
-
-        self.db.flush()
-        return _snapshot(row)
+        source_values = tuple(_split_values(source_groups)) if source_groups is not None else None
+        time_values = tuple(_split_values(schedule_times)) if schedule_times is not None else None
+        included = tuple(_split_terms(include_terms)) if include_terms is not None else None
+        excluded = tuple(_split_terms(exclude_terms)) if exclude_terms is not None else None
+        updated = self.digests.update(
+            "default",
+            DigestUpdate(
+                name=name,
+                topic_brief=topic_brief,
+                include_terms=included,
+                exclude_terms=excluded,
+                output_language=language,
+                timezone=timezone,
+                source_groups=source_values,
+                source_ids=tuple(source_ids) if source_ids is not None else None,
+                max_stories=story_count,
+                minimum_telegram_stories=minimum_telegram_stories,
+                schedule_times=time_values,
+                schedule_enabled=schedule_enabled,
+            ),
+        )
+        return _control_snapshot(updated)
 
     def list_sources(
         self,
@@ -175,6 +167,66 @@ class NewsroomControl:
             .all()
         )
         return rows, total
+
+    def add_source(
+        self,
+        *,
+        name: str,
+        source_type: str,
+        url: str,
+        language: str = "en",
+        category: str = "general",
+        trust_class: str = "community",
+        enabled: bool = False,
+    ) -> SourceActionResult:
+        """Add one source within the closed platform registry."""
+        normalized_type = _normalize_source_type(source_type)
+        normalized_url = _normalize_source_url(url, normalized_type)
+        identity = _stable_source_identity(normalized_type, normalized_url)
+        normalized_name = " ".join(name.split())
+        if not normalized_name:
+            raise ValueError("name is required")
+        existing = self.db.query(Source).filter(Source.stable_identity == identity).first()
+        if isinstance(existing, Source):
+            if enabled:
+                existing.enabled = True
+                existing.inactive_reason = None
+            self.db.flush()
+            return SourceActionResult(
+                source_id=existing.id,
+                action="existing",
+                enabled=existing.enabled,
+                name=existing.name,
+            )
+        normalized_language = language.strip().lower()
+        if not re.fullmatch(
+            r"[a-z]{2,3}(?:-[a-z0-9]{2,8})?",
+            normalized_language,
+        ):
+            raise ValueError("language must be a short language tag")
+        source = Source(
+            name=_unique_source_name(self.db, normalized_name[:255]),
+            type=normalized_type,
+            url=normalized_url,
+            language=normalized_language[:10],
+            category=(" ".join(category.split()) or "general")[:100],
+            trust_class=(" ".join(trust_class.split()) or "community")[:30],
+            enabled=enabled,
+            stable_identity=identity,
+            platform=_platform_for_type(normalized_type),
+            inactive_reason=None if enabled else "owner_review_required",
+            validation_status="untested",
+            health_status="configured",
+            no_cursor_reason="not_attempted",
+        )
+        self.db.add(source)
+        self.db.flush()
+        return SourceActionResult(
+            source_id=source.id,
+            action="created",
+            enabled=source.enabled,
+            name=source.name,
+        )
 
     def set_source_enabled(self, source_id: int, enabled: bool) -> SourceActionResult:
         source = self.db.get(Source, int(source_id))
@@ -242,11 +294,7 @@ class NewsroomControl:
                     normalized["type"],
                     normalized["url"],
                 )
-                existing = (
-                    self.db.query(Source)
-                    .filter(Source.stable_identity == identity)
-                    .first()
-                )
+                existing = self.db.query(Source).filter(Source.stable_identity == identity).first()
                 if existing is None:
                     existing = (
                         self.db.query(Source)
@@ -317,25 +365,23 @@ class NewsroomControl:
             row.inactive_reason = None if enabled else reason
 
 
-def _snapshot(row: NewsroomControlSettings) -> ControlSnapshot:
-    language = str(row.report_language or "fa").lower()
-    if language not in SUPPORTED_LANGUAGES:
-        language = "fa"
-    source_types = tuple(
-        source_type
-        for source_type in (row.report_source_types or [])
-        if source_type in SUPPORTED_SOURCE_TYPES
-    )
-    try:
-        times = _normalize_schedule_times(row.schedule_times or [])
-    except ValueError:
-        times = DEFAULT_SCHEDULE_TIMES
+def _control_snapshot(digest: DigestSnapshot) -> ControlSnapshot:
     return ControlSnapshot(
-        report_language=language,
-        report_source_types=source_types,
-        report_story_count=max(1, min(50, int(row.report_story_count or 15))),
-        schedule_times=times,
-        schedule_enabled=bool(row.schedule_enabled),
+        report_language=digest.output_language,
+        report_source_types=digest.source_types,
+        report_story_count=digest.max_stories,
+        schedule_times=digest.schedule_times,
+        schedule_enabled=digest.schedule_enabled,
+        digest_slug=digest.slug,
+        digest_name=digest.name,
+        topic_brief=digest.interest.topic_brief,
+        include_terms=digest.interest.include_terms,
+        exclude_terms=digest.interest.exclude_terms,
+        timezone=digest.timezone,
+        source_ids=digest.source_ids,
+        minimum_telegram_stories=digest.minimum_telegram_stories,
+        provider_policy=digest.provider_policy,
+        delivery_config=digest.delivery_config,
     )
 
 
@@ -345,23 +391,16 @@ def _split_values(value: str | list[str] | tuple[str, ...]) -> list[str]:
     return [str(part) for part in value]
 
 
+def _split_terms(value: str | list[str] | tuple[str, ...]) -> list[str]:
+    if isinstance(value, str):
+        return [part.strip() for part in re.split(r"[,;]+", value) if part.strip()]
+    return [str(part).strip() for part in value if str(part).strip()]
+
+
 def _expand_source_groups(
     groups: str | list[str] | tuple[str, ...],
 ) -> tuple[str, ...]:
-    values = [value.strip().lower() for value in _split_values(groups)]
-    if not values or values == ["all"]:
-        return ()
-    expanded: set[str] = set()
-    for value in values:
-        if value in SOURCE_GROUPS:
-            expanded.update(SOURCE_GROUPS[value])
-        elif value in SUPPORTED_SOURCE_TYPES:
-            expanded.add(value)
-        else:
-            raise ValueError(
-                "source groups must use: all, telegram, x, web, github, reddit, youtube"
-            )
-    return tuple(sorted(expanded))
+    return expand_platforms([value.strip().lower() for value in _split_values(groups)])
 
 
 def _normalize_schedule_times(
@@ -383,12 +422,7 @@ def _normalize_schedule_times(
 
 
 def _normalize_source_type(value: str) -> str:
-    normalized = value.strip().lower()
-    if normalized in SOURCE_GROUPS and len(SOURCE_GROUPS[normalized]) == 1:
-        return next(iter(SOURCE_GROUPS[normalized]))
-    if normalized not in SUPPORTED_SOURCE_TYPES:
-        raise ValueError("unsupported source type")
-    return normalized
+    return normalize_user_source_type(value)
 
 
 def _read_csv(content: bytes) -> list[dict[str, Any]]:
@@ -445,9 +479,10 @@ def _normalize_import_row(raw: dict[str, Any]) -> dict[str, Any]:
         "type": source_type,
         "url": url,
         "language": language[:10],
-        "category": (mapped.get("category") or "programming")[:100],
+        "category": (mapped.get("category") or "general")[:100],
         "trust_class": (mapped.get("trust_class") or "community")[:30],
-        "enabled": (mapped.get("enabled") or "").lower() in {
+        "enabled": (mapped.get("enabled") or "").lower()
+        in {
             "1",
             "true",
             "yes",
@@ -504,12 +539,4 @@ def _unique_source_name(db: Session, base: str) -> str:
 
 
 def _platform_for_type(source_type: str) -> str:
-    return {
-        "telegram": "Telegram",
-        "x_timeline": "X / Twitter",
-        "github_releases": "GitHub",
-        "reddit_subreddit": "Reddit",
-        "youtube_rss": "YouTube / Social",
-        "rss": "Website / Newsletter",
-        "web_page": "Website / Newsletter",
-    }[source_type]
+    return platform_label(source_type)

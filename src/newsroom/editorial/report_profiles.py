@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from html import unescape
 
+from newsroom.control.digests import DEFAULT_TOPIC_BRIEF, InterestPolicy
+
 
 @dataclass(frozen=True)
 class ReportProfile:
@@ -13,8 +15,8 @@ class ReportProfile:
 
     mode: str
     title_fa: str
+    title_en: str
     source_types: frozenset[str] | None
-    programming_only: bool
     comprehensive: bool
     max_stories: int
     minimum_telegram_stories: int
@@ -22,12 +24,12 @@ class ReportProfile:
 
 _DEFAULT = ReportProfile(
     mode="scheduled",
-    title_fa="\u0627\u062e\u0628\u0627\u0631 \u0628\u0631\u0646\u0627\u0645\u0647‌\u0646\u0648\u06cc\u0633\u06cc \u0648 \u0627\u0628\u0632\u0627\u0631\u0647\u0627\u06cc \u062a\u0648\u0633\u0639\u0647",
+    title_en="News digest",
+    title_fa="\u062e\u0628\u0631\u0646\u0627\u0645\u0647",
     source_types=None,
-    programming_only=True,
     comprehensive=False,
     max_stories=15,
-    minimum_telegram_stories=9,
+    minimum_telegram_stories=2,
 )
 
 _PROFILES = {
@@ -36,54 +38,54 @@ _PROFILES = {
     "manual_new": _DEFAULT,
     "manual_comprehensive": ReportProfile(
         mode="manual_comprehensive",
-        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 \u0628\u0631\u0646\u0627\u0645\u0647‌\u0646\u0648\u06cc\u0633\u06cc",
+        title_en="Comprehensive digest",
+        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639",
         source_types=None,
-        programming_only=True,
         comprehensive=True,
         max_stories=24,
-        minimum_telegram_stories=12,
+        minimum_telegram_stories=2,
     ),
     "platform_telegram": ReportProfile(
         mode="platform_telegram",
-        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 \u0628\u0631\u0646\u0627\u0645\u0647‌\u0646\u0648\u06cc\u0633\u06cc \u0627\u0632 \u062a\u0644\u06af\u0631\u0627\u0645",
+        title_en="Telegram digest",
+        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 \u062a\u0644\u06af\u0631\u0627\u0645",
         source_types=frozenset({"telegram"}),
-        programming_only=True,
         comprehensive=True,
         max_stories=30,
         minimum_telegram_stories=30,
     ),
     "platform_x": ReportProfile(
         mode="platform_x",
-        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 \u0628\u0631\u0646\u0627\u0645\u0647‌\u0646\u0648\u06cc\u0633\u06cc \u0627\u0632 X",
+        title_en="X digest",
+        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 X",
         source_types=frozenset({"x_timeline"}),
-        programming_only=True,
         comprehensive=True,
         max_stories=24,
         minimum_telegram_stories=0,
     ),
     "platform_web": ReportProfile(
         mode="platform_web",
-        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 \u0628\u0631\u0646\u0627\u0645\u0647‌\u0646\u0648\u06cc\u0633\u06cc \u0627\u0632 \u0648\u0628‌\u0633\u0627\u06cc\u062a‌\u0647\u0627",
+        title_en="Website digest",
+        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 \u0648\u0628\u200c\u0633\u0627\u06cc\u062a\u200c\u0647\u0627",
         source_types=frozenset({"web_page", "rss"}),
-        programming_only=True,
         comprehensive=True,
         max_stories=24,
         minimum_telegram_stories=0,
     ),
     "platform_github": ReportProfile(
         mode="platform_github",
-        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 \u067e\u0631\u0648\u0698\u0647‌\u0647\u0627 \u0648 \u0627\u0646\u062a\u0634\u0627\u0631\u0647\u0627\u06cc GitHub",
+        title_en="GitHub digest",
+        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 GitHub",
         source_types=frozenset({"github_releases"}),
-        programming_only=True,
         comprehensive=True,
         max_stories=24,
         minimum_telegram_stories=0,
     ),
     "platform_reddit": ReportProfile(
         mode="platform_reddit",
-        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 \u0628\u0631\u0646\u0627\u0645\u0647‌\u0646\u0648\u06cc\u0633\u06cc \u0627\u0632 Reddit",
+        title_en="Reddit digest",
+        title_fa="\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 Reddit",
         source_types=frozenset({"reddit_subreddit"}),
-        programming_only=True,
         comprehensive=True,
         max_stories=24,
         minimum_telegram_stories=0,
@@ -172,6 +174,31 @@ _NON_ARTICLE_RE = re.compile(
     r"|back\s+and\s+working\s+perfectly"
 )
 
+DEFAULT_INTEREST_POLICY = InterestPolicy(DEFAULT_TOPIC_BRIEF)
+_TOPIC_STOP_WORDS = frozenset(
+    {
+        "about",
+        "after",
+        "also",
+        "and",
+        "from",
+        "into",
+        "news",
+        "selected",
+        "that",
+        "the",
+        "their",
+        "this",
+        "tools",
+        "with",
+        "\u0628\u0631\u0627\u06cc",
+        "\u0627\u06cc\u0646",
+        "\u062e\u0628\u0631",
+        "\u062f\u0631\u0628\u0627\u0631\u0647",
+        "\u0647\u0627\u06cc",
+    }
+)
+
 
 def resolve_report_profile(report_mode: str) -> ReportProfile:
     """Resolve aliases while keeping unknown legacy modes safe."""
@@ -180,9 +207,9 @@ def resolve_report_profile(report_mode: str) -> ReportProfile:
         return profile
     return ReportProfile(
         mode=report_mode,
+        title_en=profile.title_en,
         title_fa=profile.title_fa,
         source_types=profile.source_types,
-        programming_only=profile.programming_only,
         comprehensive=profile.comprehensive,
         max_stories=profile.max_stories,
         minimum_telegram_stories=profile.minimum_telegram_stories,
@@ -203,22 +230,47 @@ def is_programming_material(
     combined = f"{title}\n{description}"
     if _PROGRAMMING_TEXT_RE.search(combined):
         return True
-    if (
-        source_type in {"web_page", "rss", "youtube_rss"}
-        and any(
-            signal in normalized_category
-            for signal in _PROGRAMMING_CATEGORY_SIGNALS
-        )
+    if source_type in {"web_page", "rss", "youtube_rss"} and any(
+        signal in normalized_category for signal in _PROGRAMMING_CATEGORY_SIGNALS
     ):
         # Category metadata is a useful high-recall hint, but cannot turn a
         # reaction, channel announcement, or empty navigation row into news.
         meaningful_words = {
-            word.casefold()
-            for word in re.findall(r"[\w\u0600-\u06FF]+", combined)
-            if len(word) > 2
+            word.casefold() for word in re.findall(r"[\w\u0600-\u06FF]+", combined) if len(word) > 2
         }
         return len(meaningful_words) >= 10
     return False
+
+
+def is_interest_material(
+    *,
+    interest: InterestPolicy,
+    category: str,
+    title: str,
+    description: str,
+    source_type: str,
+) -> bool:
+    """Apply a high-recall deterministic interest filter before LLM work."""
+    combined = f"{category}\n{title}\n{description}".casefold()
+    if any(term.casefold() in combined for term in interest.exclude_terms):
+        return False
+    if any(term.casefold() in combined for term in interest.include_terms):
+        return True
+    if interest.topic_brief == DEFAULT_TOPIC_BRIEF:
+        return is_programming_material(
+            category=category,
+            title=title,
+            description=description,
+            source_type=source_type,
+        )
+    topic_terms = {
+        token.casefold()
+        for token in re.findall(r"[\w\u0600-\u06FF-]+", interest.topic_brief)
+        if len(token) >= 4 and token.casefold() not in _TOPIC_STOP_WORDS
+    }
+    return bool(
+        topic_terms and topic_terms.intersection(set(re.findall(r"[\w\u0600-\u06FF-]+", combined)))
+    )
 
 
 def is_usable_editorial_material(*, title: str, description: str) -> bool:
@@ -230,18 +282,27 @@ def is_usable_editorial_material(*, title: str, description: str) -> bool:
     return not (len(words) < 3 and not description.strip())
 
 
-def editorial_focus_instruction(report_mode: str) -> str:
+def editorial_focus_instruction(
+    report_mode: str,
+    interest: InterestPolicy = DEFAULT_INTEREST_POLICY,
+) -> str:
     """Return a compact prompt rule tailored to the selected profile."""
     profile = resolve_report_profile(report_mode)
     source_rule = (
         "Use only evidence from the requested platform."
         if profile.source_types
-        else "Prefer Telegram evidence when quality is comparable."
+        else "Use only the selected digest sources."
+    )
+    include_rule = (
+        f" Give particular attention to: {', '.join(interest.include_terms)}."
+        if interest.include_terms
+        else ""
+    )
+    exclude_rule = (
+        f" Exclude: {', '.join(interest.exclude_terms)}." if interest.exclude_terms else ""
     )
     return (
-        "This is a programming newsroom report. Include programming news plus useful "
-        "developer tools, open-source projects, libraries, frameworks, models, websites, "
-        "tutorials, and free APIs. Exclude unrelated consumer technology, sport, health, "
-        "entertainment, and general business. Never combine unrelated evidence items into "
-        f"one story. {source_rule}"
+        f"The operator-defined subject is: {interest.topic_brief} "
+        "Include only evidence relevant to that subject. Never combine unrelated evidence "
+        f"items into one story. {source_rule}{include_rule}{exclude_rule}"
     )

@@ -1,7 +1,7 @@
 # Newsroom
 
 Newsroom is a self-hosted, local-first news collection and reporting system for
-software engineering teams. It collects public sources incrementally, keeps
+operator-defined subjects. It collects public sources incrementally, keeps
 durable cursors and evidence lineage in PostgreSQL, produces grounded reports
 through a bounded multi-provider LLM router, and delivers them through Telegram.
 
@@ -12,16 +12,21 @@ proxy credential, Telegram session, or private source inventory.
 
 ## Features
 
-- RSS, websites, GitHub releases, Reddit, YouTube, Telegram, and X collectors
+- Websites/feeds, GitHub, Reddit, Telegram, and X collectors
 - Source-level cursors, health, validation, cooldowns, and failure isolation
-- Programming-first story selection with configurable source scope
+- Named digests with independent topics, terms, sources, language, timezone,
+  story budget, Telegram minimum, and schedule
 - Report and bot localization for `en` and `fa`
-- Persistent Gemini, Mistral, Groq, and NVIDIA routing
+- Protocol adapters for OpenAI-compatible, Gemini-native, and Anthropic-native
+  providers, including operator-defined provider names and model IDs
 - Bounded queues, quotas, key pools, model fallback, and circuit breakers
+- Bounded model-catalog discovery; every route remains disabled until validation
+- Grounded Gemini Search and Deep Research source suggestions with explicit
+  approval before activation
 - Grounded structured output with evidence and provider lineage
 - Idempotent report generation and chunked Telegram delivery
 - Runtime source management from the CLI or owner-restricted Telegram bot
-- Dynamic Tehran schedule stored in PostgreSQL
+- Digest-local schedules and IANA timezones stored in PostgreSQL
 - Docker Compose deployment with unprivileged application containers
 
 ## Requirements
@@ -94,6 +99,8 @@ Manage the registry later without editing the database:
 
 ```bash
 uv run newsroom sources list
+uv run newsroom sources add \
+  --name "Example feed" --type rss --url https://example.org/feed.xml
 uv run newsroom sources import --file ./additional-sources.csv
 uv run newsroom sources enable 42
 uv run newsroom sources disable 42
@@ -102,6 +109,33 @@ uv run newsroom sources delete 42 --confirm
 
 Deletion is an audit-preserving archive: collected items, cursors, and report
 lineage remain intact. See [source management](docs/sources.md).
+
+## Digests and subjects
+
+The source adapters are intentionally fixed to Telegram, X, Reddit, GitHub,
+and websites. The subject is not fixed: each named digest owns an arbitrary
+operator-defined interest policy and an independent delivery schedule.
+
+```bash
+uv run newsroom digests create climate \
+  --name "Climate policy" \
+  --topic "Climate policy, renewable energy markets, and grid storage" \
+  --language en \
+  --timezone Europe/Berlin
+
+uv run newsroom digests update climate \
+  --include solar,storage \
+  --exclude celebrity \
+  --sources telegram,web,reddit \
+  --count 20 \
+  --telegram-min 4 \
+  --schedule 08:00,17:30
+
+uv run newsroom report generate --digest climate
+```
+
+The migrated `default` digest preserves the programming-focused preset for
+existing installations. New digests are not programming-specific.
 
 ## Local configuration
 
@@ -141,11 +175,12 @@ GROQ_API_KEYS=
 NVIDIA_API_KEYS=
 ```
 
-Model lists accept comma-separated exact provider IDs. Leaving a list blank
-uses built-in candidates. A configured model does not become a production
-route until a bounded validation proves connectivity, requested-language
-output, structured schema compatibility, grounding-compatible parsing, and
-bounded output behavior.
+`LLM_PROVIDER_ORDER` may contain additional provider names. For each name,
+configure its key pool, exact model IDs, API base, protocol (`openai`,
+`gemini`, or `anthropic`), limits, and quota-scope label. A configured or
+discovered model does not become a production route until bounded validation
+proves connectivity, requested-language output, structured schema
+compatibility, grounding-compatible parsing, and bounded output behavior.
 
 See [LLM routing](docs/llm-routing.md).
 
@@ -153,8 +188,25 @@ Run bounded validation before enabling routes in production:
 
 ```bash
 uv run newsroom providers validate
+uv run newsroom providers discover
+uv run newsroom providers validate --discover
 uv run newsroom providers status
 ```
+
+Find source candidates for a subject without activating them:
+
+```bash
+uv run newsroom sources discover \
+  --subject "Public health policy and epidemiology" \
+  --platforms telegram,x,reddit,github,web \
+  --mode quick
+uv run newsroom sources candidates --status pending
+uv run newsroom sources approve 17
+```
+
+Deep discovery uses a background Gemini Deep Research interaction and is polled
+with `newsroom sources discovery-poll <job-id>`. See
+[source discovery](docs/source-discovery.md).
 
 ## Telegram
 
@@ -214,7 +266,7 @@ Runtime settings survive restarts:
 /settings count 1..50
 /settings schedule HH:MM,HH:MM
 /settings schedule off
-/settings sources all|telegram,x,web,github,reddit,youtube
+/settings sources all|telegram,x,web,github,reddit
 ```
 
 ## Development

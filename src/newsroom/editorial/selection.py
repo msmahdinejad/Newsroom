@@ -19,9 +19,11 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from newsroom.control.digests import InterestPolicy
 from newsroom.editorial.report_profiles import (
+    DEFAULT_INTEREST_POLICY,
     ReportProfile,
-    is_programming_material,
+    is_interest_material,
     is_usable_editorial_material,
     resolve_report_profile,
 )
@@ -78,9 +80,9 @@ def reserve_telegram_story_ids(
 def _story_material(
     db: Session,
     story_ids: list[int],
-) -> dict[int, list[tuple[str, str, str, str, bool]]]:
+) -> dict[int, list[tuple[int, str, str, str, str, bool]]]:
     """Load bounded selection metadata in one query."""
-    material: dict[int, list[tuple[str, str, str, str, bool]]] = {
+    material: dict[int, list[tuple[int, str, str, str, str, bool]]] = {
         story_id: [] for story_id in story_ids
     }
     if not story_ids:
@@ -88,6 +90,7 @@ def _story_material(
     rows = (
         db.query(
             StoryItem.story_id,
+            Source.id,
             Source.type,
             Source.category,
             NormalizedItem.title,
@@ -100,9 +103,18 @@ def _story_material(
         .filter(StoryItem.story_id.in_(story_ids))
         .all()
     )
-    for story_id, source_type, category, title, description, source_enabled in rows:
+    for (
+        story_id,
+        source_id,
+        source_type,
+        category,
+        title,
+        description,
+        source_enabled,
+    ) in rows:
         material[story_id].append(
             (
+                source_id,
                 source_type,
                 category or "",
                 title or "",
@@ -117,8 +129,10 @@ def _eligible_story_ids(
     db: Session,
     story_ids: list[int],
     profile: ReportProfile,
+    interest: InterestPolicy,
+    source_ids: frozenset[int] | None,
 ) -> list[int]:
-    """Apply source exclusivity and high-recall programming relevance."""
+    """Apply source exclusivity and high-recall subject relevance."""
     material = _story_material(db, story_ids)
     eligible: list[int] = []
     for story_id in story_ids:
@@ -131,8 +145,9 @@ def _eligible_story_ids(
         scoped = [
             entry
             for entry in entries
-            if entry[4]
-            and (profile.source_types is None or entry[0] in profile.source_types)
+            if entry[5]
+            and (source_ids is None or entry[0] in source_ids)
+            and (profile.source_types is None or entry[1] in profile.source_types)
         ]
         if not scoped:
             continue
@@ -140,41 +155,49 @@ def _eligible_story_ids(
             entry
             for entry in scoped
             if is_usable_editorial_material(
-                title=entry[2],
-                description=entry[3],
+                title=entry[3],
+                description=entry[4],
             )
         ]
         if not scoped:
             continue
-        if profile.programming_only and not any(
-            is_programming_material(
+        if not any(
+            is_interest_material(
+                interest=interest,
                 source_type=source_type,
                 category=category,
                 title=title,
                 description=description,
             )
-            for source_type, category, title, description, _enabled in scoped
+            for _source_id, source_type, category, title, description, _enabled in scoped
         ):
             continue
         eligible.append(story_id)
     return eligible
 
 
-def _candidate_query(db: Session, profile: ReportProfile):
+def _candidate_query(
+    db: Session,
+    profile: ReportProfile,
+    source_ids: frozenset[int] | None,
+):
     """Start an importance-ranked query, scoped before the candidate limit."""
     query = db.query(Story)
-    if profile.source_types is not None:
+    if profile.source_types is not None or source_ids is not None:
         query = (
             query.join(StoryItem, StoryItem.story_id == Story.id)
             .join(NormalizedItem, StoryItem.item_id == NormalizedItem.id)
             .join(RawItem, NormalizedItem.raw_item_id == RawItem.id)
             .join(Source, RawItem.source_id == Source.id)
             .filter(
-                Source.type.in_(profile.source_types),
                 Source.enabled.is_(True),
             )
             .distinct()
         )
+        if profile.source_types is not None:
+            query = query.filter(Source.type.in_(profile.source_types))
+        if source_ids is not None:
+            query = query.filter(Source.id.in_(source_ids))
     return query
 
 
@@ -183,8 +206,10 @@ def _with_telegram_reserve(
     story_ids: list[int],
     max_stories: int,
     minimum_telegram_stories: int,
+    interest: InterestPolicy,
+    source_ids: frozenset[int] | None,
 ) -> list[int]:
-    """Give eligible Telegram programming stories a bounded seat."""
+    """Give eligible Telegram stories a bounded seat."""
     if not story_ids:
         return []
     material = _story_material(db, story_ids)
@@ -193,17 +218,19 @@ def _with_telegram_reserve(
         for story_id, entries in material.items()
         if any(
             source_type == "telegram"
+            and (source_ids is None or source_id in source_ids)
             and is_usable_editorial_material(
                 title=title,
                 description=description,
             )
-            and is_programming_material(
+            and is_interest_material(
+                interest=interest,
                 source_type=source_type,
                 category=category,
                 title=title,
                 description=description,
             )
-            for source_type, category, title, description, enabled in entries
+            for source_id, source_type, category, title, description, enabled in entries
             if enabled
         )
     }
@@ -270,11 +297,7 @@ def get_delivered_story_versions(db: Session) -> dict[int, int]:
     updated: dict[int, int] = {}
     if delivered_at_map:
         story_ids = list(delivered_at_map.keys())
-        stories = (
-            db.query(Story)
-            .filter(Story.id.in_(story_ids))
-            .all()
-        )
+        stories = db.query(Story).filter(Story.id.in_(story_ids)).all()
         for story in stories:
             delivered_at = delivered_at_map.get(story.id)
             if (
@@ -287,18 +310,25 @@ def get_delivered_story_versions(db: Session) -> dict[int, int]:
     return updated
 
 
-def get_scheduled_boundary(db: Session) -> datetime | None:
+def get_scheduled_boundary(
+    db: Session,
+    digest_slug: str = "default",
+) -> datetime | None:
     """Return the advanced_at of the last completely delivered scheduled report.
 
     Used as the 'since the last completely delivered scheduled report' window
     boundary for scheduled report selection. None when no scheduled report
     has been delivered yet (first run selects all recent material).
     """
+    cursor_key = (
+        "scheduled_delivery" if digest_slug == "default" else f"scheduled_delivery:{digest_slug}"
+    )
     row = db.execute(
         text(
             "SELECT advanced_at FROM report_cursors "
-            "WHERE cursor_key = 'scheduled_delivery' AND advanced_at IS NOT NULL"
-        )
+            "WHERE cursor_key = :cursor_key AND advanced_at IS NOT NULL"
+        ),
+        {"cursor_key": cursor_key},
     ).first()
     return row[0] if row else None
 
@@ -309,6 +339,10 @@ def select_stories_for_report(
     max_stories: int | None = None,
     *,
     source_types: tuple[str, ...] | None = None,
+    source_ids: tuple[int, ...] | None = None,
+    interest: InterestPolicy = DEFAULT_INTEREST_POLICY,
+    minimum_telegram_stories: int | None = None,
+    digest_slug: str = "default",
 ) -> SelectionResult:
     """Select stories for a report based on the report mode.
 
@@ -325,15 +359,30 @@ def select_stories_for_report(
     profile = resolve_report_profile(report_mode)
     if source_types is not None:
         normalized_types = frozenset(source_types)
+        effective_types = (
+            profile.source_types
+            if not normalized_types
+            else normalized_types
+            if profile.source_types is None
+            else normalized_types.intersection(profile.source_types)
+        )
         profile = replace(
             profile,
-            source_types=normalized_types or None,
+            source_types=effective_types,
             minimum_telegram_stories=(
                 profile.minimum_telegram_stories
-                if "telegram" in normalized_types or not normalized_types
+                if effective_types is None or "telegram" in effective_types
                 else 0
             ),
         )
+    if minimum_telegram_stories is not None:
+        profile = replace(
+            profile,
+            minimum_telegram_stories=max(0, int(minimum_telegram_stories)),
+        )
+    normalized_source_ids = (
+        frozenset(int(source_id) for source_id in source_ids) if source_ids else None
+    )
     max_stories = max_stories or profile.max_stories
     delivered_ids = get_delivered_story_ids(db)
     updated_ids = get_delivered_story_versions(db)
@@ -341,32 +390,43 @@ def select_stories_for_report(
     materially_updated = len(updated_ids)
 
     if report_mode == "scheduled":
-        boundary = get_scheduled_boundary(db)
+        boundary = get_scheduled_boundary(db, digest_slug)
         if boundary is None:
             # First scheduled run — all recent candidates are new material.
             candidates = (
-                _candidate_query(db, profile)
+                _candidate_query(db, profile, normalized_source_ids)
                 .order_by(Story.importance_score.desc(), Story.created_at.desc())
                 .limit(MAX_CANDIDATE_STORIES)
                 .all()
             )
             candidate_ids = _eligible_story_ids(
-                db, [s.id for s in candidates], profile
+                db,
+                [s.id for s in candidates],
+                profile,
+                interest,
+                normalized_source_ids,
             )
         else:
             # New material since the boundary: created or materially changed after.
             candidates = (
-                _candidate_query(db, profile)
+                _candidate_query(db, profile, normalized_source_ids)
                 .filter(
                     (Story.created_at > boundary)
-                    | (Story.material_change_at.is_not(None) & (Story.material_change_at > boundary))
+                    | (
+                        Story.material_change_at.is_not(None)
+                        & (Story.material_change_at > boundary)
+                    )
                 )
                 .order_by(Story.importance_score.desc(), Story.created_at.desc())
                 .limit(MAX_CANDIDATE_STORIES)
                 .all()
             )
             candidate_ids = _eligible_story_ids(
-                db, [s.id for s in candidates], profile
+                db,
+                [s.id for s in candidates],
+                profile,
+                interest,
+                normalized_source_ids,
             )
         total_candidates = len(candidate_ids)
         # Exclude delivered unchanged stories (already delivered, no change).
@@ -388,6 +448,8 @@ def select_stories_for_report(
             selected,
             max_stories,
             profile.minimum_telegram_stories,
+            interest,
+            normalized_source_ids,
         )
         omitted = max(0, total_candidates - len(selected))
         return SelectionResult(
@@ -406,12 +468,14 @@ def select_stories_for_report(
             db,
             [
                 s.id
-                for s in _candidate_query(db, profile)
+                for s in _candidate_query(db, profile, normalized_source_ids)
                 .order_by(Story.importance_score.desc(), Story.created_at.desc())
                 .limit(MAX_CANDIDATE_STORIES)
                 .all()
             ],
             profile,
+            interest,
+            normalized_source_ids,
         )
         total_candidates = len(candidate_ids)
         selected = [sid for sid in candidate_ids if sid not in excluded_delivered]
@@ -432,6 +496,8 @@ def select_stories_for_report(
             selected,
             max_stories,
             profile.minimum_telegram_stories,
+            interest,
+            normalized_source_ids,
         )
         omitted = max(0, len(candidate_ids) - len(selected))
         return SelectionResult(
@@ -447,18 +513,26 @@ def select_stories_for_report(
 
     # manual / manual_comprehensive: include all candidates (up to max_stories)
     candidates = (
-        _candidate_query(db, profile)
+        _candidate_query(db, profile, normalized_source_ids)
         .order_by(Story.importance_score.desc(), Story.created_at.desc())
         .limit(MAX_CANDIDATE_STORIES)
         .all()
     )
-    candidate_ids = _eligible_story_ids(db, [s.id for s in candidates], profile)
+    candidate_ids = _eligible_story_ids(
+        db,
+        [s.id for s in candidates],
+        profile,
+        interest,
+        normalized_source_ids,
+    )
     total_candidates = len(candidate_ids)
     selected = _with_telegram_reserve(
         db,
         candidate_ids,
         max_stories,
         profile.minimum_telegram_stories,
+        interest,
+        normalized_source_ids,
     )
     omitted = max(0, len(candidate_ids) - len(selected))
 

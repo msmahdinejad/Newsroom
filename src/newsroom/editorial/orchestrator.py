@@ -7,30 +7,33 @@ This is the single entry point for the pipeline runner. It:
 4. Validates the output schema
 5. Grounds claims against evidence
 6. Falls back to deterministic on failure
-7. Renders the final Persian report text
+7. Renders localized reader-facing report text
 8. Returns report content + metadata for persistence
 """
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
 from newsroom.config import settings
+from newsroom.control.digests import DigestSnapshot
+from newsroom.editorial.attempt import EditorialAttempt
 from newsroom.editorial.deterministic_provider import DeterministicEditorialProvider
 from newsroom.editorial.evidence_builder import build_evidence_set
 from newsroom.editorial.grounding import validate_grounding
-from newsroom.editorial.presentation import render_persian_report
+from newsroom.editorial.presentation import render_report
 from newsroom.editorial.provider import (
     EditorialError,
     EditorialProvider,
     EditorialRequest,
     EditorialResponse,
 )
+from newsroom.editorial.report_profiles import DEFAULT_INTEREST_POLICY
 from newsroom.editorial.schema import (
     EditorialErrorCategory,
     EditorialEvidenceSet,
@@ -40,30 +43,6 @@ from newsroom.editorial.validation import create_validation_error, parse_and_val
 from newsroom.logging import get_logger
 
 logger = get_logger(__name__)
-
-
-@dataclass
-class EditorialAttempt:
-    """Record of one editorial attempt for persistence."""
-
-    provider: str = "deterministic"
-    model: str = ""
-    prompt_version: str = ""
-    evidence_set_hash: str = ""
-    schema_version: str = ""
-    report_mode: str = "scheduled"
-    started_at: str = ""
-    completed_at: str = ""
-    latency_ms: int = 0
-    status: str = "ok"  # ok/fallback/validation_failed/grounding_failed/provider_error
-    retry_count: int = 0
-    fallback_used: bool = False
-    validation_result: str = ""  # issues joined
-    grounding_result: str = ""
-    usage: dict[str, int] | None = None
-    error_category: str = ""
-    error_summary: str = ""
-    output: EditorialOutput | None = None
 
 
 @lru_cache(maxsize=1)
@@ -122,6 +101,7 @@ def generate_editorial(
     cache_check: bool = True,
     job_id: str | None = None,
     report_language: str = "fa",
+    digest: DigestSnapshot | None = None,
 ) -> tuple[str, EditorialAttempt]:
     """Generate an editorial report from persisted stories.
 
@@ -133,6 +113,8 @@ def generate_editorial(
     start = time.monotonic()
     attempt = EditorialAttempt()
     attempt.started_at = datetime.now(UTC).isoformat()
+    if digest is not None:
+        report_language = digest.output_language
 
     # 1. Build evidence set
     evidence = build_evidence_set(
@@ -140,6 +122,11 @@ def generate_editorial(
         story_ids,
         report_mode,
         report_language=report_language,
+        digest_slug=digest.slug if digest else "default",
+        digest_name=digest.name if digest else "News digest",
+        interest=digest.interest if digest else DEFAULT_INTEREST_POLICY,
+        source_types=digest.source_types if digest else None,
+        source_ids=digest.source_ids if digest else None,
     )
     attempt.evidence_set_hash = evidence.evidence_hash()
     attempt.prompt_version = evidence.prompt_version
@@ -173,7 +160,12 @@ def generate_editorial(
             attempt.fallback_used = False
             attempt.completed_at = datetime.now(UTC).isoformat()
             attempt.latency_ms = int((time.monotonic() - start) * 1000)
-            content = _render_persian_report(cached.output, report_mode)
+            content = _render_persian_report(
+                cached.output,
+                report_mode,
+                digest_name=evidence.digest_name,
+                timezone=digest.timezone if digest else None,
+            )
             return content, attempt
 
     request = EditorialRequest(
@@ -269,9 +261,15 @@ def generate_editorial(
     # 5. Grounding validation (for AI providers)
     if attempt.provider != "deterministic":
         grounded_output, grounding_result = validate_grounding(evidence, output)
-        attempt.grounding_result = "; ".join(grounding_result.issues) if grounding_result.issues else "ok"
+        attempt.grounding_result = (
+            "; ".join(grounding_result.issues) if grounding_result.issues else "ok"
+        )
 
-        if not grounding_result.valid and not grounded_output.stories and settings.editorial_fallback_enabled:
+        if (
+            not grounding_result.valid
+            and not grounded_output.stories
+            and settings.editorial_fallback_enabled
+        ):
             logger.warning("Grounding validation failed — falling back to deterministic")
             det_provider = DeterministicEditorialProvider()
             response = det_provider.generate(request)
@@ -280,7 +278,9 @@ def generate_editorial(
             attempt.model = response.model or det_provider.model_name
             attempt.fallback_used = True
             attempt.status = "fallback"
-            attempt.grounding_result = "; ".join(grounding_result.issues) if grounding_result.issues else "ok"
+            attempt.grounding_result = (
+                "; ".join(grounding_result.issues) if grounding_result.issues else "ok"
+            )
         elif not grounding_result.valid and not grounded_output.stories:
             attempt.status = "grounding_failed"
             attempt.completed_at = datetime.now(UTC).isoformat()
@@ -306,7 +306,12 @@ def generate_editorial(
     output.metadata.report_language = evidence.report_language
 
     # 6. Render localized report
-    content = _render_persian_report(output, report_mode)
+    content = _render_persian_report(
+        output,
+        report_mode,
+        digest_name=evidence.digest_name,
+        timezone=digest.timezone if digest else None,
+    )
 
     attempt.output = output
     attempt.completed_at = datetime.now(UTC).isoformat()
@@ -404,22 +409,40 @@ def _check_cache(
     return None
 
 
-def _render_persian_report(output: EditorialOutput, report_mode: str) -> str:
+def _render_persian_report(
+    output: EditorialOutput,
+    report_mode: str,
+    *,
+    digest_name: str | None = None,
+    timezone: str | None = None,
+) -> str:
     """Render the grounded output through the compact public presentation seam."""
-    return render_persian_report(output, report_mode)
+    return render_report(
+        output,
+        report_mode,
+        digest_name=digest_name,
+        timezone=timezone,
+    )
 
 
-def _empty_report(report_mode: str, report_language: str = "fa") -> str:
+def _empty_report(
+    report_mode: str,
+    report_language: str = "fa",
+    *,
+    digest_name: str | None = None,
+    timezone: str | None = None,
+) -> str:
     del report_mode
-    now = datetime.now(UTC)
+    now = datetime.now(ZoneInfo(timezone or settings.timezone))
     if report_language == "en":
-        return f"""📰 Programming News
-📅 {now.strftime('%Y-%m-%d')}
+        return f"""📰 {digest_name or "News digest"}
+📅 {now.strftime("%Y-%m-%d")}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 No new reportable stories were found in this period."""
-    return f"""📰 \u0627\u062e\u0628\u0627\u0631 \u0641\u0646\u0627\u0648\u0631\u06cc
-📅 {now.strftime('%Y-%m-%d')}
+    localized_name = digest_name or "\u062e\u0628\u0631\u0646\u0627\u0645\u0647"
+    return f"""📰 {localized_name}
+📅 {now.strftime("%Y-%m-%d")}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 \u062f\u0631 \u0627\u06cc\u0646 \u0628\u0627\u0632\u0647 \u062e\u0628\u0631 \u062a\u0627\u0632\u0647‌\u0627\u06cc \u0628\u0631\u0627\u06cc \u06af\u0632\u0627\u0631\u0634 \u067e\u06cc\u062f\u0627 \u0646\u0634\u062f."""

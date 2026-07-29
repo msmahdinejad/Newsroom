@@ -36,12 +36,15 @@ def _safe_ts(ts: datetime | None) -> str:
     return ts.strftime("%Y-%m-%d %H:%M UTC")
 
 
-def _next_tehran_boundary(schedule_times: tuple[str, ...]) -> str:
-    """Return the next configured Asia/Tehran report boundary."""
+def _next_boundary(
+    schedule_times: tuple[str, ...],
+    timezone: str,
+) -> str:
+    """Return the next configured local report boundary."""
     try:
         from zoneinfo import ZoneInfo
 
-        tz = ZoneInfo(settings.timezone or "Asia/Tehran")
+        tz = ZoneInfo(timezone)
         now = datetime.now(tz)
         nxt = None
         for value in schedule_times:
@@ -58,7 +61,7 @@ def _next_tehran_boundary(schedule_times: tuple[str, ...]) -> str:
                 cand = cand + timedelta(days=1)
             if nxt is None or cand < nxt:
                 nxt = cand
-        return nxt.strftime("%Y-%m-%d %H:%M") + " (\u062a\u0647\u0631\u0627\u0646)" if nxt else "—"
+        return f"{nxt:%Y-%m-%d %H:%M} ({timezone})" if nxt else "—"
     except Exception:
         return "—"
 
@@ -66,13 +69,24 @@ def _next_tehran_boundary(schedule_times: tuple[str, ...]) -> str:
 def source_totals(db: Session) -> dict[str, dict[str, int]]:
     """Source counts by platform and operational state (enabled/health)."""
     rows = db.execute(
-        select(Source.platform, Source.enabled, Source.health_status, func.count(Source.id))
-        .group_by(Source.platform, Source.enabled, Source.health_status)
+        select(
+            Source.platform, Source.enabled, Source.health_status, func.count(Source.id)
+        ).group_by(Source.platform, Source.enabled, Source.health_status)
     ).all()
     by_platform: dict[str, dict[str, int]] = {}
     for platform, enabled, health, cnt in rows:
         plat = platform or "legacy"
-        bucket = by_platform.setdefault(plat, {"active": 0, "inactive": 0, "healthy": 0, "degraded": 0, "unavailable": 0, "configured": 0})
+        bucket = by_platform.setdefault(
+            plat,
+            {
+                "active": 0,
+                "inactive": 0,
+                "healthy": 0,
+                "degraded": 0,
+                "unavailable": 0,
+                "configured": 0,
+            },
+        )
         if enabled:
             bucket["active"] += int(cnt)
         else:
@@ -106,11 +120,7 @@ def inventory_totals(db: Session) -> dict[str, Any]:
 
 
 def last_collection(db: Session) -> dict[str, Any]:
-    run = (
-        db.query(CollectionRun)
-        .order_by(CollectionRun.started_at.desc())
-        .first()
-    )
+    run = db.query(CollectionRun).order_by(CollectionRun.started_at.desc()).first()
     if not run:
         return {"status": "none", "started_at": "—", "items": 0}
     return {
@@ -182,11 +192,11 @@ def status_text(db: Session, language: str = "fa") -> str:
                 f"Inactive/invalid queue: {inv_inactive}",
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
                 f"Last collection: {last['status']} @ {last['started_at']} ({last['items']} items)",
-                f"Editorial AI: {'enabled' if ed.get('enabled') else 'disabled'} | {ed.get('provider','deterministic')}",
+                f"Editorial AI: {'enabled' if ed.get('enabled') else 'disabled'} | {ed.get('provider', 'deterministic')}",
                 f"Last delivery: {dlv['status']} @ {dlv['delivered_at']} ({dlv['message_ids_count']} messages)",
                 f"Scheduled cursor: {dlv['cursor_advanced_at']}",
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-                f"Next report: {_next_tehran_boundary(control.schedule_times) if control.schedule_enabled else 'OFF'}",
+                f"Next report: {_next_boundary(control.schedule_times, control.timezone) if control.schedule_enabled else 'OFF'}",
             ]
         )
     lines = [
@@ -199,11 +209,11 @@ def status_text(db: Session, language: str = "fa") -> str:
         f"\u0635\u0641 \u063a\u06cc\u0631\u0641\u0639\u0627\u0644/\u0646\u0627\u0645\u0639\u062a\u0628\u0631: {inv_inactive}",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         f"\u0622\u062e\u0631\u06cc\u0646 \u062c\u0645\u0639‌\u0622\u0648\u0631\u06cc: {last['status']} @ {last['started_at']} ({last['items']} \u0622\u06cc\u062a\u0645)",
-        f"\u0647\u0648\u0634 \u0645\u0635\u0646\u0648\u0639\u06cc \u062a\u062d\u0631\u06cc\u0631\u06cc\u0647: {'\u0641\u0639\u0627\u0644' if ed.get('enabled') else '\u063a\u06cc\u0631\u0641\u0639\u0627\u0644'} | {ed.get('provider','deterministic')}",
+        f"\u0647\u0648\u0634 \u0645\u0635\u0646\u0648\u0639\u06cc \u062a\u062d\u0631\u06cc\u0631\u06cc\u0647: {'\u0641\u0639\u0627\u0644' if ed.get('enabled') else '\u063a\u06cc\u0631\u0641\u0639\u0627\u0644'} | {ed.get('provider', 'deterministic')}",
         f"\u0622\u062e\u0631\u06cc\u0646 \u062a\u062d\u0648\u06cc\u0644: {dlv['status']} @ {dlv['delivered_at']} ({dlv['message_ids_count']} \u067e\u06cc\u0627\u0645)",
         f"\u0646\u0634\u0627\u0646\u06af\u0631 \u0632\u0645\u0627\u0646‌\u0628\u0646\u062f\u06cc: {dlv['cursor_advanced_at']}",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"\u06af\u0632\u0627\u0631\u0634 \u0628\u0639\u062f\u06cc: {_next_tehran_boundary(control.schedule_times) if control.schedule_enabled else '\u062e\u0627\u0645\u0648\u0634'}",
+        f"\u06af\u0632\u0627\u0631\u0634 \u0628\u0639\u062f\u06cc: {_next_boundary(control.schedule_times, control.timezone) if control.schedule_enabled else '\u062e\u0627\u0645\u0648\u0634'}",
     ]
     return "\n".join(lines)
 
@@ -240,7 +250,9 @@ def sources_text(db: Session, language: str = "fa") -> str:
         lines.append(f"• {plat}: " + " | ".join(parts))
     if inv["inactive_reasons"]:
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("\u062f\u0644\u0627\u06cc\u0644 \u063a\u06cc\u0631\u0641\u0639\u0627\u0644\u06cc:")
+        lines.append(
+            "\u062f\u0644\u0627\u06cc\u0644 \u063a\u06cc\u0631\u0641\u0639\u0627\u0644\u06cc:"
+        )
         for reason, cnt in sorted(inv["inactive_reasons"].items(), key=lambda x: -x[1]):
             lines.append(f"• {reason}: {cnt}")
     return "\n".join(lines)
@@ -253,7 +265,7 @@ def schedule_text(db: Session, language: str = "fa") -> str:
     dlv = last_delivery(db)
     schedule = "  •  ".join(control.schedule_times) if control.schedule_enabled else "OFF"
     next_boundary = (
-        _next_tehran_boundary(control.schedule_times)
+        _next_boundary(control.schedule_times, control.timezone)
         if control.schedule_enabled
         else "OFF"
     )
@@ -262,7 +274,7 @@ def schedule_text(db: Session, language: str = "fa") -> str:
             [
                 "⏰ Report schedule",
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-                f"Automatic reports (Tehran): {schedule}",
+                f"Automatic reports ({control.timezone}): {schedule}",
                 f"Next report: {next_boundary}",
                 f"Stories per default report: {control.report_story_count}",
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -271,11 +283,13 @@ def schedule_text(db: Session, language: str = "fa") -> str:
                 "The cursor advances only after complete delivery.",
             ]
         )
-    schedule = schedule.translate(str.maketrans("0123456789", "\u06f0\u06f1\u06f2\u06f3\u06f4\u06f5\u06f6\u06f7\u06f8\u06f9"))
+    schedule = schedule.translate(
+        str.maketrans("0123456789", "\u06f0\u06f1\u06f2\u06f3\u06f4\u06f5\u06f6\u06f7\u06f8\u06f9")
+    )
     lines = [
         "⏰ \u0632\u0645\u0627\u0646‌\u0628\u0646\u062f\u06cc \u06af\u0632\u0627\u0631\u0634‌\u0647\u0627",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"\u06af\u0632\u0627\u0631\u0634‌\u0647\u0627\u06cc \u062e\u0648\u062f\u06a9\u0627\u0631 (\u062a\u0647\u0631\u0627\u0646): {schedule}",
+        f"\u06af\u0632\u0627\u0631\u0634‌\u0647\u0627\u06cc \u062e\u0648\u062f\u06a9\u0627\u0631 ({control.timezone}): {schedule}",
         f"\u06af\u0632\u0627\u0631\u0634 \u0628\u0639\u062f\u06cc: {next_boundary}",
         f"\u062a\u0639\u062f\u0627\u062f \u062e\u0628\u0631 \u062f\u0631 \u06af\u0632\u0627\u0631\u0634 \u067e\u06cc\u0634‌\u0641\u0631\u0636: {control.report_story_count}",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",

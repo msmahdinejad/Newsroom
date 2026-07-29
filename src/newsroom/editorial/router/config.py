@@ -34,6 +34,7 @@ DEFAULT_BASES = {
 _PROXY_SCHEMES = frozenset({"http", "https", "socks5", "socks5h"})
 _LOOPBACK_PROXY_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 _HOSTNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
+_PROTOCOLS = frozenset({"openai", "gemini", "anthropic"})
 
 
 def _split(value: str | None) -> tuple[str, ...]:
@@ -97,15 +98,19 @@ def load_router_config(path: str | Path = ".env.providers.local") -> RouterConfi
 
     provider_path = Path(path)
     if provider_path.name != ".env.providers.local":
-        raise ValueError("provider configuration must use the canonical .env.providers.local filename")
+        raise ValueError(
+            "provider configuration must use the canonical .env.providers.local filename"
+        )
     values = (
-        dict(dotenv_values(provider_path, interpolate=False))
-        if provider_path.is_file()
-        else {}
+        dict(dotenv_values(provider_path, interpolate=False)) if provider_path.is_file() else {}
     )
-    order = tuple(p.lower() for p in _split(values.get("LLM_PROVIDER_ORDER")))
+    order = tuple(dict.fromkeys(p.lower() for p in _split(values.get("LLM_PROVIDER_ORDER"))))
     if not order:
         order = ("gemini", "mistral", "groq", "nvidia")
+    if any(not re.fullmatch(r"[a-z][a-z0-9_]{0,49}", name) for name in order):
+        raise ValueError(
+            "LLM_PROVIDER_ORDER names must use lowercase letters, numbers, and underscores"
+        )
 
     headroom = min(1.0, _float(values, "LLM_RATE_HEADROOM", 0.8))
     providers: list[ProviderConfig] = []
@@ -138,12 +143,22 @@ def load_router_config(path: str | Path = ".env.providers.local") -> RouterConfi
             concurrency = _int(values, f"LLM_{upper}_CONCURRENCY", 1)
             spacing = _float(values, f"{upper}_MIN_REQUEST_SPACING_SECONDS", 0.0)
 
+        protocol = str(values.get(f"{upper}_PROTOCOL") or "openai").strip().lower()
+        protocol = {
+            "openai-compatible": "openai",
+            "gemini-native": "gemini",
+            "anthropic-native": "anthropic",
+        }.get(protocol, protocol)
+        if protocol not in _PROTOCOLS:
+            raise ValueError(f"{upper}_PROTOCOL must be one of: anthropic, gemini, openai")
+
         providers.append(
             ProviderConfig(
                 name=name,
                 keys=keys,
                 models=models,
                 api_base=values.get(f"{upper}_API_BASE") or DEFAULT_BASES.get(name, ""),
+                protocol=protocol,
                 quota_scope=values.get(f"{upper}_QUOTA_SCOPE") or f"{name}-project-default",
                 limits=limits,
                 concurrency=concurrency,

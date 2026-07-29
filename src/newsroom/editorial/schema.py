@@ -11,13 +11,13 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 # ── Version constants ─────────────────────────────────────────────
 
 SYSTEM_PROMPT_VERSION = "g7sp-v4"
 EVIDENCE_SCHEMA_VERSION = "g7ev-v2"
-OUTPUT_SCHEMA_VERSION = "g7out-v3"
+OUTPUT_SCHEMA_VERSION = "g7out-v4"
 TERMINOLOGY_POLICY_VERSION = "g5tp-v2"
 GROUNDING_VALIDATOR_VERSION = "g4gv-v1"
 EDITORIAL_PROVIDER_VERSION = "g4pv-v1"
@@ -69,6 +69,11 @@ class EditorialEvidenceSet(BaseModel):
     prompt_version: str = SYSTEM_PROMPT_VERSION
     report_mode: str = "scheduled"
     report_language: str = "fa"
+    digest_slug: str = "default"
+    digest_name: str = "News digest"
+    topic_brief: str = "News selected by the operator."
+    include_terms: list[str] = Field(default_factory=list)
+    exclude_terms: list[str] = Field(default_factory=list)
     stories: list[EvidenceStoryPacket] = Field(default_factory=list)
 
     def evidence_hash(self) -> str:
@@ -148,9 +153,17 @@ class KeyClaim(BaseModel):
 class StoryEditorialResult(BaseModel):
     """Per-story editorial result from the AI provider."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     story_id: int
-    headline_fa: str = ""
-    summary_fa: str = ""
+    headline: str = Field(
+        default="",
+        validation_alias=AliasChoices("headline", "headline_fa"),
+    )
+    summary: str = Field(
+        default="",
+        validation_alias=AliasChoices("summary", "summary_fa"),
+    )
     why_it_matters_fa: str = ""
     practical_impact_fa: str = ""
     target_audience: str = ""
@@ -163,6 +176,24 @@ class StoryEditorialResult(BaseModel):
     uncertainty_notes: str = ""
     suggested_priority: str = "medium"
     watch_next_note: str | None = None
+
+    @property
+    def headline_fa(self) -> str:
+        """Compatibility accessor for persisted v3 artifacts."""
+        return self.headline
+
+    @headline_fa.setter
+    def headline_fa(self, value: str) -> None:
+        self.headline = value
+
+    @property
+    def summary_fa(self) -> str:
+        """Compatibility accessor for persisted v3 artifacts."""
+        return self.summary
+
+    @summary_fa.setter
+    def summary_fa(self, value: str) -> None:
+        self.summary = value
 
     @field_validator("confidence_level")
     @classmethod

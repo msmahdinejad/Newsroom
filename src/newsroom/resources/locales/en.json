@@ -1,5 +1,6 @@
 {
   "all_sources": "all enabled sources",
+  "named_digest_help": "/report digest <slug> [new|comprehensive|telegram|x|web|github|reddit] \u2014 named digest",
   "commands": [
     {
       "command": "start",
@@ -11,7 +12,7 @@
     },
     {
       "command": "report",
-      "description": "Generate a programming report"
+      "description": "Generate the configured news digest"
     },
     {
       "command": "latest",
@@ -38,7 +39,7 @@
       "description": "Collect sources now"
     }
   ],
-  "help": "\ud83d\udc4b Welcome to Newsroom\n\nA programming-first newsroom that collects, verifies, summarizes and delivers grounded reports with strong Telegram coverage.\n\nREPORTS\n/report \u2014 default programming report\n/report new \u2014 only undelivered stories\n/report comprehensive \u2014 extended report\n/report telegram|x|web|github|reddit \u2014 platform-only report\n/latest \u2014 last delivered report\n\nSETTINGS\n/settings \u2014 current preferences\n/settings language fa|en\n/settings count 1..50\n/settings schedule HH:MM,HH:MM or off\n/settings sources all|telegram,x,web,github,reddit,youtube\n\nSOURCES\n/sources \u2014 inventory summary\n/sources list [type] [page]\n/source enable|disable <id>\n/source delete <id> confirm \u2014 safe archive; history is retained\nUpload CSV/XLSX with caption /sources import. Columns: name,type,url,language,category,trust_class,enabled\n\nOPERATIONS\n/status \u00b7 /collect \u00b7 /schedule\n\nCurrent: language=en \u00b7 stories={story_count} \u00b7 sources={source_scope} \u00b7 Tehran schedule={schedule}",
+  "help": "\ud83d\udc4b Welcome to Newsroom\n\nCollect from supported platforms and receive grounded AI digests for the subject you choose.\n\nREPORTS\n/report \u2014 configured default digest\n/report new \u2014 only undelivered stories\n/report comprehensive \u2014 extended digest\n/report telegram|x|web|github|reddit \u2014 platform-only digest\n/report digest <slug> [new|comprehensive|telegram|x|web|github|reddit] \u2014 named digest\n/latest \u2014 last delivered digest\n\nDIGEST SETTINGS\n/settings name <display name>\n/settings topic <subject description>\n/settings include term one,term two\n/settings exclude term one,term two\n/settings language fa|en\n/settings timezone <IANA timezone>\n/settings count 1..50\n/settings telegram_min 0..count\n/settings schedule HH:MM,HH:MM or off\n/settings sources all|telegram,x,web,github,reddit\n/settings source_ids 12,34 or an empty value for all matching sources\n\nSOURCES\n/sources \u2014 inventory summary\n/sources list [type] [page]\n/source enable|disable <id>\n/source delete <id> confirm \u2014 safe archive; history is retained\nUpload CSV/XLSX with caption /sources import. Supported types: telegram, x_timeline, reddit_subreddit, github_releases, rss, web_page.\n\nOPERATIONS\n/status \u00b7 /collect \u00b7 /schedule\n\nCurrent digest: {digest_name}\nSubject: {topic_brief}\nLanguage=en \u00b7 stories={story_count} \u00b7 Telegram minimum={minimum_telegram_stories}\nSources={source_scope} \u00b7 schedule={schedule} \u00b7 timezone={timezone}",
   "menu": [
     [
       {

@@ -42,6 +42,25 @@ Additional compatible models may be configured. They remain disabled until
 the validation workflow records the required capabilities. Do not add OCR,
 transcription, or search credentials as editorial fallback providers.
 
+Additional provider names may be added to `LLM_PROVIDER_ORDER`. Each uses the
+same upper-case variable convention and declares `NAME_PROTOCOL` as `openai`,
+`gemini`, or `anthropic`. Protocol support is code-owned; provider and model
+catalogs are configuration-owned.
+
+Discovering model IDs is read-only and does not enable routes:
+
+```bash
+uv run newsroom providers discover
+uv run newsroom providers validate --discover
+```
+
+## Digest definitions
+
+Named digests live in PostgreSQL, not `.env`. Each owns its subject, language,
+timezone, source selection, report size, Telegram minimum, and local schedule.
+Use `newsroom digests list|show|create|update|enable|disable`. `.env` contains
+only bootstrap defaults and process-level bounds.
+
 ## Telegram output
 
 Create a bot through BotFather and configure:

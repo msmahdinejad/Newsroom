@@ -1,7 +1,7 @@
-"""Deterministic tests for the Production six-hour scheduler and status commands.
+"""Deterministic tests for digest-local scheduling and status commands.
 
 Covers:
-  * scheduler reports are scheduled at 00/06/12/18 Tehran (4 jobs);
+  * the default digest keeps its 00/06/12/18 local-time preset;
   * status command helpers build safe summaries (no secrets);
   * bot dispatch routes /status /collect /sources /schedule;
   * help text reflects the new schedule and excludes secrets.
@@ -19,7 +19,15 @@ from newsroom.delivery.status_commands import (
     sources_text,
     status_text,
 )
-from newsroom.scheduler import JOB_IDS, SCHEDULE_HOURS, scheduled_specs
+from newsroom.scheduler import (
+    JOB_IDS,
+    SCHEDULE_HOURS,
+    DigestSchedule,
+    create_scheduler,
+    reconcile_digest_schedules,
+    registered_job_ids,
+    scheduled_specs,
+)
 
 # ── Scheduler specs ───────────────────────────────────────────────
 
@@ -47,6 +55,37 @@ def test_scheduled_specs_support_owner_minutes_and_disabled_schedule():
         ("report_1345", 13, 45, "13:45"),
     ]
     assert scheduled_specs(()) == []
+
+
+def test_explicit_empty_digest_schedule_registers_no_jobs():
+    scheduler = create_scheduler(digest_schedules=())
+
+    assert registered_job_ids(scheduler) == []
+
+
+def test_schedule_reconciliation_detects_timezone_change_at_same_job_id():
+    original = (
+        DigestSchedule(
+            slug="world",
+            name="World briefing",
+            timezone="Europe/Berlin",
+            times=("08:00",),
+        ),
+    )
+    scheduler = create_scheduler(digest_schedules=original)
+
+    assert reconcile_digest_schedules(scheduler, original) is False
+    changed = (
+        DigestSchedule(
+            slug="world",
+            name="World briefing",
+            timezone="Asia/Tokyo",
+            times=("08:00",),
+        ),
+    )
+    assert reconcile_digest_schedules(scheduler, changed) is True
+    assert registered_job_ids(scheduler) == ["report_world_08"]
+    assert str(scheduler.get_job("report_world_08").trigger.timezone) == "Asia/Tokyo"
 
 
 def test_help_text_reflects_six_hour_schedule():
@@ -107,7 +146,12 @@ def test_sources_text_lists_platforms():
 def test_schedule_text_shows_boundaries():
     db = MagicMock()
     text = schedule_text(db)
-    for t in ("\u06f0\u06f0:\u06f0\u06f0", "\u06f0\u06f6:\u06f0\u06f0", "\u06f1\u06f2:\u06f0\u06f0", "\u06f1\u06f8:\u06f0\u06f0"):
+    for t in (
+        "\u06f0\u06f0:\u06f0\u06f0",
+        "\u06f0\u06f6:\u06f0\u06f0",
+        "\u06f1\u06f2:\u06f0\u06f0",
+        "\u06f1\u06f8:\u06f0\u06f0",
+    ):
         assert t in text
 
 
@@ -188,3 +232,26 @@ async def test_dispatch_settings_and_source_import():
     assert import_result == "ok"
     bot._handle_settings.assert_awaited_once_with(123, "/settings language en")
     bot._handle_source_import.assert_awaited_once_with(123, document)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_named_digest_report():
+    bot = make_bot()
+    bot._handle_report = AsyncMock(return_value="ok")
+
+    result = await bot._dispatch_command(
+        123,
+        "/report digest climate telegram",
+        999,
+        4,
+        "message",
+    )
+
+    assert result == "ok"
+    bot._handle_report.assert_awaited_once_with(
+        123,
+        "platform_telegram",
+        999,
+        4,
+        digest_slug="climate",
+    )
