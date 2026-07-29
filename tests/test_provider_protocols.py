@@ -307,6 +307,27 @@ def test_openai_catalog_excludes_non_editorial_services() -> None:
     assert result.models == ("llama-3.3-70b-versatile",)
 
 
+def test_model_catalog_does_not_match_google_hostname_in_url_query() -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "models/custom-model"}]})
+
+    provider = ProviderConfig(
+        name="operator_provider",
+        keys=("protected",),
+        api_base=("https://provider.example/v1?next=generativelanguage.googleapis.com"),
+        protocol="openai",
+    )
+
+    result = ProviderModelCatalog(
+        (provider,),
+        client_factory=_client_for(handler, captured),
+    ).discover()[0]
+
+    assert result.models == ("models/custom-model",)
+
+
 def test_model_discovery_isolates_invalid_key_and_uses_next_key() -> None:
     captured: list[httpx.Request] = []
 

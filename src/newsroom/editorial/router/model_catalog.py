@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -213,10 +214,8 @@ def _parse_models(provider: ProviderConfig, body: Any) -> list[str]:
 
 
 def _canonical_model_id(provider: ProviderConfig, model: str) -> str:
-    if (
-        provider.name == "gemini"
-        or "generativelanguage.googleapis.com" in provider.api_base.casefold()
-    ):
+    api_hostname = (urlparse(provider.api_base).hostname or "").casefold()
+    if provider.name == "gemini" or api_hostname == "generativelanguage.googleapis.com":
         return model.removeprefix("models/")
     return model
 
