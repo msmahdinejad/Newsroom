@@ -247,6 +247,66 @@ def test_model_discovery_filters_non_generation_gemini_models() -> None:
     assert "protected" not in repr(result)
 
 
+def test_openai_compatible_gemini_catalog_canonicalizes_and_filters_models() -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"id": "models/gemini-2.5-flash"},
+                    {"id": "models/gemini-2.5-flash-preview-tts"},
+                    {"id": "models/gemini-2.5-flash-image"},
+                ]
+            },
+        )
+
+    provider = ProviderConfig(
+        name="gemini",
+        keys=("protected",),
+        api_base="https://generativelanguage.googleapis.com/v1beta/openai",
+        protocol="openai",
+    )
+
+    result = ProviderModelCatalog(
+        (provider,),
+        client_factory=_client_for(handler, captured),
+    ).discover()[0]
+
+    assert result.models == ("gemini-2.5-flash",)
+
+
+def test_openai_catalog_excludes_non_editorial_services() -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"id": "whisper-large-v3"},
+                    {"id": "meta-llama/llama-prompt-guard-2-86m"},
+                    {"id": "llama-3.3-70b-versatile"},
+                ]
+            },
+        )
+
+    provider = ProviderConfig(
+        name="groq",
+        keys=("protected",),
+        api_base="https://api.groq.com/openai/v1",
+        protocol="openai",
+    )
+
+    result = ProviderModelCatalog(
+        (provider,),
+        client_factory=_client_for(handler, captured),
+    ).discover()[0]
+
+    assert result.models == ("llama-3.3-70b-versatile",)
+
+
 def test_model_discovery_isolates_invalid_key_and_uses_next_key() -> None:
     captured: list[httpx.Request] = []
 

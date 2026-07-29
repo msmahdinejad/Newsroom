@@ -11,6 +11,25 @@ import httpx
 from newsroom.editorial.router.protocols import protocol_api_base
 from newsroom.editorial.router.types import ProviderConfig
 
+_NON_EDITORIAL_MODEL_MARKERS = (
+    "audio",
+    "compound",
+    "deplot",
+    "embedding",
+    "guard",
+    "image",
+    "imagen",
+    "moderation",
+    "ocr",
+    "orpheus",
+    "rerank",
+    "speech",
+    "transcri",
+    "tts",
+    "veo",
+    "whisper",
+)
+
 
 @dataclass(frozen=True)
 class ModelCatalogResult:
@@ -91,7 +110,7 @@ class ProviderModelCatalog:
                             )
                         response.raise_for_status()
                         body = response.json()
-                        for model in _parse_models(provider.protocol, body):
+                        for model in _parse_models(provider, body):
                             if model not in models:
                                 models.append(model)
                             if len(models) >= limit:
@@ -174,22 +193,41 @@ def _catalog_request(provider: ProviderConfig, key_value: str) -> _CatalogReques
     )
 
 
-def _parse_models(protocol: str, body: Any) -> list[str]:
-    rows = body.get("models" if protocol == "gemini" else "data") or []
+def _parse_models(provider: ProviderConfig, body: Any) -> list[str]:
+    rows = body.get("models" if provider.protocol == "gemini" else "data") or []
     models: list[str] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
-        if protocol == "gemini":
+        if provider.protocol == "gemini":
             methods = row.get("supportedGenerationMethods") or []
             if "generateContent" not in methods:
                 continue
             model = str(row.get("name") or "").removeprefix("models/")
         else:
             model = str(row.get("id") or "")
-        if model and model not in models:
+        model = _canonical_model_id(provider, model)
+        if _is_editorial_candidate(model) and model not in models:
             models.append(model)
     return models
+
+
+def _canonical_model_id(provider: ProviderConfig, model: str) -> str:
+    if (
+        provider.name == "gemini"
+        or "generativelanguage.googleapis.com" in provider.api_base.casefold()
+    ):
+        return model.removeprefix("models/")
+    return model
+
+
+def _is_editorial_candidate(model: str) -> bool:
+    normalized = model.casefold()
+    if not normalized:
+        return False
+    if normalized.rsplit("/", maxsplit=1)[-1].startswith(("bge-", "e5-")):
+        return False
+    return not any(marker in normalized for marker in _NON_EDITORIAL_MODEL_MARKERS)
 
 
 def _next_page(protocol: str, body: Any) -> dict[str, str | int]:
