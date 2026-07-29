@@ -5,6 +5,12 @@ from newsroom.control.catalog import (
     CatalogEntry,
     SourceCatalog,
 )
+from newsroom.control.digests import (
+    DigestCatalog,
+    DigestSnapshot,
+    DigestUpdate,
+    InterestPolicy,
+)
 from newsroom.control.manager import (
     ControlSnapshot,
     ImportResult,
@@ -16,7 +22,11 @@ __all__ = [
     "CatalogApplyResult",
     "CatalogEntry",
     "ControlSnapshot",
+    "DigestCatalog",
+    "DigestSnapshot",
+    "DigestUpdate",
     "ImportResult",
+    "InterestPolicy",
     "NewsroomControl",
     "SourceCatalog",
     "SourceActionResult",

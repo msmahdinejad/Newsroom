@@ -161,7 +161,7 @@ def _entry_from_row(row: dict[str, str]) -> CatalogEntry:
         source_type=row["type"].strip().lower(),
         url=row["url"].strip(),
         language=(row.get("language") or "en").strip().lower(),
-        category=(row.get("category") or "programming").strip(),
+        category=(row.get("category") or "general").strip(),
         trust_class=(row.get("trust_class") or "community").strip(),
         default_enabled=(row.get("default_enabled") or "").strip().lower()
         in {"1", "true", "yes", "on"},

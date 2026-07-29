@@ -30,28 +30,35 @@ def utcnow() -> datetime:
 
 class Base(DeclarativeBase):
     """Base class for all models."""
+
     pass
 
 
 # ── Source registry ──────────────────────────────────────────────
+
 
 class Source(Base):
     __tablename__ = "sources"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    type: Mapped[str] = mapped_column(String(50), nullable=False)  # rss, github_releases, telegram, youtube
+    # Code-owned collector type; user imports are limited by the platform registry.
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
     language: Mapped[str] = mapped_column(String(10), default="en")
     category: Mapped[str] = mapped_column(String(100), default="general")
-    trust_class: Mapped[str] = mapped_column(String(30), default="reputable")  # official/primary/reputable/community/aggregator
+    trust_class: Mapped[str] = mapped_column(
+        String(30), default="reputable"
+    )  # official/primary/reputable/community/aggregator
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     config: Mapped[dict] = mapped_column(JSONB, default=dict)  # adapter-specific config
 
     # Production: workbook linkage + stable identity (independent of display name).
     # stable_identity is a deterministic hash of (platform, normalized handle/URL)
     # so a source survives handle renames and duplicate display names.
-    stable_identity: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
+    stable_identity: Mapped[str | None] = mapped_column(
+        String(64), unique=True, nullable=True, index=True
+    )
     workbook_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     platform: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     inactive_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -69,10 +76,14 @@ class Source(Base):
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
-    health_status: Mapped[str] = mapped_column(String(30), default="configured")  # configured/healthy/degraded/unavailable
+    health_status: Mapped[str] = mapped_column(
+        String(30), default="configured"
+    )  # configured/healthy/degraded/unavailable
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
     raw_items: Mapped[list["RawItem"]] = relationship(back_populates="source")
     cursors: Mapped[list["CollectionCursor"]] = relationship(back_populates="source")
@@ -80,24 +91,34 @@ class Source(Base):
 
 class SourceCredential(Base):
     """References to external secrets — never stores actual values."""
+
     __tablename__ = "source_credentials"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"), nullable=False)
-    credential_type: Mapped[str] = mapped_column(String(50), nullable=False)  # env_var, file_path, keyring
-    credential_ref: Mapped[str] = mapped_column(String(500), nullable=False)  # e.g. "TELEGRAM_API_ID" or "/secrets/telegram"
+    credential_type: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # env_var, file_path, keyring
+    credential_ref: Mapped[str] = mapped_column(
+        String(500), nullable=False
+    )  # e.g. "TELEGRAM_API_ID" or "/secrets/telegram"
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class CollectionCursor(Base):
     """Incremental collection cursors per source."""
+
     __tablename__ = "collection_cursors"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"), nullable=False)
-    cursor_key: Mapped[str] = mapped_column(String(100), default="default")  # e.g. "last_message_id", "last_published"
+    cursor_key: Mapped[str] = mapped_column(
+        String(100), default="default"
+    )  # e.g. "last_message_id", "last_published"
     cursor_value: Mapped[str] = mapped_column(Text, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
     source: Mapped["Source"] = relationship(back_populates="cursors")
     __table_args__ = (UniqueConstraint("source_id", "cursor_key", name="uq_cursor_source_key"),)
@@ -105,8 +126,10 @@ class CollectionCursor(Base):
 
 # ── Collection & raw storage ──────────────────────────────────────
 
+
 class CollectionRun(Base):
     """Record of a single collection run (one source, one invocation)."""
+
     __tablename__ = "collection_runs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -120,13 +143,16 @@ class CollectionRun(Base):
 
 class RawItem(Base):
     """Unprocessed item collected from a source."""
+
     __tablename__ = "raw_items"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"), nullable=False)
     raw_data: Mapped[dict] = mapped_column(JSONB, nullable=False)  # structured JSON, not str(dict)
     collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    content_hash: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)  # pre-normalization hash for raw dedup
+    content_hash: Mapped[str | None] = mapped_column(
+        String(64), index=True, nullable=True
+    )  # pre-normalization hash for raw dedup
     # MTProto: Telegram message identity for edit idempotency
     telegram_channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     telegram_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -134,17 +160,23 @@ class RawItem(Base):
     edit_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     source: Mapped["Source"] = relationship(back_populates="raw_items")
-    normalized_item: Mapped["NormalizedItem | None"] = relationship(back_populates="raw_item", uselist=False)
+    normalized_item: Mapped["NormalizedItem | None"] = relationship(
+        back_populates="raw_item", uselist=False
+    )
 
 
 # ── Normalized items ──────────────────────────────────────────────
 
+
 class NormalizedItem(Base):
     """Processed item with standard fields."""
+
     __tablename__ = "normalized_items"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    raw_item_id: Mapped[int] = mapped_column(ForeignKey("raw_items.id"), unique=True, nullable=False)
+    raw_item_id: Mapped[int] = mapped_column(
+        ForeignKey("raw_items.id"), unique=True, nullable=False
+    )
 
     title: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -156,26 +188,35 @@ class NormalizedItem(Base):
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     url_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
     is_duplicate: Mapped[bool] = mapped_column(Boolean, default=False)
-    duplicate_of_id: Mapped[int | None] = mapped_column(ForeignKey("normalized_items.id"), nullable=True)
+    duplicate_of_id: Mapped[int | None] = mapped_column(
+        ForeignKey("normalized_items.id"), nullable=True
+    )
 
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     raw_item: Mapped["RawItem"] = relationship(back_populates="normalized_item")
-    duplicate_of: Mapped["NormalizedItem | None"] = relationship(remote_side=[id], foreign_keys=[duplicate_of_id])  # noqa: A003
+    duplicate_of: Mapped["NormalizedItem | None"] = relationship(
+        remote_side=[id],  # noqa: A003
+        foreign_keys=[duplicate_of_id],
+    )
     story_links: Mapped[list["StoryItem"]] = relationship(back_populates="item")
 
 
 # ── Stories & evidence ─────────────────────────────────────────────
 
+
 class Story(Base):
     """A clustered set of items about the same event."""
+
     __tablename__ = "stories"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     headline: Mapped[str] = mapped_column(Text, nullable=False)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     priority: Mapped[str] = mapped_column(String(20), default="medium")
-    trust_status: Mapped[str] = mapped_column(String(30), default="unconfirmed")  # official/confirmed/likely/unconfirmed/rumor
+    trust_status: Mapped[str] = mapped_column(
+        String(30), default="unconfirmed"
+    )  # official/confirmed/likely/unconfirmed/rumor
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     importance_score: Mapped[float] = mapped_column(Float, default=0.0)
     novelty_score: Mapped[float] = mapped_column(Float, default=0.0)
@@ -186,7 +227,9 @@ class Story(Base):
 
     # Material change tracking for /report new eligibility
     material_version: Mapped[int] = mapped_column(Integer, default=1)
-    material_change_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    material_change_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -196,6 +239,7 @@ class Story(Base):
 
 class StoryItem(Base):
     """Many-to-many between stories and normalized items."""
+
     __tablename__ = "story_items"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -209,11 +253,14 @@ class StoryItem(Base):
 
 class Evidence(Base):
     """Bounded evidence packet for editorial generation."""
+
     __tablename__ = "evidence"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     story_id: Mapped[int] = mapped_column(ForeignKey("stories.id"), nullable=False)
-    packet: Mapped[dict] = mapped_column(JSONB, nullable=False)  # structured evidence: facts, sources, links, contradictions
+    packet: Mapped[dict] = mapped_column(
+        JSONB, nullable=False
+    )  # structured evidence: facts, sources, links, contradictions
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     story: Mapped["Story"] = relationship(back_populates="evidence")
@@ -221,15 +268,30 @@ class Evidence(Base):
 
 # ── Reports & delivery ─────────────────────────────────────────────
 
+
 class Report(Base):
-    """Generated Persian report (renamed from Digest)."""
+    """Generated report with durable digest lineage."""
+
     __tablename__ = "reports"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     content_fa: Mapped[str] = mapped_column(Text, nullable=False)
     story_ids: Mapped[list] = mapped_column(JSONB, default=list)
-    report_mode: Mapped[str] = mapped_column(String(30), default="scheduled")  # scheduled/manual_new/manual_comprehensive/latest
-    generation_method: Mapped[str] = mapped_column(String(30), default="deterministic")  # llm/deterministic
+    report_mode: Mapped[str] = mapped_column(
+        String(30), default="scheduled"
+    )  # scheduled/manual_new/manual_comprehensive/latest
+    generation_method: Mapped[str] = mapped_column(
+        String(30), default="deterministic"
+    )  # llm/deterministic
+    digest_id: Mapped[int | None] = mapped_column(
+        ForeignKey("digest_definitions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    digest_slug: Mapped[str] = mapped_column(
+        String(80),
+        nullable=False,
+        default="default",
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -238,6 +300,7 @@ class Report(Base):
 
 class Delivery(Base):
     """Telegram delivery tracking with chunk-level state."""
+
     __tablename__ = "deliveries"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -247,7 +310,9 @@ class Delivery(Base):
     total_chunks: Mapped[int] = mapped_column(Integer, default=1)
     delivered_chunks: Mapped[int] = mapped_column(Integer, default=0)
     message_ids: Mapped[list] = mapped_column(JSONB, default=list)  # Telegram message IDs per chunk
-    status: Mapped[str] = mapped_column(String(30), default="pending")  # pending/partial/delivered/failed
+    status: Mapped[str] = mapped_column(
+        String(30), default="pending"
+    )  # pending/partial/delivered/failed
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -260,26 +325,41 @@ class Delivery(Base):
 
     report: Mapped["Report"] = relationship(back_populates="deliveries")
     chunks: Mapped[list["DeliveryChunk"]] = relationship(
-        back_populates="delivery", cascade="all, delete-orphan", order_by="DeliveryChunk.chunk_index"
+        back_populates="delivery",
+        cascade="all, delete-orphan",
+        order_by="DeliveryChunk.chunk_index",
     )
 
-    __table_args__ = (
-        UniqueConstraint("report_id", "chat_id", name="uq_delivery_report_chat"),
-    )
+    __table_args__ = (UniqueConstraint("report_id", "chat_id", name="uq_delivery_report_chat"),)
 
 
 # ── Jobs & operations ──────────────────────────────────────────────
 
+
 class JobRun(Base):
     """Record of every pipeline execution."""
+
     __tablename__ = "job_runs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     job_type: Mapped[str] = mapped_column(String(30), nullable=False)  # scheduled/manual
     job_id: Mapped[str] = mapped_column(String(100), nullable=False)  # correlation ID
     trigger: Mapped[str] = mapped_column(String(30), default="scheduled")  # scheduled/manual
-    report_window_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    report_window_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    digest_id: Mapped[int | None] = mapped_column(
+        ForeignKey("digest_definitions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    digest_slug: Mapped[str] = mapped_column(
+        String(80),
+        nullable=False,
+        default="default",
+    )
+    report_window_start: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    report_window_end: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -299,10 +379,13 @@ class JobRun(Base):
 
 class ProcessingError(Base):
     """Persisted pipeline errors for diagnosis."""
+
     __tablename__ = "processing_errors"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    stage: Mapped[str] = mapped_column(String(50), nullable=False)  # collect/normalize/dedupe/cluster/digest/deliver
+    stage: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # collect/normalize/dedupe/cluster/digest/deliver
     source_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_type: Mapped[str] = mapped_column(String(100), nullable=False)
     error_message: Mapped[str] = mapped_column(Text, nullable=False)
@@ -312,8 +395,10 @@ class ProcessingError(Base):
 
 # ── Delivery: Telegram delivery state ────────────────────────────────
 
+
 class TelegramUpdate(Base):
     """Idempotency record for processed Telegram updates."""
+
     __tablename__ = "telegram_updates"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -328,14 +413,19 @@ class TelegramUpdate(Base):
 
 class DeliveryChunk(Base):
     """Per-chunk delivery state for partial recovery."""
+
     __tablename__ = "delivery_chunks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    delivery_id: Mapped[int] = mapped_column(ForeignKey("deliveries.id"), nullable=False, index=True)
+    delivery_id: Mapped[int] = mapped_column(
+        ForeignKey("deliveries.id"), nullable=False, index=True
+    )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     total_chunks: Mapped[int] = mapped_column(Integer, nullable=False)
     telegram_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending/sent/failed
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending"
+    )  # pending/sent/failed
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -343,11 +433,14 @@ class DeliveryChunk(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     delivery: Mapped["Delivery"] = relationship(back_populates="chunks")
-    __table_args__ = (UniqueConstraint("delivery_id", "chunk_index", name="uq_delivery_chunk_index"),)
+    __table_args__ = (
+        UniqueConstraint("delivery_id", "chunk_index", name="uq_delivery_chunk_index"),
+    )
 
 
 class ReportCursor(Base):
     """Single-row cursor: last successfully delivered scheduled report."""
+
     __tablename__ = "report_cursors"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -355,11 +448,14 @@ class ReportCursor(Base):
     report_id: Mapped[int | None] = mapped_column(ForeignKey("reports.id"), nullable=True)
     delivery_id: Mapped[int | None] = mapped_column(ForeignKey("deliveries.id"), nullable=True)
     advanced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
 
 class CommandRequest(Base):
     """Persistent idempotency for command/callback-driven pipeline runs."""
+
     __tablename__ = "command_requests"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -377,8 +473,14 @@ class CommandRequest(Base):
 
 # ── Owner control plane ──────────────────────────────────────────
 
+
 class NewsroomControlSettings(Base):
-    """Single-row, non-secret runtime preferences managed by the owner bot."""
+    """Legacy projection of the default digest.
+
+    New code uses :class:`DigestDefinition`. This row remains during the
+    compatibility window so an upgrade can be rolled forward without breaking
+    an older worker that is still draining a job.
+    """
 
     __tablename__ = "newsroom_control_settings"
 
@@ -407,7 +509,203 @@ class NewsroomControlSettings(Base):
     )
 
 
+class DigestDefinition(Base):
+    """A named, non-secret news product with its own editorial policy."""
+
+    __tablename__ = "digest_definitions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    slug: Mapped[str] = mapped_column(
+        String(80),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    topic_brief: Mapped[str] = mapped_column(Text, nullable=False)
+    include_terms: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    exclude_terms: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    output_language: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        default="fa",
+    )
+    timezone: Mapped[str] = mapped_column(
+        "timezone_name",
+        String(64),
+        nullable=False,
+        default="Asia/Tehran",
+    )
+    source_types: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    max_stories: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
+    minimum_telegram_stories: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+    schedule_times: Mapped[list] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=lambda: ["00:00", "06:00", "12:00", "18:00"],
+    )
+    schedule_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    provider_policy: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    delivery_config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+    )
+
+    sources: Mapped[list["DigestSource"]] = relationship(
+        back_populates="digest",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "max_stories BETWEEN 1 AND 50",
+            name="ck_digest_max_stories",
+        ),
+        CheckConstraint(
+            "minimum_telegram_stories BETWEEN 0 AND max_stories",
+            name="ck_digest_minimum_telegram_stories",
+        ),
+    )
+
+
+class DigestSource(Base):
+    """Explicit source membership for a digest."""
+
+    __tablename__ = "digest_sources"
+
+    digest_id: Mapped[int] = mapped_column(
+        ForeignKey("digest_definitions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    source_id: Mapped[int] = mapped_column(
+        ForeignKey("sources.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+    )
+
+    digest: Mapped["DigestDefinition"] = relationship(back_populates="sources")
+    source: Mapped["Source"] = relationship()
+
+
+class DiscoveryJob(Base):
+    """Bounded source-discovery run; contains no provider access values."""
+
+    __tablename__ = "discovery_jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    subject: Mapped[str] = mapped_column(Text, nullable=False)
+    requested_platforms: Mapped[list] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+    )
+    mode: Mapped[str] = mapped_column(String(20), nullable=False, default="quick")
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, default="gemini")
+    model: Mapped[str] = mapped_column(String(200), nullable=False)
+    interaction_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    failure_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    candidates: Mapped[list["SourceCandidate"]] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "mode IN ('quick', 'deep')",
+            name="ck_discovery_job_mode",
+        ),
+    )
+
+
+class SourceCandidate(Base):
+    """Grounded and probed source awaiting an explicit operator decision."""
+
+    __tablename__ = "source_candidates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("discovery_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    platform: Mapped[str] = mapped_column(String(30), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_url: Mapped[str] = mapped_column(Text, nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    citations: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    validation_status: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default="pending",
+    )
+    failure_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    approval_status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="pending",
+    )
+    source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sources.id"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    job: Mapped["DiscoveryJob"] = relationship(back_populates="candidates")
+    source: Mapped["Source | None"] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id",
+            "normalized_url",
+            name="uq_source_candidate_job_url",
+        ),
+        CheckConstraint(
+            "approval_status IN ('pending', 'approved', 'rejected')",
+            name="ck_source_candidate_approval",
+        ),
+    )
+
+
 # ── MTProto: Telegram MTProto ingestion state ──────────────────────
+
 
 class TelegramChannel(Base):
     """Extended Telegram channel metadata tied to sources.
@@ -415,11 +713,14 @@ class TelegramChannel(Base):
     Stable numeric Telegram channel ID is the primary external identity.
     Usernames are mutable — username updates don't create duplicate sources.
     """
+
     __tablename__ = "telegram_channels"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"), nullable=False, unique=True)
-    telegram_channel_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True, index=True)
+    telegram_channel_id: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, unique=True, index=True
+    )
     access_hash: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     public_username: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     public_url: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -432,9 +733,15 @@ class TelegramChannel(Base):
     source_state: Mapped[str] = mapped_column(String(30), default="candidate")
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     last_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    last_observed_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_collected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_reconciliation_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_observed_ts: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_collected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_reconciliation_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     current_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
     floodwait_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -443,11 +750,14 @@ class TelegramChannel(Base):
     spam_rate: Mapped[float] = mapped_column(Float, default=0.0)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
 
 class TelegramMessageGap(Base):
     """Detected message ID gaps for bounded reconciliation."""
+
     __tablename__ = "telegram_message_gaps"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -463,12 +773,14 @@ class TelegramMessageGap(Base):
 
 # ── Editorial: AI editorial state ────────────────────────────────────
 
+
 class EditorialAttempt(Base):
     """Audit record for every editorial generation attempt.
 
     No API keys stored. Enough metadata for replay and audit without
     duplicating the full evidence set (referenced by evidence_set_hash).
     """
+
     __tablename__ = "editorial_attempts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -501,11 +813,14 @@ class EditorialAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     # Idempotency: unique identity for cache reuse
-    cache_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True, index=True)
+    cache_key: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, unique=True, index=True
+    )
 
 
 class EditorialHealth(Base):
     """Singleton editorial health state — updated after each attempt."""
+
     __tablename__ = "editorial_health"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -522,11 +837,15 @@ class EditorialHealth(Base):
     fallback_count: Mapped[int] = mapped_column(Integer, default=0)
 
     rate_limited: Mapped[bool] = mapped_column(Boolean, default=False)
-    rate_limit_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rate_limit_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     in_flight: Mapped[int] = mapped_column(Integer, default=0)
 
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
 
 # Production: multi-provider router reliability state.
@@ -540,7 +859,9 @@ class ProviderModelHealth(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     model: Mapped[str] = mapped_column(String(150), nullable=False)
-    validation_status: Mapped[str] = mapped_column(String(30), nullable=False, default="unavailable")
+    validation_status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="unavailable"
+    )
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -605,7 +926,9 @@ class ProviderQuotaState(Base):
     tpm_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     rpd_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     reserved_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    window_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    window_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     day_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -766,7 +1089,9 @@ class EditorialShard(Base):
     __tablename__ = "editorial_shards"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    job_db_id: Mapped[int] = mapped_column(ForeignKey("editorial_jobs.id"), nullable=False, index=True)
+    job_db_id: Mapped[int] = mapped_column(
+        ForeignKey("editorial_jobs.id"), nullable=False, index=True
+    )
     shard_id: Mapped[str] = mapped_column(String(100), nullable=False)
     shard_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     total_shards: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -791,7 +1116,9 @@ class EditorialShard(Base):
 
     lease_owner: Mapped[str | None] = mapped_column(String(100), nullable=True)
     leased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -805,7 +1132,9 @@ class EditorialShard(Base):
     usage: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
     __table_args__ = (UniqueConstraint("job_db_id", "shard_id", name="uq_editorial_shard_id"),)
 
@@ -820,7 +1149,9 @@ class EditorialArtifact(Base):
     __tablename__ = "editorial_artifacts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    job_db_id: Mapped[int] = mapped_column(ForeignKey("editorial_jobs.id"), nullable=False, index=True)
+    job_db_id: Mapped[int] = mapped_column(
+        ForeignKey("editorial_jobs.id"), nullable=False, index=True
+    )
     shard_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     artifact_type: Mapped[str] = mapped_column(String(30), nullable=False)
     # map/reduction_topic/reduction_final
@@ -835,7 +1166,9 @@ class EditorialArtifact(Base):
     validation_result: Mapped[str | None] = mapped_column(Text, nullable=True)
     grounding_result: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    cache_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True, index=True)
+    cache_key: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, unique=True, index=True
+    )
     provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     usage: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
@@ -859,7 +1192,9 @@ class EditorialArtifactLineage(Base):
     __tablename__ = "editorial_artifact_lineage"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    artifact_id: Mapped[int] = mapped_column(ForeignKey("editorial_artifacts.id"), nullable=False, index=True)
+    artifact_id: Mapped[int] = mapped_column(
+        ForeignKey("editorial_artifacts.id"), nullable=False, index=True
+    )
     story_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     evidence_ref_id: Mapped[str] = mapped_column(String(100), nullable=False)
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -877,6 +1212,7 @@ class EditorialArtifactLineage(Base):
 
 # ── Social collection: Agent-Reach capability layer state ─────────────────────
 
+
 class AgentReachBackendState(Base):
     """Per-channel Agent-Reach backend state — Newsroom-owned durability.
 
@@ -886,6 +1222,7 @@ class AgentReachBackendState(Base):
 
     No credentials, no cookies, no authorization headers stored here.
     """
+
     __tablename__ = "agent_reach_backend_state"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -900,10 +1237,14 @@ class AgentReachBackendState(Base):
     degraded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     production_ready: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     production_approval: Mapped[str] = mapped_column(String(60), nullable=False, default="deferred")
-    last_doctor_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_doctor_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
 
 class AgentReachSourceState(Base):
@@ -918,17 +1259,24 @@ class AgentReachSourceState(Base):
     headers, no Agent-Reach config contents, no unrelated command output,
     no private messages.
     """
+
     __tablename__ = "agent_reach_source_state"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"), nullable=False, unique=True, index=True)
+    source_id: Mapped[int] = mapped_column(
+        ForeignKey("sources.id"), nullable=False, unique=True, index=True
+    )
     channel: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     backend: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     backend_version: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     last_stable_item_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     last_original_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    last_publication_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_collected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_publication_ts: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_collected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     last_raw_content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_edit_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     cursor: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
@@ -939,7 +1287,9 @@ class AgentReachSourceState(Base):
     retry_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
 
 # ── X ingestion: X/Twitter account state for production timeline ingestion ──
@@ -959,11 +1309,15 @@ class XAccountState(Base):
     __tablename__ = "x_account_state"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"), nullable=False, unique=True, index=True)
+    source_id: Mapped[int] = mapped_column(
+        ForeignKey("sources.id"), nullable=False, unique=True, index=True
+    )
     account_id: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
     configured_handle: Mapped[str] = mapped_column(String(20), nullable=False)
     last_resolved_handle: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    last_resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     health_status: Mapped[str] = mapped_column(String(30), nullable=False, default="configured")
     cursor: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     rate_limit_state: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
@@ -972,18 +1326,21 @@ class XAccountState(Base):
     consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_posts_collected: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
 
 # Extended source workbook inventory
 
 
 class SourceInventory(Base):
-    """Optional extended source registry with one row per workbook row.
+    """Import-provenance projection with one row per optional workbook row.
 
     Preserves workbook metadata, a stable normalized identity independent of
-    display name, validation result, operational state, and a link to the
-    active collector row in ``sources`` when activated.
+    display name, reconciliation result, and a link to the authoritative
+    collector row in ``sources`` when activated. Collectors and digest
+    membership never use this table as their source registry.
 
     Repeated import is idempotent by ``stable_identity``: no duplicates, no
     silent row disappearance. Disabling a source never removes its historical
@@ -1014,10 +1371,14 @@ class SourceInventory(Base):
     tags: Mapped[str | None] = mapped_column(Text, nullable=True)
     language: Mapped[str | None] = mapped_column(String(30), nullable=True)
     content_mode: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    review_level: Mapped[str | None] = mapped_column(String(50), nullable=True)  # Verification column
+    review_level: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )  # Verification column
     verification: Mapped[str | None] = mapped_column(Text, nullable=True)
     discovery_source: Mapped[str | None] = mapped_column(Text, nullable=True)
-    tier: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)  # Core/Discovery/Community/Watchlist
+    tier: Mapped[str | None] = mapped_column(
+        String(30), nullable=True, index=True
+    )  # Core/Discovery/Community/Watchlist
     coverage_score: Mapped[int] = mapped_column(Integer, default=0)
     risk: Mapped[str | None] = mapped_column(String(30), nullable=True)
     # Numeric workbook scores preserved for ranking.
@@ -1035,14 +1396,22 @@ class SourceInventory(Base):
     # telegram, reddit_subreddit, web_page, youtube_rss, x_timeline, ...).
     mapped_type: Mapped[str] = mapped_column(String(50), nullable=False, default="")
     # validation_result: ok | invalid_url | invalid_handle | missing_url | duplicate
-    validation_result: Mapped[str] = mapped_column(String(50), nullable=False, default="ok", index=True)
+    validation_result: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="ok", index=True
+    )
     validation_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     # operational_state: active | inactive | invalid (reuses existing vocab)
-    operational_state: Mapped[str] = mapped_column(String(30), nullable=False, default="inactive", index=True)
+    operational_state: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="inactive", index=True
+    )
     inactive_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # Link to the active collector row (sources.id) when activated.
-    source_id: Mapped[int | None] = mapped_column(ForeignKey("sources.id"), nullable=True, index=True)
+    source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sources.id"), nullable=True, index=True
+    )
 
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )

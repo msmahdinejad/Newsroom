@@ -1,7 +1,6 @@
 """Report generation CLI command through the production editorial path."""
 
 import argparse
-import os
 
 from newsroom.logging import get_logger, setup_logging
 
@@ -12,9 +11,8 @@ def report_command(args: argparse.Namespace) -> int:
     """Generate and deliver one manual report with the configured AI router."""
     setup_logging()
     logger.info("Generating report")
-    from newsroom.pipeline.runner import run_pipeline
+    from newsroom.pipeline.runner import PipelineRequest, run_pipeline
 
-    previous_mode = os.environ.get("NEWSROOM_REPORT_MODE")
     mode_by_source = {
         "default": "manual",
         "all": "manual_comprehensive",
@@ -24,16 +22,13 @@ def report_command(args: argparse.Namespace) -> int:
         "github": "platform_github",
         "reddit": "platform_reddit",
     }
-    os.environ["NEWSROOM_REPORT_MODE"] = mode_by_source[
-        getattr(args, "source", "default")
-    ]
-    try:
-        result = run_pipeline(blocking_lock=True)
-    finally:
-        if previous_mode is None:
-            os.environ.pop("NEWSROOM_REPORT_MODE", None)
-        else:
-            os.environ["NEWSROOM_REPORT_MODE"] = previous_mode
+    result = run_pipeline(
+        blocking_lock=True,
+        request=PipelineRequest(
+            report_mode=mode_by_source[getattr(args, "source", "default")],
+            digest_slug=getattr(args, "digest", "default"),
+        ),
+    )
 
     if result["status"] == "ok":
         print(f"OK: report {result['report_id']} delivery {result['delivery_id']}")

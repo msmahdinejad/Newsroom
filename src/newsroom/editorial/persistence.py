@@ -18,7 +18,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from newsroom.editorial.orchestrator import EditorialAttempt
+from newsroom.editorial.attempt import EditorialAttempt
 from newsroom.logging import get_logger
 from newsroom.storage.models import EditorialAttempt as EditorialAttemptModel
 from newsroom.storage.models import EditorialHealth
@@ -188,7 +188,9 @@ def get_editorial_health(db: Session) -> dict[str, Any]:
         "grounding_failure_count": health.grounding_failure_count,
         "fallback_count": health.fallback_count,
         "rate_limited": health.rate_limited,
-        "rate_limit_until": health.rate_limit_until.isoformat() if health.rate_limit_until else None,
+        "rate_limit_until": health.rate_limit_until.isoformat()
+        if health.rate_limit_until
+        else None,
         "in_flight": health.in_flight,
         "configured_budgets": {
             "max_stories_per_call": settings.editorial_max_stories_per_call,

@@ -185,11 +185,7 @@ def _ensure_source_state(
     backend: str,
 ) -> AgentReachSourceState:
     """Get or create the per-source Agent-Reach state row."""
-    state = (
-        session.query(AgentReachSourceState)
-        .filter_by(source_id=source.id)
-        .first()
-    )
+    state = session.query(AgentReachSourceState).filter_by(source_id=source.id).first()
     if state is None:
         state = AgentReachSourceState(
             source_id=source.id,
@@ -217,10 +213,7 @@ def _update_state_success(
     if items:
         last = items[-1]
         state.last_stable_item_id = str(
-            last.get("video_id")
-            or last.get("post_id")
-            or last.get("repo_full_name")
-            or ""
+            last.get("video_id") or last.get("post_id") or last.get("repo_full_name") or ""
         )[:200]
         state.last_original_url = str(last.get("link") or last.get("source_url") or "")[:65000]
         pub = last.get("published")
@@ -277,33 +270,17 @@ async def collect_agent_reach_sources(
     subprocess is launched. If disabled, this function is a no-op that
     returns ``status=disabled`` for every Agent-Reach source.
     """
-    query = session.query(Source)
+    query = session.query(Source).filter(Source.type.in_(AGENT_REACH_SOURCE_TYPES))
     if not include_disabled:
         query = query.filter(Source.enabled.is_(True))
     if source_type:
         query = query.filter(Source.type == source_type)
-    sources = query.all()
-
-    ar_sources = [s for s in sources if s.type in AGENT_REACH_SOURCE_TYPES]
     if max_sources is not None:
-        ar_sources.sort(
-            key=lambda source: (
-                max(
-                    (
-                        stamp
-                        for stamp in (
-                            source.last_attempt_at,
-                            source.last_success_at,
-                            source.last_error_at,
-                        )
-                        if isinstance(stamp, datetime)
-                    ),
-                    default=datetime.min.replace(tzinfo=UTC),
-                ),
-                source.id,
-            )
-        )
-        ar_sources = ar_sources[:max_sources]
+        query = query.order_by(
+            Source.last_attempt_at.asc().nullsfirst(),
+            Source.id,
+        ).limit(max(0, max_sources))
+    ar_sources = query.all()
     if not ar_sources:
         return {
             "sources": 0,
@@ -319,10 +296,7 @@ async def collect_agent_reach_sources(
             "sources": len(ar_sources),
             "new_items": 0,
             "failed": [],
-            "detail": [
-                {"source": s.name, "status": "agent_reach_disabled"}
-                for s in ar_sources
-            ],
+            "detail": [{"source": s.name, "status": "agent_reach_disabled"} for s in ar_sources],
             "disabled": True,
         }
 
@@ -527,9 +501,7 @@ async def collect_agent_reach_sources(
         session.flush()
 
         # Advance cursor only after persist success.
-        next_cursor = advance_cursor_from_items(
-            cursor, persisted_payloads, source_type=source.type
-        )
+        next_cursor = advance_cursor_from_items(cursor, persisted_payloads, source_type=source.type)
         save_cursor(session, source.id, next_cursor)
         session.flush()
 

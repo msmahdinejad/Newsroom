@@ -64,10 +64,12 @@ def _resume_attempt(
         raise RuntimeError(f"collection run {run_id} disappeared")
     return attached_source, attached_run
 
+
 # Native (Agent-Reach-free) source types handled by this module.
 NATIVE_SOURCE_TYPES: frozenset[str] = frozenset(
     {"rss", "github_releases", "telegram", "web_page", "reddit_subreddit", "youtube_rss"}
 )
+_FAIRNESS_PREFETCH_FACTOR = len(NATIVE_SOURCE_TYPES)
 
 
 def _source_attempt_order(source: Source) -> tuple[int, datetime, int]:
@@ -140,8 +142,19 @@ async def collect_sources(
     query = session.query(Source).filter(Source.enabled.is_(True))
     if source_type:
         query = query.filter(Source.type == source_type)
+    if exclude_source_types:
+        query = query.filter(Source.type.notin_(exclude_source_types))
+    if max_sources is not None:
+        # Fetch a bounded cross-type window, then apply the fair round-robin
+        # selector in memory. This prevents loading an unbounded registry.
+        query = query.order_by(
+            Source.last_attempt_at.asc().nullsfirst(),
+            Source.id,
+        ).limit(max(0, max_sources) * _FAIRNESS_PREFETCH_FACTOR)
     sources = query.all()
     if exclude_source_types:
+        # Keep the domain boundary authoritative even when a repository
+        # adapter cannot push the exclusion predicate down to its backend.
         sources = [source for source in sources if source.type not in exclude_source_types]
     if max_sources is not None:
         sources = _bounded_fair_sources(sources, max_sources)
@@ -192,7 +205,9 @@ async def collect_sources(
                         source.validation_status = "unavailable"
                         source.failure_category = "mtproto_not_configured"
                         source.no_cursor_reason = "mtproto_not_configured"
-                        per_source.append({"source": source.name, "status": "skipped_mtproto_disabled"})
+                        per_source.append(
+                            {"source": source.name, "status": "skipped_mtproto_disabled"}
+                        )
                         session.commit()
                         continue
                     items = await tg.collect(source)
@@ -215,15 +230,17 @@ async def collect_sources(
                     run.items_collected = persist_stats["new"]
                     run.finished_at = datetime.now(UTC)
                     total_new += persist_stats["new"]
-                    per_source.append({
-                        "source": source.name,
-                        "status": "ok",
-                        "new": persist_stats["new"],
-                        "updated": persist_stats["updated"],
-                        "skipped": persist_stats["skipped"],
-                        "gaps": len(gaps),
-                        "fetched": len(items),
-                    })
+                    per_source.append(
+                        {
+                            "source": source.name,
+                            "status": "ok",
+                            "new": persist_stats["new"],
+                            "updated": persist_stats["updated"],
+                            "skipped": persist_stats["skipped"],
+                            "gaps": len(gaps),
+                            "fetched": len(items),
+                        }
+                    )
                     session.commit()
                     continue
                 else:
@@ -318,7 +335,9 @@ async def collect_sources(
                 run.error = safe_error[:500]
                 run.finished_at = datetime.now(UTC)
                 # do not advance cursor
-                per_source.append({"source": source.name, "status": "error", "error": safe_error[:120]})
+                per_source.append(
+                    {"source": source.name, "status": "error", "error": safe_error[:120]}
+                )
                 session.commit()
     finally:
         await rss.close()

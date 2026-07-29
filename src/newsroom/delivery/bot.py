@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -113,10 +112,14 @@ class TelegramBot:
             )
         except Exception as e:
             logger.error(f"Bot identity query failed: {e}")
-            _write_status(self._health_payload({
-                **status,
-                "degraded": ["identity_query_failed"],
-            }))
+            _write_status(
+                self._health_payload(
+                    {
+                        **status,
+                        "degraded": ["identity_query_failed"],
+                    }
+                )
+            )
 
         # Clear any webhook to ensure polling works
         await self.api.delete_webhook()
@@ -132,10 +135,14 @@ class TelegramBot:
             except Exception as e:
                 self._polling_alive = False
                 logger.error(f"Bot poll error: {e}")
-                _write_status(self._health_payload({
-                    **status,
-                    "degraded": ["poll_error"],
-                }))
+                _write_status(
+                    self._health_payload(
+                        {
+                            **status,
+                            "degraded": ["poll_error"],
+                        }
+                    )
+                )
                 await asyncio.sleep(5)
                 self._polling_alive = True
 
@@ -217,14 +224,16 @@ class TelegramBot:
                 existing = db.query(TelegramUpdate).filter_by(update_id=update_id).first()
                 if existing:
                     return
-                db.add(TelegramUpdate(
-                    update_id=update_id,
-                    update_type=update_type,
-                    user_fingerprint=identity_fingerprint("user", user_id),
-                    chat_fingerprint=identity_fingerprint("chat", chat_id),
-                    command=command[:100],
-                    result=result,
-                ))
+                db.add(
+                    TelegramUpdate(
+                        update_id=update_id,
+                        update_type=update_type,
+                        user_fingerprint=identity_fingerprint("user", user_id),
+                        chat_fingerprint=identity_fingerprint("chat", chat_id),
+                        command=command[:100],
+                        result=result,
+                    )
+                )
         except Exception as e:
             logger.error(f"Failed to record update {update_id}: {e}")
 
@@ -290,6 +299,34 @@ class TelegramBot:
             "/report reddit": "platform_reddit",
             "report_reddit": "platform_reddit",
         }
+        if cmd.startswith("/report digest "):
+            parts = cmd.split()
+            if len(parts) not in {3, 4}:
+                await self._send_text(chat_id, self._message("generation_error"))
+                return "error"
+            digest_slug = parts[2]
+            mode_name = parts[3] if len(parts) == 4 else "manual"
+            digest_modes = {
+                "manual": "manual",
+                "new": "manual_new",
+                "comprehensive": "manual_comprehensive",
+                "telegram": "platform_telegram",
+                "x": "platform_x",
+                "web": "platform_web",
+                "github": "platform_github",
+                "reddit": "platform_reddit",
+            }
+            mode = digest_modes.get(mode_name)
+            if mode is None:
+                await self._send_text(chat_id, self._message("generation_error"))
+                return "error"
+            return await self._handle_report(
+                chat_id,
+                mode,
+                user_id,
+                update_id,
+                digest_slug=digest_slug,
+            )
         if cmd in report_modes:
             # Map command to pipeline mode
             mode = report_modes[cmd]
@@ -336,8 +373,20 @@ class TelegramBot:
                     value = parts[2].strip() if len(parts) > 2 else ""
                     if section == "language":
                         snapshot = control.configure(language=value)
+                    elif section == "name":
+                        snapshot = control.configure(name=value)
+                    elif section == "topic":
+                        snapshot = control.configure(topic_brief=value)
+                    elif section == "include":
+                        snapshot = control.configure(include_terms=value)
+                    elif section == "exclude":
+                        snapshot = control.configure(exclude_terms=value)
+                    elif section == "timezone":
+                        snapshot = control.configure(timezone=value)
                     elif section == "count":
                         snapshot = control.configure(story_count=int(value))
+                    elif section == "telegram_min":
+                        snapshot = control.configure(minimum_telegram_stories=int(value))
                     elif section == "schedule":
                         snapshot = (
                             control.configure(schedule_enabled=False)
@@ -349,9 +398,14 @@ class TelegramBot:
                         )
                     elif section == "sources":
                         snapshot = control.configure(source_groups=value)
+                    elif section == "source_ids":
+                        snapshot = control.configure(
+                            source_ids=[int(item) for item in value.split(",") if item.strip()]
+                        )
                     else:
                         raise ValueError(
-                            "use language, count, schedule, or sources"
+                            "use name, topic, include, exclude, language, timezone, "
+                            "count, telegram_min, schedule, sources, or source_ids"
                         )
                     response = (
                         localized_text(
@@ -363,9 +417,7 @@ class TelegramBot:
                     )
             if len(parts) > 1 and parts[1] == "language":
                 with contextlib.suppress(Exception):
-                    await self.api.set_my_commands(
-                        bot_commands(snapshot.report_language)
-                    )
+                    await self.api.set_my_commands(bot_commands(snapshot.report_language))
             await self._send_text(chat_id, response)
             return "ok"
         except (TypeError, ValueError) as exc:
@@ -405,10 +457,7 @@ class TelegramBot:
             lines = [heading, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"]
             for source in rows:
                 state = "✅" if source.enabled else "⏸"
-                lines.append(
-                    f"{state} #{source.id} · {source.type} · {source.name}\n"
-                    f"{source.url}"
-                )
+                lines.append(f"{state} #{source.id} · {source.type} · {source.name}\n{source.url}")
             if not rows:
                 lines.append("—")
             await self._send_text(chat_id, "\n\n".join(lines))
@@ -435,9 +484,7 @@ class TelegramBot:
         try:
             source_id = int(parts[2])
             action = parts[1]
-            if action == "delete" and (
-                len(parts) < 4 or parts[3].lower() != "confirm"
-            ):
+            if action == "delete" and (len(parts) < 4 or parts[3].lower() != "confirm"):
                 await self._send_text(
                     chat_id,
                     localized_text(
@@ -561,6 +608,7 @@ class TelegramBot:
 
                 if report:
                     from newsroom.delivery.render import render_report_html
+
                     chunks = render_report_html(report.content_fa)
                     for chunk in chunks:
                         await self.api.send_message(
@@ -664,13 +712,20 @@ class TelegramBot:
         mode: str,
         user_id: int | None,
         update_id: int,
+        *,
+        digest_slug: str = "default",
     ) -> str:
         """Run pipeline under PostgreSQL lock with command idempotency."""
         # Same command from the same identities remains idempotent without
         # persisting the raw Telegram identifiers.
         user_fingerprint = identity_fingerprint("user", user_id)
         chat_fingerprint = identity_fingerprint("chat", chat_id)
-        request_key = command_request_key(mode, user_id, chat_id, update_id)
+        request_key = command_request_key(
+            f"{digest_slug}:{mode}",
+            user_id,
+            chat_id,
+            update_id,
+        )
 
         with get_db() as db:
             existing_req = db.query(CommandRequest).filter_by(request_key=request_key).first()
@@ -724,18 +779,19 @@ class TelegramBot:
 
         await self._send_text(chat_id, self._message("generating"))
 
-        # Run pipeline via authoritative runner
-        env = {
-            **os.environ,
-            "NEWSROOM_JOB_ID": f"manual_{mode}_{update_id}",
-            "NEWSROOM_REPORT_MODE": mode,
-        }
+        # Immutable request data prevents concurrent bot jobs from mutating
+        # process-wide environment state.
+        from newsroom.pipeline.runner import PipelineRequest, run_pipeline
+
+        pipeline_request = PipelineRequest(
+            job_id=f"manual_{mode}_{update_id}",
+            report_mode=mode,
+            digest_slug=digest_slug,
+        )
         loop = asyncio.get_running_loop()
 
         def _run() -> dict:
-            os.environ.update(env)
-            from newsroom.pipeline.runner import run_pipeline
-            return run_pipeline()
+            return run_pipeline(request=pipeline_request)
 
         try:
             result = await loop.run_in_executor(None, _run)
@@ -778,9 +834,7 @@ class TelegramBot:
             td = TelegramDelivery()
             try:
                 with get_db() as db:
-                    delivery_id = await td.deliver_report(
-                        db, result_report_id, chat_id=chat_id
-                    )
+                    delivery_id = await td.deliver_report(db, result_report_id, chat_id=chat_id)
             finally:
                 await td.close()
 

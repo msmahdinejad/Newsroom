@@ -49,11 +49,7 @@ def bot_commands(language: str) -> list[dict[str, str]]:
 def help_text(snapshot: ControlSnapshot) -> str:
     """Render the complete help screen from runtime preferences."""
     catalog = _locale(snapshot.report_language)
-    schedule = (
-        " | ".join(snapshot.schedule_times)
-        if snapshot.schedule_enabled
-        else "OFF"
-    )
+    schedule = " | ".join(snapshot.schedule_times) if snapshot.schedule_enabled else "OFF"
     if snapshot.report_language == "fa":
         schedule = schedule.translate(
             str.maketrans(
@@ -66,8 +62,20 @@ def help_text(snapshot: ControlSnapshot) -> str:
         if snapshot.report_source_types
         else str(catalog["all_sources"])
     )
-    return str(catalog["help"]).format(
+    template = str(catalog["help"])
+    named_digest_help = str(catalog["named_digest_help"])
+    if "/report digest <slug>" not in template:
+        template = template.replace(
+            "\n/latest",
+            f"\n{named_digest_help}\n/latest",
+            1,
+        )
+    return template.format(
+        digest_name=snapshot.digest_name,
+        topic_brief=snapshot.topic_brief,
         story_count=snapshot.report_story_count,
+        minimum_telegram_stories=snapshot.minimum_telegram_stories,
         source_scope=source_scope,
         schedule=schedule,
+        timezone=snapshot.timezone,
     )

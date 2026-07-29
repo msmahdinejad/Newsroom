@@ -126,8 +126,13 @@ def parse_and_validate(
 
     # Step 6: Validate enum values and confidence ranges
     valid_classifications = {
-        "official", "corroborated", "single_reputable", "community",
-        "conflicting", "unverified", "unavailable",
+        "official",
+        "corroborated",
+        "single_reputable",
+        "community",
+        "conflicting",
+        "unverified",
+        "unavailable",
     }
     valid_claim_status = {"supported", "conflicting", "unsupported", "unverified"}
     valid_priorities = {"high", "medium", "low"}
@@ -204,8 +209,8 @@ def _reader_facing_copy_issue(
     report_language: str,
 ) -> str | None:
     """Reject source-shaped output before it can reach the public renderer."""
-    headline = story.get("headline_fa")
-    summary = story.get("summary_fa")
+    headline = story.get("headline", story.get("headline_fa"))
+    summary = story.get("summary", story.get("summary_fa"))
     if not isinstance(headline, str) or not headline.strip():
         return "has an empty headline"
     if not isinstance(summary, str) or not summary.strip():
@@ -215,13 +220,9 @@ def _reader_facing_copy_issue(
     if _URL_RE.search(headline):
         return "has a URL-shaped headline"
     language = report_language.casefold().split("-", maxsplit=1)[0]
-    if language == "fa" and (
-        not _PERSIAN_RE.search(headline) or not _PERSIAN_RE.search(summary)
-    ):
+    if language == "fa" and (not _PERSIAN_RE.search(headline) or not _PERSIAN_RE.search(summary)):
         return "is not Persian"
-    if language == "en" and (
-        not _LATIN_RE.search(headline) or not _LATIN_RE.search(summary)
-    ):
+    if language == "en" and (not _LATIN_RE.search(headline) or not _LATIN_RE.search(summary)):
         return "is not English"
     return None
 
