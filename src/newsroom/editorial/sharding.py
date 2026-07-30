@@ -17,7 +17,7 @@ import hashlib
 from dataclasses import dataclass
 
 from newsroom.config import settings
-from newsroom.editorial.openai_provider import compute_effective_output_limit
+from newsroom.editorial.limits import effective_output_limit
 from newsroom.editorial.schema import EditorialEvidenceSet, EvidenceStoryPacket
 from newsroom.logging import get_logger
 
@@ -98,14 +98,14 @@ def trim_evidence_for_shard(
 
     # Keep trimming until we fit
     trimmed = sorted_sources[:]
-    while trimmed and estimate_story_tokens(
-        EvidenceStoryPacket(**{**story.model_dump(), "sources": trimmed})
-    ) > max_tokens:
+    while (
+        trimmed
+        and estimate_story_tokens(EvidenceStoryPacket(**{**story.model_dump(), "sources": trimmed}))
+        > max_tokens
+    ):
         trimmed.pop()  # Remove lowest-priority source
 
-    logger.debug(
-        f"Trimmed story {story.story_id}: {len(story.sources)} → {len(trimmed)} sources"
-    )
+    logger.debug(f"Trimmed story {story.story_id}: {len(story.sources)} → {len(trimmed)} sources")
     return EvidenceStoryPacket(**{**story.model_dump(), "sources": trimmed})
 
 
@@ -113,7 +113,7 @@ def compute_effective_shard_limits() -> tuple[int, int]:
     """Calculate effective input and output limits for shards."""
     configured_input = settings.editorial_shard_input_token_limit
     configured_output = settings.editorial_shard_output_token_limit
-    effective_output, _ = compute_effective_output_limit(configured_output)
+    effective_output = effective_output_limit(configured_output)
     # Input is bounded by the shard limit and the app safety cap
     effective_input = min(configured_input, settings.editorial_max_input_tokens)
     return effective_input, effective_output
@@ -164,10 +164,9 @@ def shard_evidence_set(
             story = trimmed
 
         # If adding this story would exceed the shard budget or story count limit
-        if (
-            current_shard
-            and (current_tokens + story_tokens > per_shard_token_budget
-                 or len(current_shard) >= max_stories_per_shard)
+        if current_shard and (
+            current_tokens + story_tokens > per_shard_token_budget
+            or len(current_shard) >= max_stories_per_shard
         ):
             shards.append(current_shard)
             current_shard = []
@@ -198,19 +197,23 @@ def shard_evidence_set(
         ).hexdigest()[:16]
         shard_id = f"shard-{shard_hash}"
 
-        estimated_tokens = sum(estimate_story_tokens(s) for s in shard_stories) + PROMPT_OVERHEAD_TOKENS
+        estimated_tokens = (
+            sum(estimate_story_tokens(s) for s in shard_stories) + PROMPT_OVERHEAD_TOKENS
+        )
 
-        shard_specs.append(ShardSpec(
-            shard_id=shard_id,
-            shard_sequence=i,
-            total_shards=len(shards),
-            story_ids=story_ids,
-            evidence_ref_ids=ref_ids,
-            estimated_input_tokens=estimated_tokens,
-            effective_input_limit=effective_input,
-            effective_output_limit=effective_output,
-            evidence_set_hash=evidence.evidence_hash(),
-        ))
+        shard_specs.append(
+            ShardSpec(
+                shard_id=shard_id,
+                shard_sequence=i,
+                total_shards=len(shards),
+                story_ids=story_ids,
+                evidence_ref_ids=ref_ids,
+                estimated_input_tokens=estimated_tokens,
+                effective_input_limit=effective_input,
+                effective_output_limit=effective_output,
+                evidence_set_hash=evidence.evidence_hash(),
+            )
+        )
 
     omitted = len(stories) - sum(len(s.story_ids) for s in shard_specs)
 

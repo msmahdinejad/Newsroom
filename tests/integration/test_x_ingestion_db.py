@@ -69,17 +69,17 @@ def db(engine):
     ).fetchall()
     ar_story_ids = [r[0] for r in ar_story_ids_row]
     if ar_story_ids:
-        all_reports = session.execute(
-            text("SELECT id, story_ids FROM reports")
-        ).fetchall()
+        all_reports = session.execute(text("SELECT id, story_ids FROM reports")).fetchall()
         ar_report_ids = []
         for rid, sids in all_reports:
             if sids and any(sid in ar_story_ids for sid in sids):
                 ar_report_ids.append(rid)
         if ar_report_ids:
             session.execute(
-                text("DELETE FROM delivery_chunks WHERE delivery_id IN ("
-                     "SELECT id FROM deliveries WHERE report_id = ANY(:rids))"),
+                text(
+                    "DELETE FROM delivery_chunks WHERE delivery_id IN ("
+                    "SELECT id FROM deliveries WHERE report_id = ANY(:rids))"
+                ),
                 {"rids": ar_report_ids},
             )
             session.execute(
@@ -118,11 +118,7 @@ def db(engine):
             ")"
         )
     )
-    session.execute(
-        text(
-            "DELETE FROM sources WHERE type IN ('x_timeline','x_post')"
-        )
-    )
+    session.execute(text("DELETE FROM sources WHERE type IN ('x_timeline','x_post')"))
     session.commit()
     try:
         yield session
@@ -147,11 +143,13 @@ def test_alembic_at_gate5x_revision(engine):
     # Later Production revisions preserve the X ingestion tables.
     assert row[0] in (
         "0008_gate5x_x_ingestion",
-            "0009_gate6_source_inventory",
-            "0010_gate6_router_reliability",
-            "0011_gate7_identity_privacy",
-            "0012_owner_control_plane",
-        )
+        "0009_gate6_source_inventory",
+        "0010_gate6_router_reliability",
+        "0011_gate7_identity_privacy",
+        "0012_owner_control_plane",
+        "0013_digest_definitions",
+        "0014_source_discovery",
+    )
 
 
 # ── 2. Source import ───────────────────────────────────────────
@@ -364,14 +362,24 @@ def test_edited_x_post_updates_in_place(db):
     db.flush()
 
     content_hash = hashlib.sha256(b"x:1234567890").hexdigest()
-    raw_data = {"type": "x_post", "post_id": "1234567890", "text": "original", "handle": "edit_test"}
+    raw_data = {
+        "type": "x_post",
+        "post_id": "1234567890",
+        "text": "original",
+        "handle": "edit_test",
+    }
     raw = RawItem(source_id=src.id, raw_data=raw_data, content_hash=content_hash)
     db.add(raw)
     db.commit()
 
     # Simulate an edit: same post_id, new text
     found = db.query(RawItem).filter_by(source_id=src.id, content_hash=content_hash).first()
-    found.raw_data = {"type": "x_post", "post_id": "1234567890", "text": "edited", "handle": "edit_test"}
+    found.raw_data = {
+        "type": "x_post",
+        "post_id": "1234567890",
+        "text": "edited",
+        "handle": "edit_test",
+    }
     db.commit()
 
     again = db.query(RawItem).filter_by(source_id=src.id, content_hash=content_hash).first()
@@ -562,7 +570,16 @@ def test_transaction_rollback_on_duplicate_source_id(db):
 def test_no_credential_fields_in_x_account_state(engine):
     insp = inspect(engine)
     cols = {c["name"] for c in insp.get_columns("x_account_state")}
-    forbidden = {"cookies", "token", "api_key", "auth_header", "browser_profile", "password", "ct0", "auth_token"}
+    forbidden = {
+        "cookies",
+        "token",
+        "api_key",
+        "auth_header",
+        "browser_profile",
+        "password",
+        "ct0",
+        "auth_token",
+    }
     assert not (cols & forbidden)
 
 

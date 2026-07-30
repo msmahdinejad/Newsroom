@@ -221,6 +221,33 @@ class MultiProviderRouter(EditorialProvider):
         )
         return validator.validate_access_values(self.routes)
 
+    def register_candidate_models(
+        self,
+        provider_name: str,
+        models: tuple[str, ...],
+    ) -> int:
+        """Register discovered IDs as disabled routes pending validation."""
+        provider = self.config.provider(provider_name)
+        known = {(route.provider, route.model) for route in self.routes}
+        added = 0
+        for model in models:
+            identity = (provider.name, model)
+            if identity in known:
+                continue
+            self.routes.append(
+                ModelRoute(
+                    provider=provider.name,
+                    model=model,
+                    limits=provider.limits,
+                    quota_scope=provider.quota_scope,
+                    concurrency=provider.concurrency,
+                    min_spacing_seconds=provider.min_spacing_seconds,
+                )
+            )
+            known.add(identity)
+            added += 1
+        return added
+
     def key_pool(self, provider: str) -> KeyPool:
         return self.key_pools[provider]
 
@@ -283,11 +310,7 @@ class MultiProviderRouter(EditorialProvider):
             if self.key_pools[provider].key_count == 0:
                 continue
             snapshot = next(
-                (
-                    item
-                    for item in circuit_snapshots
-                    if getattr(item, "provider", None) == provider
-                ),
+                (item for item in circuit_snapshots if getattr(item, "provider", None) == provider),
                 None,
             )
             if snapshot is not None:
@@ -307,8 +330,12 @@ class MultiProviderRouter(EditorialProvider):
             if not circuit.allow_request():
                 continue
             provider_routes = [
-                route for route in self.routes
-                if route.provider == provider and route.enabled and route.validation_status == "validated"
+                route
+                for route in self.routes
+                if route.provider == provider
+                and route.enabled
+                and route.validation_status == "validated"
+                and self._supports_stage(route, context.stage)
             ]
             if not provider_routes or not pool.has_healthy_key():
                 circuit.open()
@@ -330,6 +357,7 @@ class MultiProviderRouter(EditorialProvider):
                         attempts += 1
                         started = self.clock.monotonic()
                         try:
+
                             def execute_current(
                                 selected_route: ModelRoute = route,
                                 selected_lease: KeyLease = lease,
@@ -348,15 +376,31 @@ class MultiProviderRouter(EditorialProvider):
                             pool.success(lease)
                             circuit.success()
                             self._record_attempt(
-                                context, route, lease, "success", None, started,
-                                self._estimate_input_tokens(request), Usage.from_response(response), None,
+                                context,
+                                route,
+                                lease,
+                                "success",
+                                None,
+                                started,
+                                self._estimate_input_tokens(request),
+                                Usage.from_response(response),
+                                None,
                             )
-                            self.state_sink.record_snapshot(self._model_snapshot(route, self.clock, success=True))
+                            self.state_sink.record_snapshot(
+                                self._model_snapshot(route, self.clock, success=True)
+                            )
                             return RoutedEditorialResponse(response=response)
                         except RouteFailure as failure:
                             self._record_attempt(
-                                context, route, lease, "failed", failure.category, started,
-                                self._estimate_input_tokens(request), None, failure.retry_after_seconds,
+                                context,
+                                route,
+                                lease,
+                                "failed",
+                                failure.category,
+                                started,
+                                self._estimate_input_tokens(request),
+                                None,
+                                failure.retry_after_seconds,
                             )
                             route.last_failure_category = failure.category.value
                             if failure.provider_level:
@@ -389,7 +433,10 @@ class MultiProviderRouter(EditorialProvider):
                                 RouteFailureCategory.SERVER_ERROR,
                                 RouteFailureCategory.NETWORK_ERROR,
                             }:
-                                if not transient_retry_used and circuit.state is not CircuitState.OPEN:
+                                if (
+                                    not transient_retry_used
+                                    and circuit.state is not CircuitState.OPEN
+                                ):
                                     transient_retry_used = True
                                     self.clock.sleep(self._retry_jitter(lease))
                                     continue
@@ -401,7 +448,9 @@ class MultiProviderRouter(EditorialProvider):
                             }:
                                 route.enabled = False
                                 route.validation_status = "disabled"
-                                self.state_sink.record_snapshot(self._model_snapshot(route, self.clock))
+                                self.state_sink.record_snapshot(
+                                    self._model_snapshot(route, self.clock)
+                                )
                                 stop_model = True
                                 break
                             if category is RouteFailureCategory.MALFORMED_SCHEMA:
@@ -415,7 +464,11 @@ class MultiProviderRouter(EditorialProvider):
                                 }
                                 repaired = self._one_alternate(
                                     request,
-                                    replace(context, stage="repair", repair_payload=failure.repair_payload),
+                                    replace(
+                                        context,
+                                        stage="repair",
+                                        repair_payload=failure.repair_payload,
+                                    ),
                                     exclude=repair_exclude,
                                 )
                                 if repaired is not None:
@@ -452,7 +505,12 @@ class MultiProviderRouter(EditorialProvider):
         for provider in self.config.provider_order:
             pool = self.key_pools.get(provider)
             circuit = self.circuits.get(provider)
-            if pool is None or circuit is None or not circuit.allow_request() or not pool.has_healthy_key():
+            if (
+                pool is None
+                or circuit is None
+                or not circuit.allow_request()
+                or not pool.has_healthy_key()
+            ):
                 continue
             for route in self.routes:
                 if (
@@ -460,6 +518,7 @@ class MultiProviderRouter(EditorialProvider):
                     or (route.provider, route.model) in exclude
                     or not route.enabled
                     or route.validation_status != "validated"
+                    or not self._supports_stage(route, context.stage)
                 ):
                     continue
                 try:
@@ -470,6 +529,7 @@ class MultiProviderRouter(EditorialProvider):
                 transient_retry_used = False
                 while True:
                     try:
+
                         def execute_alternate(
                             selected_route: ModelRoute = route,
                             selected_lease: KeyLease = lease,
@@ -489,8 +549,15 @@ class MultiProviderRouter(EditorialProvider):
                         circuit.success()
                         route.last_failure_category = None
                         self._record_attempt(
-                            context, route, lease, "success", None, started,
-                            self._estimate_input_tokens(request), Usage.from_response(response), None,
+                            context,
+                            route,
+                            lease,
+                            "success",
+                            None,
+                            started,
+                            self._estimate_input_tokens(request),
+                            Usage.from_response(response),
+                            None,
                         )
                         self.state_sink.record_snapshot(
                             self._model_snapshot(route, self.clock, success=True)
@@ -498,8 +565,15 @@ class MultiProviderRouter(EditorialProvider):
                         return response
                     except RouteFailure as failure:
                         self._record_attempt(
-                            context, route, lease, "failed", failure.category, started,
-                            self._estimate_input_tokens(request), None, failure.retry_after_seconds,
+                            context,
+                            route,
+                            lease,
+                            "failed",
+                            failure.category,
+                            started,
+                            self._estimate_input_tokens(request),
+                            None,
+                            failure.retry_after_seconds,
                         )
                         route.last_failure_category = failure.category.value
                         if failure.provider_level:
@@ -541,13 +615,23 @@ class MultiProviderRouter(EditorialProvider):
                         }:
                             route.enabled = False
                             route.validation_status = "disabled"
-                            self.state_sink.record_snapshot(
-                                self._model_snapshot(route, self.clock)
-                            )
+                            self.state_sink.record_snapshot(self._model_snapshot(route, self.clock))
                         else:
                             pool.failure(lease, failure.category)
                         return None
         return None
+
+    @staticmethod
+    def _supports_stage(route: ModelRoute, stage: str) -> bool:
+        """Require measured capabilities appropriate to the requested stage."""
+        required = {
+            "map": frozenset({"structured", "grounding", "bounded_output"}),
+            "editorial": frozenset({"structured", "grounding", "bounded_output"}),
+            "reduce": frozenset({"structured", "grounding", "bounded_output", "persian"}),
+            "reduction": frozenset({"structured", "grounding", "bounded_output", "persian"}),
+            "repair": frozenset({"structured", "grounding", "bounded_output"}),
+        }.get(stage, frozenset({"structured", "bounded_output"}))
+        return required.issubset(route.supported_capabilities)
 
     def _record_attempt(
         self,

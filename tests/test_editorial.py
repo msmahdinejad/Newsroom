@@ -143,7 +143,8 @@ def make_output(
         stories.append(
             StoryEditorialResult(
                 story_id=sp.story_id,
-                headline_fa=headline_override or f"\u0639\u0646\u0648\u0627\u0646 \u0641\u0627\u0631\u0633\u06cc {sp.story_id}",
+                headline_fa=headline_override
+                or f"\u0639\u0646\u0648\u0627\u0646 \u0641\u0627\u0631\u0633\u06cc {sp.story_id}",
                 summary_fa="\u062e\u0644\u0627\u0635\u0647 \u0641\u0627\u0631\u0633\u06cc",
                 why_it_matters_fa="\u0686\u0648\u0646 \u0645\u0647\u0645 \u0627\u0633\u062a",
                 practical_impact_fa="\u06a9\u0627\u0631\u0628\u0631\u062f \u0639\u0645\u0644\u06cc",
@@ -259,7 +260,7 @@ def test_selected_report_language_reaches_prompt_and_renderer() -> None:
         "manual",
         now=datetime(2026, 7, 27, tzinfo=UTC),
     )
-    assert "Programming & Developer Tools" in rendered
+    assert "News digest" in rendered
     assert "Top stories" in rendered
     assert "\u062e\u0628\u0631\u0647\u0627\u06cc \u0645\u0647\u0645" not in rendered
 
@@ -329,6 +330,34 @@ def test_valid_structured_response_passes_validation():
 # ── 4. Malformed JSON ──────────────────────────────────────────────
 
 
+def test_valid_english_structured_response_passes_validation():
+    """English output is validated against the requested language."""
+    evidence = make_evidence_set([1])
+    evidence.report_language = "en"
+    output = make_output(evidence).model_dump(mode="json")
+    output["stories"][0]["headline"] = "Python 3.14 release improves the runtime"
+    output["stories"][0]["summary"] = (
+        "The release adds runtime and typing improvements documented by the sources."
+    )
+
+    parsed, result = parse_and_validate(json.dumps(output), evidence)
+
+    assert result.valid
+    assert parsed is not None
+
+
+def test_english_report_rejects_non_english_reader_copy():
+    """The English locale still receives a bounded language check."""
+    evidence = make_evidence_set([1])
+    evidence.report_language = "en"
+    output = make_output(evidence).model_dump(mode="json")
+
+    parsed, result = parse_and_validate(json.dumps(output), evidence)
+
+    assert parsed is None
+    assert any("is not English" in issue for issue in result.issues)
+
+
 def test_malformed_json_rejected():
     """Malformed JSON is rejected."""
     evidence = make_evidence_set([1])
@@ -378,19 +407,21 @@ def test_unknown_story_id_rejected():
     output = make_output(evidence)
     # Add a story with unknown ID
     output_dict = output.model_dump(mode="json")
-    output_dict["stories"].append({
-        "story_id": 999,
-        "headline_fa": "fake",
-        "summary_fa": "",
-        "why_it_matters_fa": "",
-        "practical_impact_fa": "",
-        "confidence_level": 0.5,
-        "verification_status": "unverified",
-        "classification": "unverified",
-        "source_ref_ids": [],
-        "source_links": [],
-        "key_claims": [],
-    })
+    output_dict["stories"].append(
+        {
+            "story_id": 999,
+            "headline_fa": "fake",
+            "summary_fa": "",
+            "why_it_matters_fa": "",
+            "practical_impact_fa": "",
+            "confidence_level": 0.5,
+            "verification_status": "unverified",
+            "classification": "unverified",
+            "source_ref_ids": [],
+            "source_links": [],
+            "key_claims": [],
+        }
+    )
     raw = json.dumps(output_dict)
     parsed, result = parse_and_validate(raw, evidence)
     assert not result.valid
@@ -401,8 +432,8 @@ def test_reader_facing_copy_must_be_persian_and_not_a_url():
     """A raw URL or English source title cannot reach a Persian Telegram report."""
     evidence = make_evidence_set([1])
     output = make_output(evidence).model_dump(mode="json")
-    output["stories"][0]["headline_fa"] = "https://example.test/category/ai"
-    output["stories"][0]["summary_fa"] = "English source text without a Persian summary."
+    output["stories"][0]["headline"] = "https://example.test/category/ai"
+    output["stories"][0]["summary"] = "English source text without a Persian summary."
 
     parsed, result = parse_and_validate(json.dumps(output), evidence)
 
@@ -476,8 +507,9 @@ def test_unsupported_number_in_claim_removed():
     output = make_output(evidence, claim_text_override="Python 999.0 released with new features")
     grounded, result = validate_grounding(evidence, output)
     # The claim should have been removed because 999 is not in evidence
-    assert any("removed" in issue or "unsupported" in issue for issue in result.issues) or \
-        all(len(s.key_claims) == 0 for s in grounded.stories)
+    assert any("removed" in issue or "unsupported" in issue for issue in result.issues) or all(
+        len(s.key_claims) == 0 for s in grounded.stories
+    )
 
 
 def test_supported_number_in_claim_kept():
@@ -621,6 +653,7 @@ def test_excessive_input_stories_capped():
 
 def settings_max_stories() -> int:
     from newsroom.config import settings
+
     return settings.editorial_max_stories_per_call
 
 
@@ -633,7 +666,7 @@ def test_excessive_output_rejected():
     output = make_output(evidence)
     # Pad the output to make it very large
     output_dict = output.model_dump(mode="json")
-    output_dict["stories"][0]["summary_fa"] = "x" * 20000
+    output_dict["stories"][0]["summary"] = "x" * 20000
     raw = json.dumps(output_dict)
     # With a small max_output_tokens, this should be rejected
     parsed, result = parse_and_validate(raw, evidence, max_output_tokens=100)
@@ -642,30 +675,6 @@ def test_excessive_output_rejected():
 
 
 # ── 19. Timeout ────────────────────────────────────────────────────
-
-
-def test_provider_timeout_raises_error():
-    """Provider timeout raises EditorialError with TIMEOUT category."""
-
-    from newsroom.editorial.openai_provider import OpenAICompatibleEditorialProvider
-
-    provider = OpenAICompatibleEditorialProvider(
-        api_base="http://localhost:9999",
-        api_key="test-key",
-        model="test-model",
-        timeout_seconds=1,
-        max_retries=0,
-    )
-    evidence = make_evidence_set([1])
-    request = EditorialRequest(evidence=evidence, timeout_seconds=1)
-
-    with pytest.raises(EditorialError) as exc_info:
-        provider.generate(request)
-    # Should be a timeout or network error (connection refused)
-    assert exc_info.value.category in (
-        EditorialErrorCategory.TIMEOUT,
-        EditorialErrorCategory.NETWORK_ERROR,
-    )
 
 
 # ── 20. Retry limit ────────────────────────────────────────────────
@@ -683,9 +692,9 @@ def test_retry_limit_respected():
     request = EditorialRequest(evidence=evidence)
 
     with patch("newsroom.config.settings.editorial_max_retries", 2), pytest.raises(EditorialError):
-            # This won't actually retry because FakeProvider doesn't implement retry logic
-            # But the test verifies the error propagates
-            provider.generate(request)
+        # This won't actually retry because FakeProvider doesn't implement retry logic
+        # But the test verifies the error propagates
+        provider.generate(request)
     assert provider.call_count == 1
 
 
@@ -716,12 +725,15 @@ def test_provider_outage_triggers_fallback():
     )
     fake_provider = FakeProvider(error=error)
 
-    with patch.multiple(
-        "newsroom.config.settings",
-        editorial_enabled=True,
-        editorial_fallback_enabled=True,
-    ), patch("newsroom.editorial.orchestrator.select_provider", return_value=fake_provider), \
-            patch("newsroom.editorial.orchestrator.build_evidence_set", return_value=evidence):
+    with (
+        patch.multiple(
+            "newsroom.config.settings",
+            editorial_enabled=True,
+            editorial_fallback_enabled=True,
+        ),
+        patch("newsroom.editorial.orchestrator.select_provider", return_value=fake_provider),
+        patch("newsroom.editorial.orchestrator.build_evidence_set", return_value=evidence),
+    ):
         mock_db = MagicMock()
         content, attempt = generate_editorial(mock_db, [1], "scheduled", cache_check=False)
         assert attempt.fallback_used
@@ -735,7 +747,10 @@ def test_provider_outage_triggers_fallback():
 def test_grounding_scrub_keeps_nonempty_ai_reader_copy():
     """Unsafe internal claims do not discard a complete grounded AI digest."""
     evidence = make_evidence_set([1])
-    output = make_output(evidence, claim_text_override="\u0627\u062f\u0639\u0627\u06cc \u062a\u0623\u06cc\u06cc\u062f\u0646\u0634\u062f\u0647 \u0628\u0627 \u0639\u062f\u062f \u06f9\u06f9\u06f9\u06f9")
+    output = make_output(
+        evidence,
+        claim_text_override="\u0627\u062f\u0639\u0627\u06cc \u062a\u0623\u06cc\u06cc\u062f\u0646\u0634\u062f\u0647 \u0628\u0627 \u0639\u062f\u062f \u06f9\u06f9\u06f9\u06f9",
+    )
     fake_response = EditorialResponse(output=output, model="fake-model", provider="fake")
     fake_provider = FakeProvider(name="fake", response=fake_response)
 
@@ -766,12 +781,15 @@ def test_router_internal_fallback_is_recorded_truthfully():
     fallback.fallback_used = True
     router = FakeProvider(name="multi_provider_router", response=fallback)
 
-    with patch.multiple(
-        "newsroom.config.settings",
-        editorial_enabled=True,
-        editorial_fallback_enabled=True,
-    ), patch("newsroom.editorial.orchestrator.select_provider", return_value=router), \
-            patch("newsroom.editorial.orchestrator.build_evidence_set", return_value=evidence):
+    with (
+        patch.multiple(
+            "newsroom.config.settings",
+            editorial_enabled=True,
+            editorial_fallback_enabled=True,
+        ),
+        patch("newsroom.editorial.orchestrator.select_provider", return_value=router),
+        patch("newsroom.editorial.orchestrator.build_evidence_set", return_value=evidence),
+    ):
         _, attempt = generate_editorial(MagicMock(), [1], "scheduled", cache_check=False)
 
     assert attempt.provider == "deterministic"
@@ -789,12 +807,15 @@ def test_safety_refusal_triggers_fallback():
     )
     fake_provider = FakeProvider(error=error)
 
-    with patch.multiple(
-        "newsroom.config.settings",
-        editorial_enabled=True,
-        editorial_fallback_enabled=True,
-    ), patch("newsroom.editorial.orchestrator.select_provider", return_value=fake_provider), \
-            patch("newsroom.editorial.orchestrator.build_evidence_set", return_value=evidence):
+    with (
+        patch.multiple(
+            "newsroom.config.settings",
+            editorial_enabled=True,
+            editorial_fallback_enabled=True,
+        ),
+        patch("newsroom.editorial.orchestrator.select_provider", return_value=fake_provider),
+        patch("newsroom.editorial.orchestrator.build_evidence_set", return_value=evidence),
+    ):
         mock_db = MagicMock()
         content, attempt = generate_editorial(mock_db, [1], "scheduled", cache_check=False)
         assert attempt.fallback_used
@@ -822,12 +843,15 @@ def test_malformed_structured_response_triggers_fallback():
     )
     fake_provider = FakeProvider(response=fake_response)
 
-    with patch.multiple(
-        "newsroom.config.settings",
-        editorial_enabled=True,
-        editorial_fallback_enabled=True,
-    ), patch("newsroom.editorial.orchestrator.select_provider", return_value=fake_provider), \
-            patch("newsroom.editorial.orchestrator.build_evidence_set", return_value=evidence):
+    with (
+        patch.multiple(
+            "newsroom.config.settings",
+            editorial_enabled=True,
+            editorial_fallback_enabled=True,
+        ),
+        patch("newsroom.editorial.orchestrator.select_provider", return_value=fake_provider),
+        patch("newsroom.editorial.orchestrator.build_evidence_set", return_value=evidence),
+    ):
         mock_db = MagicMock()
         content, attempt = generate_editorial(mock_db, [1], "scheduled", cache_check=False)
         assert attempt.fallback_used or attempt.status == "fallback"
@@ -941,7 +965,7 @@ def test_persian_unicode_in_output():
     headline = response.output.stories[0].headline_fa
     summary = response.output.stories[0].summary_fa
     # Should contain Persian characters
-    assert any("\u0600" <= c <= "\u06FF" for c in headline + summary)
+    assert any("\u0600" <= c <= "\u06ff" for c in headline + summary)
 
 
 def test_rtl_content_preserved():
@@ -964,6 +988,7 @@ def test_report_content_telegram_safe():
 
     from newsroom.delivery.render import render_report_html
     from newsroom.editorial.orchestrator import _render_persian_report
+
     content = _render_persian_report(response.output, "scheduled")
     chunks = render_report_html(content)
 
@@ -1003,14 +1028,19 @@ def test_presentation_repairs_detached_persian_letter_and_promotes_top_news():
     from newsroom.editorial.orchestrator import _render_persian_report
 
     output = make_output(make_evidence_set([1, 2, 3, 4, 5]))
-    output.stories[0].headline_fa = "\u0627\u0646\u062a \u0627\u0646\u062a\u0634\u0627\u0631 \u0646\u0633\u062e\u0647 \u062c\u062f\u06cc\u062f \u06a9\u062a\u0627\u0628\u062e\u0627\u0646\u0647"
+    output.stories[
+        0
+    ].headline_fa = "\u0627\u0646\u062a \u0627\u0646\u062a\u0634\u0627\u0631 \u0646\u0633\u062e\u0647 \u062c\u062f\u06cc\u062f \u06a9\u062a\u0627\u0628\u062e\u0627\u0646\u0647"
     for story in output.stories:
         story.suggested_priority = "medium"
 
     content = _render_persian_report(output, "platform_telegram")
 
     assert "\u0627\u0646\u062a \u0627\u0646\u062a\u0634\u0627\u0631" not in content
-    assert "\u0627\u0646\u062a\u0634\u0627\u0631 \u0646\u0633\u062e\u0647 \u062c\u062f\u06cc\u062f \u06a9\u062a\u0627\u0628\u062e\u0627\u0646\u0647" in content
+    assert (
+        "\u0627\u0646\u062a\u0634\u0627\u0631 \u0646\u0633\u062e\u0647 \u062c\u062f\u06cc\u062f \u06a9\u062a\u0627\u0628\u062e\u0627\u0646\u0647"
+        in content
+    )
     assert "🔥 \u062e\u0628\u0631\u0647\u0627\u06cc \u0645\u0647\u0645" in content
 
 
@@ -1018,8 +1048,8 @@ def test_prompt_requests_only_reader_facing_persian_copy():
     """The model contract asks for a Persian title and concise summary, not boilerplate."""
     system_prompt = build_prompt(make_evidence_set())[0]["content"]
 
-    assert '"headline_fa"' in system_prompt
-    assert '"summary_fa"' in system_prompt
+    assert '"headline"' in system_prompt
+    assert '"summary"' in system_prompt
     assert '"why_it_matters_fa"' not in system_prompt
     assert '"practical_impact_fa"' not in system_prompt
     assert "\u0686\u0631\u0627 \u0645\u0647\u0645 \u0627\u0633\u062a" not in system_prompt
@@ -1033,14 +1063,12 @@ def test_prompt_requires_copy_for_each_selected_story_id():
     assert "[1, 2, 3]" in messages[1]["content"]
 
 
-def test_platform_prompt_requires_source_exclusivity_and_programming_focus():
-    messages = build_prompt(
-        make_evidence_set([1], report_mode="platform_telegram")
-    )
+def test_platform_prompt_requires_source_exclusivity_and_digest_focus():
+    messages = build_prompt(make_evidence_set([1], report_mode="platform_telegram"))
 
-    assert "programming newsroom report" in messages[1]["content"]
+    assert "operator-defined subject" in messages[1]["content"]
     assert "only evidence from the requested platform" in messages[1]["content"]
-    assert "free APIs" in messages[1]["content"]
+    assert "News selected by the operator" in messages[1]["content"]
 
 
 def test_reduction_keeps_a_bounded_telegram_presence():
@@ -1089,7 +1117,9 @@ def test_semantic_schema_failure_can_use_router_repair():
             assert response is original
             return SimpleNamespace(response=repaired)
 
-    result = _repair_semantic_schema(RepairingRouter(), EditorialRequest(evidence=evidence), original)
+    result = _repair_semantic_schema(
+        RepairingRouter(), EditorialRequest(evidence=evidence), original
+    )
 
     assert result is repaired
     assert result.provider == "mistral"
@@ -1170,9 +1200,13 @@ def test_fallback_not_labeled_as_ai():
     response = provider.generate(request)
 
     from newsroom.editorial.orchestrator import _render_persian_report
+
     content = _render_persian_report(response.output, "scheduled")
     # Should not say "AI-generated" for deterministic
-    assert "\u0647\u0648\u0634 \u0645\u0635\u0646\u0648\u0639\u06cc" not in content or "\u0633\u06cc\u0633\u062a\u0645 \u062e\u0628\u0631\u062e\u0648\u0627\u0646" in content
+    assert (
+        "\u0647\u0648\u0634 \u0645\u0635\u0646\u0648\u0639\u06cc" not in content
+        or "\u0633\u06cc\u0633\u062a\u0645 \u062e\u0628\u0631\u062e\u0648\u0627\u0646" in content
+    )
 
 
 # ── 38. Source trust not changed by source content ────────────────

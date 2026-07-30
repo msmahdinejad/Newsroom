@@ -81,17 +81,17 @@ def db(engine):
     if ar_story_ids:
         # Find reports whose story_ids JSONB array contains any AR story ID.
         # story_ids is a JSONB list of integers; cast to text for comparison.
-        all_reports = session.execute(
-            text("SELECT id, story_ids FROM reports")
-        ).fetchall()
+        all_reports = session.execute(text("SELECT id, story_ids FROM reports")).fetchall()
         ar_report_ids = []
         for rid, sids in all_reports:
             if sids and any(sid in ar_story_ids for sid in sids):
                 ar_report_ids.append(rid)
         if ar_report_ids:
             session.execute(
-                text("DELETE FROM delivery_chunks WHERE delivery_id IN ("
-                     "SELECT id FROM deliveries WHERE report_id = ANY(:rids))"),
+                text(
+                    "DELETE FROM delivery_chunks WHERE delivery_id IN ("
+                    "SELECT id FROM deliveries WHERE report_id = ANY(:rids))"
+                ),
                 {"rids": ar_report_ids},
             )
             session.execute(
@@ -167,11 +167,13 @@ def test_alembic_at_gate5_revision(engine):
     assert row[0] in (
         "0007_gate5_agent_reach",
         "0008_gate5x_x_ingestion",
-            "0009_gate6_source_inventory",
-            "0010_gate6_router_reliability",
-            "0011_gate7_identity_privacy",
-            "0012_owner_control_plane",
-        )
+        "0009_gate6_source_inventory",
+        "0010_gate6_router_reliability",
+        "0011_gate7_identity_privacy",
+        "0012_owner_control_plane",
+        "0013_digest_definitions",
+        "0014_source_discovery",
+    )
 
 
 # ── 2. Agent-Reach source registration ─────────────────────────
@@ -248,10 +250,14 @@ def test_backend_state_channel_unique(db):
     """Each channel has at most one backend state row."""
     from newsroom.storage.models import AgentReachBackendState
 
-    state1 = AgentReachBackendState(channel="youtube", pinned_version="1.5.0", selected_backend="yt-dlp")
+    state1 = AgentReachBackendState(
+        channel="youtube", pinned_version="1.5.0", selected_backend="yt-dlp"
+    )
     db.add(state1)
     db.commit()
-    state2 = AgentReachBackendState(channel="youtube", pinned_version="1.5.0", selected_backend="yt-dlp")
+    state2 = AgentReachBackendState(
+        channel="youtube", pinned_version="1.5.0", selected_backend="yt-dlp"
+    )
     db.add(state2)
     with pytest.raises(Exception):  # noqa: B017 — intentional: assert the unique constraint
         db.commit()
@@ -336,7 +342,12 @@ def test_duplicate_video_id_prevented_by_content_hash(db):
     content_hash = hashlib.sha256(f"yt:vid123456789:UC{'x' * 22}".encode()).hexdigest()
     item1 = RawItem(
         source_id=src.id,
-        raw_data={"type": "youtube", "video_id": "vid123456789", "channel_id": "UC" + "x" * 22, "title": "v1"},
+        raw_data={
+            "type": "youtube",
+            "video_id": "vid123456789",
+            "channel_id": "UC" + "x" * 22,
+            "title": "v1",
+        },
         content_hash=content_hash,
     )
     db.add(item1)
@@ -470,7 +481,12 @@ def test_item_edit_updates_existing_raw_item(db):
     content_hash = hashlib.sha256(f"yt:v1:UC{'x' * 22}".encode()).hexdigest()
     item = RawItem(
         source_id=src.id,
-        raw_data={"type": "youtube", "video_id": "v1", "channel_id": "UC" + "x" * 22, "title": "old"},
+        raw_data={
+            "type": "youtube",
+            "video_id": "v1",
+            "channel_id": "UC" + "x" * 22,
+            "title": "old",
+        },
         content_hash=content_hash,
     )
     db.add(item)
@@ -479,7 +495,12 @@ def test_item_edit_updates_existing_raw_item(db):
     # Simulate an edit: same video_id, new title. In the pipeline, this would
     # update the existing row's raw_data. We simulate that update here.
     found = db.query(RawItem).filter_by(source_id=src.id, content_hash=content_hash).first()
-    found.raw_data = {"type": "youtube", "video_id": "v1", "channel_id": "UC" + "x" * 22, "title": "new"}
+    found.raw_data = {
+        "type": "youtube",
+        "video_id": "v1",
+        "channel_id": "UC" + "x" * 22,
+        "title": "new",
+    }
     db.commit()
 
     again = db.query(RawItem).filter_by(source_id=src.id, content_hash=content_hash).first()
@@ -734,12 +755,16 @@ def test_transaction_rollback_on_failure(db):
     """If an insert fails, the transaction rolls back and no partial state is left."""
     from newsroom.storage.models import AgentReachBackendState
 
-    state = AgentReachBackendState(channel="youtube", pinned_version="1.5.0", selected_backend="yt-dlp")
+    state = AgentReachBackendState(
+        channel="youtube", pinned_version="1.5.0", selected_backend="yt-dlp"
+    )
     db.add(state)
     db.commit()
 
     # Now violate the unique constraint on channel
-    dup = AgentReachBackendState(channel="youtube", pinned_version="1.5.0", selected_backend="OpenCLI")
+    dup = AgentReachBackendState(
+        channel="youtube", pinned_version="1.5.0", selected_backend="OpenCLI"
+    )
     db.add(dup)
     with pytest.raises(Exception):  # noqa: B017
         db.commit()

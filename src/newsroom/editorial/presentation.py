@@ -1,4 +1,4 @@
-"""Public Telegram presentation for grounded Persian editorial output.
+"""Public Telegram presentation for grounded localized editorial output.
 
 The editorial schema retains internal evidence and confidence fields for audit,
 but the reader-facing report deliberately exposes only a title, a concise
@@ -8,35 +8,28 @@ summary, and the original source links for each story.
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
+from newsroom.config import settings
 from newsroom.editorial.report_profiles import resolve_report_profile
 from newsroom.editorial.schema import EditorialOutput, StoryEditorialResult
 
 _SEPARATOR = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-_EN_TITLES = {
-    "scheduled": "Programming & Developer Tools",
-    "manual": "Programming & Developer Tools",
-    "manual_new": "New Programming Stories",
-    "manual_comprehensive": "Comprehensive Programming Report",
-    "platform_telegram": "Programming from Telegram",
-    "platform_x": "Programming from X",
-    "platform_web": "Programming from Websites",
-    "platform_github": "GitHub Projects & Releases",
-    "platform_reddit": "Programming from Reddit",
-}
 
 
-def render_persian_report(
+def render_report(
     output: EditorialOutput,
     report_mode: str,
     *,
     now: datetime | None = None,
+    digest_name: str | None = None,
+    timezone: str | None = None,
 ) -> str:
-    """Render an intentionally compact reader-facing Persian Telegram report."""
+    """Render an intentionally compact localized Telegram report."""
     profile = resolve_report_profile(report_mode)
     language = output.metadata.report_language or "fa"
-    rendered_at = now or datetime.now(UTC)
+    rendered_at = now or datetime.now(ZoneInfo(timezone or settings.timezone))
     high = [story for story in output.stories if story.suggested_priority == "high"]
     other = [story for story in output.stories if story.suggested_priority != "high"]
     if not high and other:
@@ -44,9 +37,17 @@ def render_persian_report(
         high = other[:promoted_count]
         other = other[promoted_count:]
 
-    title = _EN_TITLES.get(report_mode, "Programming News") if language == "en" else profile.title_fa
-    important_label = "🔥 Top stories" if language == "en" else "🔥 \u062e\u0628\u0631\u0647\u0627\u06cc \u0645\u0647\u0645"
-    other_label = "📰 More stories" if language == "en" else "📰 \u062e\u0628\u0631\u0647\u0627\u06cc \u062f\u06cc\u06af\u0631"
+    title = digest_name or (profile.title_en if language == "en" else profile.title_fa)
+    important_label = (
+        "🔥 Top stories"
+        if language == "en"
+        else "🔥 \u062e\u0628\u0631\u0647\u0627\u06cc \u0645\u0647\u0645"
+    )
+    other_label = (
+        "📰 More stories"
+        if language == "en"
+        else "📰 \u062e\u0628\u0631\u0647\u0627\u06cc \u062f\u06cc\u06af\u0631"
+    )
     lines = [
         f"📰 {title}",
         f"📅 {rendered_at.strftime('%Y-%m-%d')}",
@@ -63,9 +64,27 @@ def render_persian_report(
     return "\n\n".join(lines)
 
 
+def render_persian_report(
+    output: EditorialOutput,
+    report_mode: str,
+    *,
+    now: datetime | None = None,
+    digest_name: str | None = None,
+    timezone: str | None = None,
+) -> str:
+    """Compatibility adapter for integrations using the pre-v4 name."""
+    return render_report(
+        output,
+        report_mode,
+        now=now,
+        digest_name=digest_name,
+        timezone=timezone,
+    )
+
+
 def _render_story(story: StoryEditorialResult) -> str:
     """Keep one story and its links together for Telegram semantic chunking."""
-    lines = [f"🔹 {_compact(story.headline_fa)}", _compact(story.summary_fa)]
+    lines = [f"🔹 {_compact(story.headline)}", _compact(story.summary)]
     links = _unique_links(story.source_links)
     lines.extend(f"🔗 {link}" for link in links[:3])
     return "\n".join(line for line in lines if line)

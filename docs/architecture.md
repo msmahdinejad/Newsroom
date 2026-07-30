@@ -7,7 +7,7 @@ cursor, report, quota, or delivery state.
 ## Data flow
 
 ```text
-source registry
+closed source registry + named digest definitions
       |
       v
 bounded collectors -> raw items + cursors + source health
@@ -27,7 +27,7 @@ normalize -> deduplicate -> cluster -> rank -> evidence
 
 ## Modules and interfaces
 
-- `control` owns operator preferences and source lifecycle. Callers do not
+- `control` owns named digest definitions and source lifecycle. Callers do not
   know CSV/XLSX details or source-state invariants.
 - `sources` owns external collection adapters, request bounds, cursor formats,
   and safe failure categories.
@@ -48,7 +48,8 @@ network I/O; deterministic fakes exercise the same interfaces in tests.
 - A source has a stable identity independent of its display name.
 - A collected item is unique within its source identity.
 - Cursor advancement and item persistence share a transaction boundary.
-- An editorial artifact records the provider and model that produced it.
+- A report and every editorial artifact record their digest, provider, and
+  model lineage.
 - Provider changes reuse accepted artifacts and retry only the failed stage.
 - A report is delivered at most once per idempotency boundary.
 - Scheduled delivery advances only after every Telegram chunk is persisted.
@@ -63,10 +64,26 @@ network I/O; deterministic fakes exercise the same interfaces in tests.
 | `telegram-ingestor` | Telethon MTProto channel ingestion |
 | `agent-reach-worker` | Isolated authenticated social collection |
 | `report-worker` | Background processing |
-| `scheduler` | Tehran cron jobs and scheduled pipeline ownership |
+| `scheduler` | Digest-local cron jobs and scheduled pipeline ownership |
 | `telegram-bot` | Owner commands and manual report requests |
 | `migrate` | One-shot schema migration before dependent workers start |
 
 All application containers run without root privileges. The social worker does
 not receive Telegram sessions or editorial provider files. Provider files are
 mounted read-only only into processes that generate reports.
+
+## Deliberate extension boundaries
+
+The platform registry is code-owned: operators may add Telegram, X, Reddit,
+GitHub, website, or feed sources, but imported data cannot introduce executable
+adapter types. New platform adapters therefore require reviewed code.
+
+Digest definitions are data-owned and intentionally flexible. A digest carries
+its topic brief, include/exclude terms, source membership, output language,
+timezone, story budget, and schedule. The scheduler and pipeline receive an
+immutable digest projection, avoiding process-environment mutation.
+
+Editorial providers are protocol-owned. OpenAI-compatible, Gemini-native, and
+Anthropic-native adapters translate one internal request contract into provider
+wire formats. Provider names and exact model IDs are local configuration; route
+validation is the production admission boundary.

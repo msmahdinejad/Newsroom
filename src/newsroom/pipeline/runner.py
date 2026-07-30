@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -29,12 +30,32 @@ EXIT_BUSY = 2
 EXIT_ERROR = 1
 
 
+@dataclass(frozen=True)
+class PipelineRequest:
+    """Immutable invocation context; environment variables are only an adapter."""
+
+    job_id: str = ""
+    report_mode: str = "scheduled"
+    schedule_label: str = ""
+    digest_slug: str = "default"
+    skip_collect: bool = False
+
+    @classmethod
+    def from_environment(cls) -> PipelineRequest:
+        return cls(
+            job_id=os.environ.get("NEWSROOM_JOB_ID", ""),
+            report_mode=os.environ.get("NEWSROOM_REPORT_MODE", "scheduled"),
+            schedule_label=os.environ.get("NEWSROOM_SCHEDULE_LABEL", ""),
+            digest_slug=os.environ.get("NEWSROOM_DIGEST_SLUG", "default"),
+            skip_collect=os.environ.get("NEWSROOM_SKIP_COLLECT", "").lower()
+            in ("1", "true", "yes", "on"),
+        )
+
+
 def generation_method_for_attempt(attempt: Any) -> str:
     """Truthful report label: any deterministic fallback is not an AI success."""
     used_ai = (
-        attempt.provider != "deterministic"
-        and attempt.status == "ok"
-        and not attempt.fallback_used
+        attempt.provider != "deterministic" and attempt.status == "ok" and not attempt.fallback_used
     )
     return "ai" if used_ai else "deterministic"
 
@@ -51,13 +72,14 @@ def report_story_ids_for_attempt(selected_story_ids: list[int], attempt: Any) ->
     if not output_stories:
         return selected_story_ids
     selected = set(selected_story_ids)
-    return list(dict.fromkeys(story.story_id for story in output_stories if story.story_id in selected))
+    return list(
+        dict.fromkeys(story.story_id for story in output_stories if story.story_id in selected)
+    )
 
 
-def _correlation_id() -> str:
-    env = os.environ.get("NEWSROOM_JOB_ID")
-    if env:
-        return env
+def _correlation_id(request: PipelineRequest) -> str:
+    if request.job_id:
+        return request.job_id
     return f"manual_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
 
@@ -94,7 +116,7 @@ def _completed_scheduled_run(
     job_id: str,
     schedule_label: str,
 ) -> JobRun | None:
-    """Return a fully delivered run for the same durable Tehran boundary."""
+    """Return a fully delivered run for the same durable digest boundary."""
     if not schedule_label:
         return None
     existing = (
@@ -116,7 +138,13 @@ def _completed_scheduled_run(
     return existing
 
 
-async def _deliver(session: Session, report_id: int) -> int | None:
+async def _deliver(
+    session: Session,
+    report_id: int,
+    *,
+    scheduled: bool,
+    digest_slug: str,
+) -> int | None:
     from newsroom.config import settings
     from newsroom.delivery.telegram import SCHEDULED_CURSOR_KEY, TelegramDelivery
 
@@ -129,8 +157,12 @@ async def _deliver(session: Session, report_id: int) -> int | None:
         # Scheduled runs advance the delivery cursor on confirmed delivery.
         # Manual runs do not advance the scheduled cursor.
         cursor_key = None
-        if os.environ.get("NEWSROOM_SCHEDULE_LABEL"):
-            cursor_key = SCHEDULED_CURSOR_KEY
+        if scheduled:
+            cursor_key = (
+                SCHEDULED_CURSOR_KEY
+                if digest_slug == "default"
+                else f"{SCHEDULED_CURSOR_KEY}:{digest_slug}"
+            )
         delivery_id = await td.deliver_report(session, report_id, cursor_key=cursor_key)
         if delivery_id is None:
             return None
@@ -149,7 +181,11 @@ async def _deliver(session: Session, report_id: int) -> int | None:
         await td.close()
 
 
-async def _run_async(result: dict[str, Any], session: Session) -> None:
+async def _run_async(
+    result: dict[str, Any],
+    session: Session,
+    request: PipelineRequest,
+) -> None:
     def stage(name: str, status: str, detail: str = "") -> None:
         entry = {
             "name": name,
@@ -160,7 +196,7 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
         result["stages"].append(entry)
         _emit({"stage": name, "status": status, "detail": detail})
 
-    skip_collect = os.environ.get("NEWSROOM_SKIP_COLLECT", "").lower() in ("1", "true", "yes", "on")
+    skip_collect = request.skip_collect
 
     if skip_collect:
         stage("collect", "skipped", "NEWSROOM_SKIP_COLLECT set")
@@ -217,25 +253,27 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
 
     report_mode = result["report_mode"]
     report_profile = resolve_report_profile(report_mode)
-    control = NewsroomControl(session).settings()
+    control_plane = NewsroomControl(session)
+    digest = control_plane.digests.get(request.digest_slug)
+    result["digest_id"] = digest.id
     uses_owner_defaults = report_mode in {
         "scheduled",
         "manual",
         "manual_new",
         "manual_comprehensive",
     }
-    report_story_count = (
-        control.report_story_count if uses_owner_defaults else report_profile.max_stories
-    )
-    selected_source_types = (
-        control.report_source_types if uses_owner_defaults else None
-    )
-    report_language = control.report_language
+    report_story_count = digest.max_stories if uses_owner_defaults else report_profile.max_stories
+    selected_source_types = digest.source_types
+    report_language = digest.output_language
     selection = select_stories_for_report(
         session,
         report_mode,
         max_stories=report_story_count,
         source_types=selected_source_types,
+        source_ids=digest.source_ids,
+        interest=digest.interest,
+        minimum_telegram_stories=(digest.minimum_telegram_stories if uses_owner_defaults else None),
+        digest_slug=digest.slug,
     )
     story_ids = selection.story_ids
 
@@ -250,7 +288,11 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
         stage("evidence", "skipped", "no selected stories")
 
     if not story_ids or selection.no_new_items:
-        stage("report", "skipped", f"no new items (excluded {selection.excluded_as_delivered} delivered)")
+        stage(
+            "report",
+            "skipped",
+            f"no new items (excluded {selection.excluded_as_delivered} delivered)",
+        )
         result["status"] = "ok_empty"
         result["no_new_items"] = True
         result["selection_stats"] = {
@@ -264,12 +306,19 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
         # the scheduled cursor — with ZERO editorial provider calls.
         from newsroom.editorial.orchestrator import _empty_report
 
-        notice = _empty_report(report_mode, report_language)
+        notice = _empty_report(
+            report_mode,
+            report_language,
+            digest_name=digest.name,
+            timezone=digest.timezone,
+        )
         report = Report(
             content_fa=notice,
             story_ids=[],
             report_mode=report_mode,
             generation_method="none",
+            digest_id=digest.id,
+            digest_slug=digest.slug,
         )
         session.add(report)
         session.flush()
@@ -277,7 +326,12 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
         result["no_news_notice"] = True
         stage("report", "ok", f"no-news notice {report.id} (zero provider calls)")
         stage("deliver", "starting")
-        delivery_id = await _deliver(session, report.id)
+        delivery_id = await _deliver(
+            session,
+            report.id,
+            scheduled=bool(request.schedule_label),
+            digest_slug=digest.slug,
+        )
         if delivery_id:
             result["delivery_id"] = delivery_id
             stage("deliver", "ok", f"no-news notice delivery {delivery_id}")
@@ -298,6 +352,7 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
             report_mode,
             job_id=result["job_id"],
             report_language=report_language,
+            digest=digest,
         )
         content = hier_result.content
         editorial_attempt = hier_result.attempt
@@ -315,6 +370,7 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
             report_mode,
             job_id=result["job_id"],
             report_language=report_language,
+            digest=digest,
         )
 
     existing_report_id = (
@@ -328,6 +384,8 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
             story_ids=report_story_ids_for_attempt(story_ids, editorial_attempt),
             report_mode=report_mode,
             generation_method=generation_method_for_attempt(editorial_attempt),
+            digest_id=digest.id,
+            digest_slug=digest.slug,
         )
         session.add(resumed_report)
         session.flush()
@@ -384,7 +442,11 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
     if existing_attempt is None:
         persist_attempt(session, editorial_attempt, report.id, cache_key)
 
-    stage("report", "ok", f"report {report.id} ({editorial_attempt.provider}:{editorial_attempt.status})")
+    stage(
+        "report",
+        "ok",
+        f"report {report.id} ({editorial_attempt.provider}:{editorial_attempt.status})",
+    )
     result["selection_stats"] = {
         "total_candidates": selection.total_candidates,
         "excluded_as_delivered": selection.excluded_as_delivered,
@@ -400,7 +462,12 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
         return
 
     stage("deliver", "starting")
-    delivery_id = await _deliver(session, report.id)
+    delivery_id = await _deliver(
+        session,
+        report.id,
+        scheduled=bool(request.schedule_label),
+        digest_slug=digest.slug,
+    )
     if delivery_id:
         result["delivery_id"] = delivery_id
         stage("deliver", "ok", f"delivery {delivery_id}")
@@ -410,14 +477,21 @@ async def _run_async(result: dict[str, Any], session: Session) -> None:
     result["status"] = "ok"
 
 
-def run_pipeline(*, blocking_lock: bool = False) -> dict[str, Any]:
+def run_pipeline(
+    *,
+    blocking_lock: bool = False,
+    request: PipelineRequest | None = None,
+) -> dict[str, Any]:
     """Run full pipeline under cross-process advisory lock. Sync entrypoint."""
     setup_logging()
-    job_id = _correlation_id()
+    request = request or PipelineRequest.from_environment()
+    job_id = _correlation_id(request)
     result: dict[str, Any] = {
         "job_id": job_id,
-        "report_mode": os.environ.get("NEWSROOM_REPORT_MODE", "scheduled"),
-        "schedule_label": os.environ.get("NEWSROOM_SCHEDULE_LABEL", ""),
+        "report_mode": request.report_mode,
+        "schedule_label": request.schedule_label,
+        "digest_slug": request.digest_slug,
+        "digest_id": None,
         "start_time": datetime.now(UTC).isoformat(),
         "stages": [],
         "status": "running",
@@ -449,6 +523,7 @@ def run_pipeline(*, blocking_lock: bool = False) -> dict[str, Any]:
                 job_type="scheduled" if result["schedule_label"] else "manual",
                 job_id=job_id,
                 trigger="scheduled" if result["schedule_label"] else "manual",
+                digest_slug=request.digest_slug,
                 stage="starting",
                 status="running",
                 stages_log=[],
@@ -458,15 +533,19 @@ def run_pipeline(*, blocking_lock: bool = False) -> dict[str, Any]:
                 session.commit()
                 run_pk = job_run.id
 
-                asyncio.run(_run_async(result, session))
+                asyncio.run(_run_async(result, session, request))
 
                 updated = session.get(JobRun, run_pk)
                 if updated is not None:
-                    updated.status = "ok" if result["status"] in ("ok", "ok_empty") else result["status"]
+                    updated.status = (
+                        "ok" if result["status"] in ("ok", "ok_empty") else result["status"]
+                    )
                     updated.stage = "complete"
                     updated.finished_at = datetime.now(UTC)
                     updated.report_id = result.get("report_id")
                     updated.delivery_id = result.get("delivery_id")
+                    updated.digest_id = result.get("digest_id")
+                    updated.digest_slug = request.digest_slug
                     updated.stages_log = result["stages"]
                     updated.error_detail = result.get("error")
                     session.commit()

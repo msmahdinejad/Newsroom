@@ -48,9 +48,13 @@ Supported types:
 - `web_page`
 - `github_releases`
 - `reddit_subreddit`
-- `youtube_rss`
 - `telegram`
 - `x_timeline`
+
+These types map to the five code-owned platforms: Telegram, X, Reddit, GitHub,
+and websites. Imported files cannot register new executable adapter types.
+Older installations may retain legacy collectable types, but new user imports
+cannot create them.
 
 Imports are bounded to 5 MiB and 2,000 rows. URLs are normalized and validated.
 Source files must never contain cookies, tokens, headers, or proxy credentials.
@@ -59,6 +63,10 @@ Source files must never contain cookies, tokens, headers, or proxy credentials.
 
 ```bash
 uv run newsroom sources list --enabled all
+uv run newsroom sources add \
+  --name "Example channel" \
+  --type telegram \
+  --url https://t.me/example_channel
 uv run newsroom sources list --type telegram
 uv run newsroom sources enable 42
 uv run newsroom sources disable 42
@@ -72,3 +80,12 @@ The optional extended inventory workbook remains available through
 `inventory-import`, `inventory-activate`, `inventory-reconcile`, and
 `inventory-status`. It is intended for operators who need row-for-row
 accounting of a large private inventory.
+
+## Grounded discovery
+
+Gemini Search can propose bounded candidates for the same five supported
+platforms. Suggestions are normalized, checked against private-network
+targets, probed with bounded public requests, and stored as pending candidates.
+They do not become active sources until an operator approves them.
+
+See [source discovery](source-discovery.md).

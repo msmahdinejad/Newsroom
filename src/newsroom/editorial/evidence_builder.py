@@ -12,8 +12,10 @@ import hashlib
 from sqlalchemy.orm import Session
 
 from newsroom.config import settings
+from newsroom.control.digests import InterestPolicy
 from newsroom.editorial.report_profiles import (
-    is_programming_material,
+    DEFAULT_INTEREST_POLICY,
+    is_interest_material,
     is_usable_editorial_material,
     resolve_report_profile,
 )
@@ -45,6 +47,11 @@ def build_evidence_set(
     *,
     max_stories: int | None = None,
     report_language: str = "fa",
+    digest_slug: str = "default",
+    digest_name: str = "News digest",
+    interest: InterestPolicy = DEFAULT_INTEREST_POLICY,
+    source_types: tuple[str, ...] | None = None,
+    source_ids: tuple[int, ...] | None = None,
 ) -> EditorialEvidenceSet:
     """Build a bounded evidence set from persisted stories.
 
@@ -52,6 +59,15 @@ def build_evidence_set(
     per story, max excerpt length.
     """
     profile = resolve_report_profile(report_mode)
+    configured_types = frozenset(source_types) if source_types else None
+    selected_types = (
+        profile.source_types
+        if configured_types is None
+        else configured_types
+        if profile.source_types is None
+        else configured_types.intersection(profile.source_types)
+    )
+    selected_source_ids = frozenset(source_ids) if source_ids else None
     max_stories = max_stories or settings.editorial_max_stories_per_call
     max_evidence = settings.editorial_max_evidence_per_story
     max_excerpt = settings.editorial_max_excerpt_length
@@ -79,28 +95,28 @@ def build_evidence_set(
                 Source.enabled.is_(True),
             )
         )
-        if profile.source_types is not None:
-            item_query = item_query.filter(Source.type.in_(profile.source_types))
-        candidate_items = item_query.order_by(
-            NormalizedItem.published_at.desc()
-        ).all()
-        if profile.programming_only:
-            candidate_items = [
-                item
-                for item in candidate_items
-                if item.raw_item
-                and item.raw_item.source
-                and is_usable_editorial_material(
-                    title=item.title,
-                    description=item.description or "",
-                )
-                and is_programming_material(
-                    source_type=item.raw_item.source.type,
-                    category=item.raw_item.source.category or "",
-                    title=item.title,
-                    description=item.description or "",
-                )
-            ]
+        if selected_types is not None:
+            item_query = item_query.filter(Source.type.in_(selected_types))
+        if selected_source_ids is not None:
+            item_query = item_query.filter(Source.id.in_(selected_source_ids))
+        candidate_items = item_query.order_by(NormalizedItem.published_at.desc()).all()
+        candidate_items = [
+            item
+            for item in candidate_items
+            if item.raw_item
+            and item.raw_item.source
+            and is_usable_editorial_material(
+                title=item.title,
+                description=item.description or "",
+            )
+            and is_interest_material(
+                interest=interest,
+                source_type=item.raw_item.source.type,
+                category=item.raw_item.source.category or "",
+                title=item.title,
+                description=item.description or "",
+            )
+        ]
         items = candidate_items[:max_evidence]
 
         sources: list[EvidenceSourceItem] = []
@@ -153,6 +169,12 @@ def build_evidence_set(
                 )
             )
 
+        # Selection and evidence construction share the same scope, but source
+        # state can change between their transaction boundaries. Never send a
+        # story without in-scope evidence to an editorial provider.
+        if not sources:
+            continue
+
         # Get latest evidence packet for facts/contradictions
         ev = db.query(Evidence).filter_by(story_id=story.id).order_by(Evidence.id.desc()).first()
         facts = ev.packet.get("facts", []) if ev and ev.packet else []
@@ -185,6 +207,11 @@ def build_evidence_set(
         prompt_version=SYSTEM_PROMPT_VERSION,
         report_mode=report_mode,
         report_language=report_language,
+        digest_slug=digest_slug,
+        digest_name=digest_name,
+        topic_brief=interest.topic_brief,
+        include_terms=list(interest.include_terms),
+        exclude_terms=list(interest.exclude_terms),
         stories=story_packets,
     )
 
