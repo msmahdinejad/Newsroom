@@ -110,6 +110,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - name: Verify lockfile matches project metadata
+        run: uv lock --check
       - name: Install locked production environment
         run: uv sync --frozen --extra telegram --extra external-sources
       - name: Seed pip for the audit action
