@@ -82,13 +82,19 @@ class DeterministicEditorialProvider(EditorialProvider):
                     KeyClaim(
                         claim_text=fact,
                         supporting_evidence_refs=supporting,
-                        support_status=ClaimStatus.SUPPORTED if supporting else ClaimStatus.UNVERIFIED,
+                        support_status=ClaimStatus.SUPPORTED
+                        if supporting
+                        else ClaimStatus.UNVERIFIED,
                         confidence=story_pkt.confidence,
                     )
                 )
 
             # Persian headline — use story headline if Persian, else render from sources
-            headline_fa = story_pkt.headline if _is_persian(story_pkt.headline) else _render_fa_headline(story_pkt)
+            headline_fa = (
+                story_pkt.headline
+                if _is_persian(story_pkt.headline)
+                else _render_fa_headline(story_pkt)
+            )
 
             summary_fa = _render_fa_summary(story_pkt)
             why_it_matters = _render_why_it_matters(story_pkt)
@@ -99,8 +105,8 @@ class DeterministicEditorialProvider(EditorialProvider):
             story_results.append(
                 StoryEditorialResult(
                     story_id=story_pkt.story_id,
-                    headline_fa=headline_fa,
-                    summary_fa=summary_fa,
+                    headline=headline_fa,
+                    summary=summary_fa,
                     why_it_matters_fa=why_it_matters,
                     practical_impact_fa=practical_impact,
                     target_audience="developers",
@@ -147,13 +153,15 @@ class DeterministicEditorialProvider(EditorialProvider):
 def request_max_refs(request: EditorialRequest) -> int:
     """Max evidence refs per story from request constraints."""
     # ponytail: simpler to cap at evidence count than track separate limit
-    return max(1, min(10, len(request.evidence.stories[0].sources) if request.evidence.stories else 0))
+    return max(
+        1, min(10, len(request.evidence.stories[0].sources) if request.evidence.stories else 0)
+    )
 
 
 def _is_persian(text: str) -> bool:
     if not text:
         return False
-    persian_chars = sum(1 for c in text if "\u0600" <= c <= "\u06FF")
+    persian_chars = sum(1 for c in text if "\u0600" <= c <= "\u06ff")
     return persian_chars > len(text) * 0.15
 
 
@@ -161,7 +169,10 @@ def _render_fa_headline(story: EvidenceStoryPacket) -> str:
     if story.headline:
         return str(story.headline)
     if story.sources:
-        return str(story.sources[0].original_title or "\u062e\u0628\u0631 \u0641\u0646\u0627\u0648\u0631\u06cc")
+        return str(
+            story.sources[0].original_title
+            or "\u062e\u0628\u0631 \u0641\u0646\u0627\u0648\u0631\u06cc"
+        )
     return "\u062e\u0628\u0631 \u0641\u0646\u0627\u0648\u0631\u06cc"
 
 
@@ -170,8 +181,14 @@ def _render_fa_summary(story: EvidenceStoryPacket) -> str:
     if story.facts:
         parts.append(story.facts[0])
     if story.source_count > 1:
-        parts.append(f"\u0627\u06cc\u0646 \u062e\u0628\u0631 \u0627\u0632 {story.source_count} \u0645\u0646\u0628\u0639 \u0645\u0633\u062a\u0642\u0644 \u06af\u0632\u0627\u0631\u0634 \u0634\u062f\u0647 \u0627\u0633\u062a.")
-    return " ".join(parts) if parts else "\u062c\u0632\u0626\u06cc\u0627\u062a \u0628\u06cc\u0634\u062a\u0631 \u062f\u0631 \u0645\u0646\u0627\u0628\u0639."
+        parts.append(
+            f"\u0627\u06cc\u0646 \u062e\u0628\u0631 \u0627\u0632 {story.source_count} \u0645\u0646\u0628\u0639 \u0645\u0633\u062a\u0642\u0644 \u06af\u0632\u0627\u0631\u0634 \u0634\u062f\u0647 \u0627\u0633\u062a."
+        )
+    return (
+        " ".join(parts)
+        if parts
+        else "\u062c\u0632\u0626\u06cc\u0627\u062a \u0628\u06cc\u0634\u062a\u0631 \u062f\u0631 \u0645\u0646\u0627\u0628\u0639."
+    )
 
 
 def _render_why_it_matters(story: EvidenceStoryPacket) -> str:

@@ -4,6 +4,7 @@ Tests: channel persistence, unique identity, username updates, message
 identity constraints, cursor persistence, edit behavior, forward attribution,
 gap records, health states, pipeline processing.
 """
+
 from __future__ import annotations
 
 import os
@@ -35,7 +36,11 @@ def db(engine):
     session.execute(text("DELETE FROM story_items"))
     session.execute(text("DELETE FROM evidence"))
     session.execute(text("DELETE FROM stories"))
-    session.execute(text("DELETE FROM normalized_items WHERE raw_item_id IN (SELECT id FROM raw_items WHERE telegram_channel_id IS NOT NULL)"))
+    session.execute(
+        text(
+            "DELETE FROM normalized_items WHERE raw_item_id IN (SELECT id FROM raw_items WHERE telegram_channel_id IS NOT NULL)"
+        )
+    )
     session.execute(text("DELETE FROM telegram_message_gaps"))
     session.execute(text("DELETE FROM telegram_channels"))
     session.execute(text("DELETE FROM collection_cursors WHERE cursor_key LIKE 'tg_%'"))
@@ -53,8 +58,10 @@ def db(engine):
 def _make_telegram_source(session, name="telegram_test", tg_id=123456, username="testchannel"):
     """Insert a telegram source + telegram_channel row."""
     from newsroom.storage.models import Source, TelegramChannel
+
     src = Source(
-        name=name, type="telegram",
+        name=name,
+        type="telegram",
         url=f"https://t.me/{username}",
         enabled=True,
         config={"channel_username": username, "telegram_channel_id": tg_id},
@@ -63,9 +70,12 @@ def _make_telegram_source(session, name="telegram_test", tg_id=123456, username=
     session.add(src)
     session.flush()
     ch = TelegramChannel(
-        source_id=src.id, telegram_channel_id=tg_id,
-        public_username=username, display_name="Test Channel",
-        source_state="configured", enabled=True,
+        source_id=src.id,
+        telegram_channel_id=tg_id,
+        public_username=username,
+        display_name="Test Channel",
+        source_state="configured",
+        enabled=True,
     )
     session.add(ch)
     session.flush()
@@ -74,11 +84,13 @@ def _make_telegram_source(session, name="telegram_test", tg_id=123456, username=
 
 # ── Schema ───────────────────────────────────────────────────
 
+
 def test_gate3_tables_exist(engine):
     insp = inspect(engine)
     tables = insp.get_table_names()
     assert "telegram_channels" in tables
     assert "telegram_message_gaps" in tables
+
 
 def test_telegram_channels_unique_id(engine):
     insp = inspect(engine)
@@ -86,11 +98,16 @@ def test_telegram_channels_unique_id(engine):
     unique = [i for i in idxs if i["unique"]]
     assert any(i["column_names"] == ["telegram_channel_id"] for i in unique)
 
+
 def test_raw_items_telegram_identity_unique(engine):
     insp = inspect(engine)
     idxs = insp.get_indexes("raw_items")
     unique = [i for i in idxs if i["unique"]]
-    assert any("telegram_channel_id" in i["column_names"] and "telegram_message_id" in i["column_names"] for i in unique)
+    assert any(
+        "telegram_channel_id" in i["column_names"] and "telegram_message_id" in i["column_names"]
+        for i in unique
+    )
+
 
 def test_alembic_at_gate3_revision(engine):
     with engine.connect() as conn:
@@ -103,14 +120,17 @@ def test_alembic_at_gate3_revision(engine):
         "0006_gate4_scalable",
         "0007_gate5_agent_reach",
         "0008_gate5x_x_ingestion",
-            "0009_gate6_source_inventory",
-            "0010_gate6_router_reliability",
-            "0011_gate7_identity_privacy",
-            "0012_owner_control_plane",
-        )
+        "0009_gate6_source_inventory",
+        "0010_gate6_router_reliability",
+        "0011_gate7_identity_privacy",
+        "0012_owner_control_plane",
+        "0013_digest_definitions",
+        "0014_source_discovery",
+    )
 
 
 # ── Channel persistence & identity ───────────────────────────
+
 
 def test_channel_source_persisted(db):
     src, ch = _make_telegram_source(db)
@@ -118,19 +138,24 @@ def test_channel_source_persisted(db):
     assert ch.telegram_channel_id == 123456
     assert ch.public_username == "testchannel"
 
+
 def test_unique_telegram_channel_id(db):
     _make_telegram_source(db, tg_id=100, name="ch1")
     from sqlalchemy.exc import IntegrityError
 
     from newsroom.storage.models import TelegramChannel
+
     dup = TelegramChannel(
-        source_id=999, telegram_channel_id=100,
-        public_username="other", source_state="candidate",
+        source_id=999,
+        telegram_channel_id=100,
+        public_username="other",
+        source_state="candidate",
     )
     db.add(dup)
     with pytest.raises(IntegrityError):
         db.commit()
     db.rollback()
+
 
 def test_username_update_no_duplicate_source(db):
     """Changing username must not create a duplicate source row."""
@@ -143,6 +168,7 @@ def test_username_update_no_duplicate_source(db):
     db.commit()
     # Verify no duplicate
     from newsroom.storage.models import Source, TelegramChannel
+
     sources = db.query(Source).filter_by(type="telegram", enabled=True).all()
     tg_sources = [s for s in sources if s.config.get("telegram_channel_id") == 200]
     assert len(tg_sources) == 1
@@ -154,28 +180,39 @@ def test_username_update_no_duplicate_source(db):
 
 # ── Message identity & cursor ────────────────────────────────
 
+
 def test_message_identity_constraint(db):
     """Same (channel_id, message_id) must not create two raw items."""
     from newsroom.storage.models import RawItem
+
     src, ch = _make_telegram_source(db, tg_id=300)
     item1 = RawItem(
-        source_id=src.id, raw_data={"type": "telegram", "text": "v1"},
-        content_hash="h1", telegram_channel_id=300, telegram_message_id=50,
+        source_id=src.id,
+        raw_data={"type": "telegram", "text": "v1"},
+        content_hash="h1",
+        telegram_channel_id=300,
+        telegram_message_id=50,
     )
     db.add(item1)
     db.commit()
     item2 = RawItem(
-        source_id=src.id, raw_data={"type": "telegram", "text": "v2"},
-        content_hash="h2", telegram_channel_id=300, telegram_message_id=50,
+        source_id=src.id,
+        raw_data={"type": "telegram", "text": "v2"},
+        content_hash="h2",
+        telegram_channel_id=300,
+        telegram_message_id=50,
     )
     db.add(item2)
     from sqlalchemy.exc import IntegrityError
+
     with pytest.raises(IntegrityError):
         db.commit()
     db.rollback()
 
+
 def test_cursor_persistence(db):
     from newsroom.pipeline.cursors import load_cursor, save_cursor
+
     src, _ = _make_telegram_source(db, tg_id=400)
     save_cursor(db, src.id, {"last_message_id": "500"}, key="tg_default")
     db.commit()
@@ -185,17 +222,25 @@ def test_cursor_persistence(db):
 
 # ── Edit behavior ────────────────────────────────────────────
 
+
 def test_edit_updates_existing_item(db):
     from newsroom.sources.telegram_adapter import compute_content_hash
     from newsroom.sources.telegram_collector import TelegramMTProtoCollector
+
     src, ch = _make_telegram_source(db, tg_id=500)
     coll = TelegramMTProtoCollector()
 
     item_v1 = {
-        "type": "telegram", "source_id": src.id, "source_name": "test",
-        "source_url": src.url, "telegram_channel_id": 500, "message_id": 100,
-        "text": "original", "date": "2026-07-17T10:00:00+00:00",
-        "edit_date": None, "link": "https://t.me/test/100",
+        "type": "telegram",
+        "source_id": src.id,
+        "source_name": "test",
+        "source_url": src.url,
+        "telegram_channel_id": 500,
+        "message_id": 100,
+        "text": "original",
+        "date": "2026-07-17T10:00:00+00:00",
+        "edit_date": None,
+        "link": "https://t.me/test/100",
         "content_hash": compute_content_hash("original", 500, 100),
     }
     stats = coll.persist_items(db, src, [item_v1])
@@ -212,6 +257,7 @@ def test_edit_updates_existing_item(db):
     assert stats["new"] == 0
 
     from newsroom.storage.models import RawItem
+
     items = db.query(RawItem).filter_by(telegram_channel_id=500, telegram_message_id=100).all()
     assert len(items) == 1
     assert items[0].raw_data["text"] == "edited text"
@@ -219,24 +265,34 @@ def test_edit_updates_existing_item(db):
 
 # ── Forward attribution ──────────────────────────────────────
 
+
 def test_forward_attribution_persisted(db):
     from newsroom.sources.telegram_adapter import compute_content_hash
     from newsroom.sources.telegram_collector import TelegramMTProtoCollector
+
     src, ch = _make_telegram_source(db, tg_id=600)
     coll = TelegramMTProtoCollector()
 
     item = {
-        "type": "telegram", "source_id": src.id, "source_name": "test",
-        "source_url": src.url, "telegram_channel_id": 600, "message_id": 200,
-        "text": "forwarded content", "date": "2026-07-17T10:00:00+00:00",
-        "forward_from_channel_id": 999, "forward_from_channel_name": "original_ch",
-        "forward_from_message_id": 50, "link": "https://t.me/test/200",
+        "type": "telegram",
+        "source_id": src.id,
+        "source_name": "test",
+        "source_url": src.url,
+        "telegram_channel_id": 600,
+        "message_id": 200,
+        "text": "forwarded content",
+        "date": "2026-07-17T10:00:00+00:00",
+        "forward_from_channel_id": 999,
+        "forward_from_channel_name": "original_ch",
+        "forward_from_message_id": 50,
+        "link": "https://t.me/test/200",
         "content_hash": compute_content_hash("forwarded content", 600, 200),
     }
     coll.persist_items(db, src, [item])
     db.commit()
 
     from newsroom.storage.models import RawItem
+
     raw = db.query(RawItem).filter_by(telegram_channel_id=600, telegram_message_id=200).first()
     assert raw is not None
     assert raw.raw_data["forward_from_channel_id"] == 999
@@ -245,12 +301,17 @@ def test_forward_attribution_persisted(db):
 
 # ── Gap records ──────────────────────────────────────────────
 
+
 def test_gap_record_persisted(db):
     from newsroom.storage.models import TelegramMessageGap
+
     src, _ = _make_telegram_source(db, tg_id=700)
     gap = TelegramMessageGap(
-        source_id=src.id, gap_start_id=100, gap_end_id=110,
-        status="open", unresolved_count=11,
+        source_id=src.id,
+        gap_start_id=100,
+        gap_end_id=110,
+        status="open",
+        unresolved_count=11,
     )
     db.add(gap)
     db.commit()
@@ -262,8 +323,10 @@ def test_gap_record_persisted(db):
 
 # ── Health states ─────────────────────────────────────────────
 
+
 def test_health_state_transitions(db):
     from newsroom.storage.models import TelegramChannel
+
     src, ch = _make_telegram_source(db, tg_id=800)
     ch.source_state = "degraded"
     ch.current_error = "connection timeout"
@@ -272,11 +335,17 @@ def test_health_state_transitions(db):
     # Simulate recovery
     from newsroom.sources.telegram_adapter import compute_content_hash
     from newsroom.sources.telegram_collector import TelegramMTProtoCollector
+
     coll = TelegramMTProtoCollector()
     item = {
-        "type": "telegram", "source_id": src.id, "source_name": "test",
-        "source_url": src.url, "telegram_channel_id": 800, "message_id": 300,
-        "text": "recovery", "date": "2026-07-17T10:00:00+00:00",
+        "type": "telegram",
+        "source_id": src.id,
+        "source_name": "test",
+        "source_url": src.url,
+        "telegram_channel_id": 800,
+        "message_id": 300,
+        "text": "recovery",
+        "date": "2026-07-17T10:00:00+00:00",
         "content_hash": compute_content_hash("recovery", 800, 300),
     }
     coll.persist_items(db, src, [item])
@@ -288,9 +357,11 @@ def test_health_state_transitions(db):
 
 # ── Restart continuation ─────────────────────────────────────
 
+
 def test_restart_continues_from_cursor(db):
     from newsroom.sources.telegram_adapter import compute_content_hash
     from newsroom.sources.telegram_collector import TelegramMTProtoCollector
+
     src, ch = _make_telegram_source(db, tg_id=900)
     ch.last_message_id = 500
     db.commit()
@@ -298,27 +369,38 @@ def test_restart_continues_from_cursor(db):
     # New session, new collector — should continue from 500
     coll = TelegramMTProtoCollector()
     item = {
-        "type": "telegram", "source_id": src.id, "source_name": "test",
-        "source_url": src.url, "telegram_channel_id": 900, "message_id": 501,
-        "text": "after restart", "date": "2026-07-17T10:00:00+00:00",
+        "type": "telegram",
+        "source_id": src.id,
+        "source_name": "test",
+        "source_url": src.url,
+        "telegram_channel_id": 900,
+        "message_id": 501,
+        "text": "after restart",
+        "date": "2026-07-17T10:00:00+00:00",
         "content_hash": compute_content_hash("after restart", 900, 501),
     }
     stats = coll.persist_items(db, src, [item])
     db.commit()
     assert stats["new"] == 1
     from newsroom.storage.models import TelegramChannel
+
     ch2 = db.query(TelegramChannel).filter_by(telegram_channel_id=900).first()
     assert ch2.last_message_id == 501
 
 
 # ── Transaction rollback ─────────────────────────────────────
 
+
 def test_transaction_rollback_on_failure(db):
     from newsroom.storage.models import RawItem
+
     src, _ = _make_telegram_source(db, tg_id=1000)
     item = RawItem(
-        source_id=src.id, raw_data={"type": "telegram", "text": "test"},
-        content_hash="hash1", telegram_channel_id=1000, telegram_message_id=1,
+        source_id=src.id,
+        raw_data={"type": "telegram", "text": "test"},
+        content_hash="hash1",
+        telegram_channel_id=1000,
+        telegram_message_id=1,
     )
     db.add(item)
     db.flush()

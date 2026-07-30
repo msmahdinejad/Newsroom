@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from newsroom.control.digests import InterestPolicy
 from newsroom.editorial.report_profiles import editorial_focus_instruction
 from newsroom.editorial.schema import (
     EDITORIAL_PROVIDER_VERSION,
@@ -24,16 +25,66 @@ from newsroom.editorial.schema import (
 
 # Terms that should remain in English (translating would reduce clarity)
 KEEP_ENGLISH = {
-    "API", "CPU", "GPU", "LLM", "GPT", "BERT", "Transformer",
-    "Python", "JavaScript", "Rust", "Go", "TypeScript", "Java",
-    "Docker", "Kubernetes", "GitHub", "GitLab", "PostgreSQL",
-    "TensorFlow", "PyTorch", "Hugging Face", "OpenAI", "Anthropic",
-    "Claude", "Gemini", "Copilot", "CUDA", "ONNX", "ML", "AI",
-    "npm", "pip", "cargo", "Homebrew", "Linux", "macOS", "Windows",
-    "React", "Vue", "Angular", "Node.js", "Django", "Flask",
-    "SDK", "CLI", "IDE", "VS Code", "Neovim", "Vim",
-    "REST", "GraphQL", "gRPC", "WebSocket", "HTTP", "HTTPS",
-    "RAG", "fine-tuning", "inference", "token", "embedding",
+    "API",
+    "CPU",
+    "GPU",
+    "LLM",
+    "GPT",
+    "BERT",
+    "Transformer",
+    "Python",
+    "JavaScript",
+    "Rust",
+    "Go",
+    "TypeScript",
+    "Java",
+    "Docker",
+    "Kubernetes",
+    "GitHub",
+    "GitLab",
+    "PostgreSQL",
+    "TensorFlow",
+    "PyTorch",
+    "Hugging Face",
+    "OpenAI",
+    "Anthropic",
+    "Claude",
+    "Gemini",
+    "Copilot",
+    "CUDA",
+    "ONNX",
+    "ML",
+    "AI",
+    "npm",
+    "pip",
+    "cargo",
+    "Homebrew",
+    "Linux",
+    "macOS",
+    "Windows",
+    "React",
+    "Vue",
+    "Angular",
+    "Node.js",
+    "Django",
+    "Flask",
+    "SDK",
+    "CLI",
+    "IDE",
+    "VS Code",
+    "Neovim",
+    "Vim",
+    "REST",
+    "GraphQL",
+    "gRPC",
+    "WebSocket",
+    "HTTP",
+    "HTTPS",
+    "RAG",
+    "fine-tuning",
+    "inference",
+    "token",
+    "embedding",
 }
 
 # Common Persian renderings for technical concepts
@@ -82,7 +133,7 @@ def terminology_policy() -> dict[str, Any]:
 
 # ── System prompt ─────────────────────────────────────────────────
 
-SYSTEM_PROMPT = f"""You are a multilingual technology newsroom editorial assistant.
+SYSTEM_PROMPT = f"""You are a multilingual newsroom editorial assistant.
 Your task: generate accurate, natural news reports in the requested output language
 from structured evidence.
 
@@ -103,8 +154,8 @@ PROVIDER: {EDITORIAL_PROVIDER_VERSION}
 
 EDITORIAL COPY REQUIREMENTS:
 1. Produce a natural, professional title and a concise factual summary in the requested output language for EVERY story.
-2. `headline_fa` is a legacy field name; its value must be a reader-facing headline in the requested language: concise, specific, and never a raw source title, URL, domain, category page, SEO slug, or word list.
-3. `summary_fa` is also a legacy field name; its value explains the news in the requested language using only the supplied evidence. High-priority stories may use two short sentences (at most 420 characters); other stories use one or two short sentences (at most 280 characters).
+2. `headline` must be a reader-facing headline in the requested language: concise, specific, and never a raw source title, URL, domain, category page, SEO slug, or word list.
+3. `summary` explains the news in the requested language using only the supplied evidence. High-priority stories may use two short sentences (at most 420 characters); other stories use one or two short sentences (at most 280 characters).
 4. Do not use generic boilerplate, confidence labels, verification labels, "why it matters", practical-impact sections, or audience labels in the title or summary.
 5. Every factual claim must reference supporting evidence ref_ids. Do not invent facts, numbers, dates, versions, or links not present in evidence.
 6. Preserve original source links from evidence. When sources disagree, preserve the uncertainty in plain language without a status label.
@@ -127,8 +178,8 @@ Respond with a single JSON object matching this schema:
   "stories": [
     {{
       "story_id": <int>,
-      "headline_fa": "<specific reader-facing headline in requested language>",
-      "summary_fa": "<concise factual summary in requested language>",
+      "headline": "<specific reader-facing headline in requested language>",
+      "summary": "<concise factual summary in requested language>",
       "confidence_level": <0.0-1.0>,
       "classification": "<official|corroborated|single_reputable|community|conflicting|unverified|unavailable>",
       "source_ref_ids": ["ev-<story>-<seq>", ...],
@@ -163,7 +214,14 @@ def build_prompt(evidence_set: EditorialEvidenceSet) -> list[dict[str, str]]:
         indent=2,
     )
     required_story_ids = [story.story_id for story in evidence_set.stories]
-    focus_instruction = editorial_focus_instruction(evidence_set.report_mode)
+    focus_instruction = editorial_focus_instruction(
+        evidence_set.report_mode,
+        InterestPolicy(
+            topic_brief=evidence_set.topic_brief,
+            include_terms=tuple(evidence_set.include_terms),
+            exclude_terms=tuple(evidence_set.exclude_terms),
+        ),
+    )
     language_name = {
         "fa": "Persian (fa)",
         "en": "English (en)",
@@ -176,6 +234,7 @@ def build_prompt(evidence_set: EditorialEvidenceSet) -> list[dict[str, str]]:
         f"in this order: {required_story_ids}. Do not omit, merge, or replace any story. "
         f"TARGET OUTPUT LANGUAGE: {language_name}. Every reader-facing field and claim_text "
         f"must use this language. "
+        f"DIGEST NAME: {evidence_set.digest_name}. "
         f"REPORT FOCUS: {focus_instruction} "
         f"Generate the editorial report from the evidence above. "
         f"Return only the JSON object per the schema."

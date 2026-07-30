@@ -10,6 +10,7 @@ from dataclasses import asdict, replace
 
 from newsroom.editorial.router.config import load_router_config
 from newsroom.editorial.router.factory import create_router_from_local_env
+from newsroom.editorial.router.model_catalog import ProviderModelCatalog
 from newsroom.editorial.router_persistence import PostgresRouterStateSink
 from newsroom.storage.database import get_db
 from newsroom.storage.models import ProviderKeyState, ProviderModelHealth
@@ -21,6 +22,8 @@ def providers_command(args: argparse.Namespace) -> int:
         return _validate(args)
     if args.providers_command == "status":
         return _status()
+    if args.providers_command == "discover":
+        return _discover(args)
     print("FAIL: a provider subcommand is required")
     return 2
 
@@ -39,22 +42,54 @@ def _validate(args: argparse.Namespace) -> int:
         validated_models=restored.validated_model_ids,
         restored_snapshot=validation_snapshot,
     )
-    model_filter = tuple(
-        value.strip()
-        for value in (args.model or ())
-        if value.strip()
-    )
+    discovered: list[dict[str, object]] = []
+    if getattr(args, "discover", False):
+        catalog_results = ProviderModelCatalog(
+            router.config.providers,
+            proxy_url=router.config.proxy_url,
+        ).discover(
+            provider=args.provider,
+            max_models=getattr(args, "max_discovered_models", 50),
+        )
+        for result in catalog_results:
+            router.register_candidate_models(result.provider, result.models)
+            discovered.append(asdict(result))
+    model_filter = tuple(value.strip() for value in (args.model or ()) if value.strip())
     model_results = router.validate_models(
         provider=args.provider,
         models=model_filter,
     )
     key_results = router.validate_access_values() if args.validate_keys else []
     payload = {
+        "discovered": discovered,
         "models": [asdict(result) for result in model_results],
         "keys": [asdict(result) for result in key_results],
     }
     print(json.dumps(payload, ensure_ascii=True, indent=2))
     return 0 if any(result.status == "validated" for result in model_results) else 1
+
+
+def _discover(args: argparse.Namespace) -> int:
+    provider_file = os.environ.get(
+        "LLM_PROVIDER_ENV_FILE",
+        ".env.providers.local",
+    )
+    config = load_router_config(provider_file)
+    results = ProviderModelCatalog(
+        config.providers,
+        proxy_url=config.proxy_url,
+    ).discover(
+        provider=args.provider,
+        max_models=args.max_models,
+    )
+    print(
+        json.dumps(
+            [asdict(result) for result in results],
+            ensure_ascii=True,
+            indent=2,
+        )
+    )
+    return 0 if any(result.status == "discovered" for result in results) else 1
 
 
 def _status() -> int:
@@ -65,8 +100,7 @@ def _status() -> int:
     config = load_router_config(provider_file)
     configured_fingerprints = {
         provider.name: {
-            hashlib.sha256(value.encode("utf-8")).hexdigest()
-            for value in provider.keys
+            hashlib.sha256(value.encode("utf-8")).hexdigest() for value in provider.keys
         }
         for provider in config.providers
     }
@@ -89,17 +123,13 @@ def _status() -> int:
             }
             for row in model_rows
         ]
-        key_rows = (
-            db.query(
-                ProviderKeyState.provider,
-                ProviderKeyState.key_fingerprint,
-                ProviderKeyState.enabled,
-            )
-            .all()
-        )
+        key_rows = db.query(
+            ProviderKeyState.provider,
+            ProviderKeyState.key_fingerprint,
+            ProviderKeyState.enabled,
+        ).all()
         persisted_enabled = {
-            (provider, fingerprint): bool(enabled)
-            for provider, fingerprint, enabled in key_rows
+            (provider, fingerprint): bool(enabled) for provider, fingerprint, enabled in key_rows
         }
         key_counts = {
             provider: {

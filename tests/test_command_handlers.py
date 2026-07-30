@@ -21,25 +21,22 @@ def make_bot():
 
 def test_menu_keyboard_has_persian_labels():
     """Inline keyboard must contain all 5 Persian labels."""
-    labels = [
-        btn["text"]
-        for row in MENU_KEYBOARD["inline_keyboard"]
-        for btn in row
-    ]
+    labels = [btn["text"] for row in MENU_KEYBOARD["inline_keyboard"] for btn in row]
     assert "\u06af\u0632\u0627\u0631\u0634 \u0641\u0648\u0631\u06cc" in labels
     assert "\u062e\u0628\u0631\u0647\u0627\u06cc \u062c\u062f\u06cc\u062f" in labels
-    assert "\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 \u0641\u0639\u0644\u06cc" in labels
+    assert (
+        "\u06af\u0632\u0627\u0631\u0634 \u062c\u0627\u0645\u0639 \u0641\u0639\u0644\u06cc" in labels
+    )
     assert "\u0622\u062e\u0631\u06cc\u0646 \u06af\u0632\u0627\u0631\u0634" in labels
-    assert "\u0631\u0627\u0647\u0646\u0645\u0627\u06cc \u06af\u0632\u0627\u0631\u0634‌\u0647\u0627" in labels
+    assert (
+        "\u0631\u0627\u0647\u0646\u0645\u0627\u06cc \u06af\u0632\u0627\u0631\u0634‌\u0647\u0627"
+        in labels
+    )
 
 
 def test_menu_keyboard_callback_data():
     """Each Persian button maps to correct callback_data."""
-    callbacks = [
-        btn["callback_data"]
-        for row in MENU_KEYBOARD["inline_keyboard"]
-        for btn in row
-    ]
+    callbacks = [btn["callback_data"] for row in MENU_KEYBOARD["inline_keyboard"] for btn in row]
     assert "report_now" in callbacks
     assert "report_new" in callbacks
     assert "report_comprehensive" in callbacks
@@ -53,9 +50,9 @@ def test_menu_keyboard_callback_data():
 
 
 def test_help_text_is_persian():
-    assert "\u0631\u0627\u0647\u0646\u0645\u0627" in HELP_TEXT
     assert "\u06af\u0632\u0627\u0631\u0634" in HELP_TEXT
-    assert "\u062a\u0647\u0631\u0627\u0646" in HELP_TEXT
+    assert "\u0645\u0648\u0636\u0648\u0639" in HELP_TEXT
+    assert "/settings timezone" in HELP_TEXT
 
 
 def test_help_text_no_secrets():

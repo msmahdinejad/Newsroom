@@ -131,7 +131,9 @@ def make_attempt(status: str = "ok") -> EditorialAttempt:
 def test_editorial_attempt_persisted(db: Session):
     """An editorial attempt is persisted with all metadata."""
     attempt = make_attempt()
-    cache_key = compute_cache_key("scheduled", attempt.evidence_set_hash, attempt.prompt_version, "test", "test-model")
+    cache_key = compute_cache_key(
+        "scheduled", attempt.evidence_set_hash, attempt.prompt_version, "test", "test-model"
+    )
 
     record = persist_attempt(db, attempt, report_id=None, cache_key=cache_key)
     db.commit()
@@ -175,10 +177,14 @@ def test_evidence_set_hash_persisted(db: Session):
     db.commit()
 
     # Query by hash and cache_key to get the exact record
-    found = db.query(EditorialAttemptModel).filter_by(
-        evidence_set_hash=evidence.evidence_hash(),
-        cache_key="k2",
-    ).first()
+    found = (
+        db.query(EditorialAttemptModel)
+        .filter_by(
+            evidence_set_hash=evidence.evidence_hash(),
+            cache_key="k2",
+        )
+        .first()
+    )
     assert found is not None
     assert found.id == record.id
 
@@ -194,7 +200,10 @@ def test_structured_output_persisted(db: Session):
 
     assert record.output_json is not None
     assert record.output_json["stories"][0]["story_id"] == 1
-    assert record.output_json["stories"][0]["headline_fa"] == "\u0639\u0646\u0648\u0627\u0646 \u062a\u0633\u062a"
+    assert (
+        record.output_json["stories"][0]["headline"]
+        == "\u0639\u0646\u0648\u0627\u0646 \u062a\u0633\u062a"
+    )
 
 
 # ── 5. Claim-to-evidence relationships ────────────────────────────
@@ -222,6 +231,7 @@ def test_cache_key_unique(db: Session):
     # Second attempt with same cache key should fail on unique constraint
     attempt2 = make_attempt()
     from sqlalchemy.exc import IntegrityError
+
     with pytest.raises(IntegrityError):
         persist_attempt(db, attempt2, report_id=None, cache_key="unique-key")
         db.commit()
@@ -309,6 +319,7 @@ def test_report_linkage(db: Session):
 def test_no_api_key_in_attempt(db: Session):
     """No API key field exists in editorial_attempts table."""
     from sqlalchemy import inspect as sa_inspect
+
     insp = sa_inspect(db.bind)
     columns = [c["name"] for c in insp.get_columns("editorial_attempts")]
     forbidden = {"api_key", "apikey", "secret", "token", "password", "credential"}
@@ -325,6 +336,7 @@ def test_no_api_key_in_output_json(db: Session):
     db.commit()
 
     import json
+
     output_str = json.dumps(record.output_json)
     assert "api_key" not in output_str.lower()
     assert "apikey" not in output_str.lower()

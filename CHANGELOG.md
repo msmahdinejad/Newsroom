@@ -7,6 +7,33 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Named digests with independent topics, source membership, language,
+  timezone, report size, Telegram minimum, and delivery schedule.
+- Code-owned source platform registry for Telegram, X, Reddit, GitHub, and
+  websites/feeds.
+- Bounded provider model discovery for OpenAI-compatible, Gemini-native, and
+  Anthropic-native protocols; discovered routes still require validation.
+- Grounded Gemini Search and Deep Research source suggestions with bounded
+  probing and explicit operator approval.
+- CodeQL, dependency auditing, and SPDX SBOM generation in CI.
+
+### Changed
+
+- Editorial selection, prompting, rendering, scheduling, and lineage are
+  digest-aware and no longer limited to programming subjects.
+- Report generation receives immutable request data instead of mutating
+  process-wide environment variables.
+- Reader-facing stories use a localized headline, concise summary, and source
+  links; legacy editorial field aliases remain readable for upgrade safety.
+
+### Removed
+
+- The obsolete single-provider editorial adapter and its duplicate test suite.
+- User creation of legacy YouTube source entries; existing upgraded entries
+  remain collectable.
+
 ## [3.0.0] - 2026-07-27
 
 ### Added

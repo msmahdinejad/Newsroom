@@ -34,6 +34,10 @@ EXPECTED_TABLES = {
     "telegram_message_gaps",
     "editorial_attempts",
     "editorial_health",
+    "digest_definitions",
+    "digest_sources",
+    "discovery_jobs",
+    "source_candidates",
     "alembic_version",
 }
 
@@ -177,11 +181,7 @@ def test_delivery_idempotency_record(db: Session) -> None:
     )
     db.add(d)
     db.commit()
-    again = (
-        db.query(Delivery)
-        .filter_by(report_id=report.id, chat_id="deadbeefdeadbeef")
-        .first()
-    )
+    again = db.query(Delivery).filter_by(report_id=report.id, chat_id="deadbeefdeadbeef").first()
     assert again is not None
     assert again.status == "delivered"
     db.delete(again)

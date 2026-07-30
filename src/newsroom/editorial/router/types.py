@@ -70,6 +70,7 @@ class ProviderConfig:
     keys: tuple[str, ...] = field(default_factory=tuple, repr=False)
     models: tuple[str, ...] = field(default_factory=tuple)
     api_base: str = ""
+    protocol: str = "openai"
     quota_scope: str = "default-project"
     limits: RateLimits = field(default_factory=RateLimits)
     concurrency: int = 1
@@ -314,7 +315,10 @@ class RouteAttemptEvent:
 class RouterStateSink(Protocol):
     def record_snapshot(
         self,
-        snapshot: KeyStateSnapshot | QuotaStateSnapshot | CircuitStateSnapshot | ModelHealthSnapshot,
+        snapshot: KeyStateSnapshot
+        | QuotaStateSnapshot
+        | CircuitStateSnapshot
+        | ModelHealthSnapshot,
     ) -> None: ...
 
     def record_attempt(self, event: RouteAttemptEvent) -> None: ...
@@ -384,12 +388,17 @@ class ProviderCircuit:
         self.last_failure_category = category.value
         if provider_level:
             self.consecutive_failures += 1
-        if self.state is CircuitState.HALF_OPEN or self.consecutive_failures >= self.failure_threshold:
+        if (
+            self.state is CircuitState.HALF_OPEN
+            or self.consecutive_failures >= self.failure_threshold
+        ):
             self.open(category)
         else:
             self._emit()
 
-    def open(self, category: RouteFailureCategory = RouteFailureCategory.PROVIDER_UNAVAILABLE) -> None:
+    def open(
+        self, category: RouteFailureCategory = RouteFailureCategory.PROVIDER_UNAVAILABLE
+    ) -> None:
         self.state = CircuitState.OPEN
         self.last_failure_category = category.value
         self.cooldown_until_monotonic = self.clock.monotonic() + self.cooldown_seconds
@@ -426,9 +435,9 @@ class ProviderCircuit:
         self.half_open_probe_in_flight = False
         cooldown = getattr(snapshot, "cooldown_until", None)
         if cooldown is not None and cooldown > self.clock.utcnow():
-            self.cooldown_until_monotonic = self.clock.monotonic() + (
-                cooldown - self.clock.utcnow()
-            ).total_seconds()
+            self.cooldown_until_monotonic = (
+                self.clock.monotonic() + (cooldown - self.clock.utcnow()).total_seconds()
+            )
         elif self.state is CircuitState.OPEN:
             # Expired persisted OPEN state enters half-open on the next call.
             self.cooldown_until_monotonic = self.clock.monotonic()
