@@ -30,7 +30,7 @@ jobs:
           - "3.12"
           - "3.13"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.11.24"
@@ -69,7 +69,7 @@ jobs:
     env:
       DATABASE_URL: postgresql+psycopg://newsroom:ci-only-password@127.0.0.1:5432/newsroom_test
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.11.24"
@@ -90,7 +90,7 @@ jobs:
     name: Compose and production image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Create safe local configuration stubs
         run: python scripts/bootstrap.py --configuration-only --source-mode empty
       - name: Validate Compose
@@ -102,7 +102,7 @@ jobs:
     name: Dependency audit and SBOM
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.11.24"
