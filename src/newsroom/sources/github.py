@@ -1,6 +1,8 @@
 """GitHub releases collector."""
 
+import re
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -11,6 +13,9 @@ from newsroom.sources.http_client import build_collection_client
 from newsroom.storage.models import Source
 
 logger = get_logger(__name__)
+
+_GITHUB_HOSTS = frozenset({"github.com", "www.github.com"})
+_REPOSITORY_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 class GitHubCollector(SourceCollector):
@@ -94,19 +99,50 @@ class GitHubCollector(SourceCollector):
 
     def _parse_repo(self, source_url: str) -> tuple[str, str]:
         """Parse owner/repo from URL or shorthand."""
-        if source_url.startswith("https://github.com/"):
-            parts = source_url.replace("https://github.com/", "").rstrip("/").split("/", 1)
+        raw = source_url.strip()
+        try:
+            parsed = urlparse(raw)
+            explicit_port = parsed.port
+        except ValueError as exc:
+            raise CollectionError(f"Invalid URL: {source_url}", source_url, recoverable=False) from exc
+
+        if parsed.scheme or parsed.netloc:
+            hostname = (parsed.hostname or "").casefold()
+            if (
+                parsed.scheme.casefold() != "https"
+                or hostname not in _GITHUB_HOSTS
+                or parsed.username is not None
+                or parsed.password is not None
+                or explicit_port not in {None, 443}
+            ):
+                raise CollectionError(f"Invalid URL: {source_url}", source_url, recoverable=False)
+            parts = [part for part in parsed.path.split("/") if part]
             if len(parts) < 2:
                 raise CollectionError(f"Invalid URL: {source_url}", source_url, recoverable=False)
-            # Remove extra path segments, keep owner/repo
-            return parts[0], parts[1].split("/")[0]
-        if "/" in source_url:
-            parts = source_url.split("/", 1)
-            return parts[0], parts[1].split("/")[0]
-        raise CollectionError(f"Invalid format: {source_url}", source_url, recoverable=False)
+            owner, repo = parts[:2]
+        else:
+            if parsed.query or parsed.fragment or parsed.params:
+                raise CollectionError(f"Invalid format: {source_url}", source_url, recoverable=False)
+            parts = raw.split("/")
+            if len(parts) != 2 or not all(parts):
+                raise CollectionError(f"Invalid format: {source_url}", source_url, recoverable=False)
+            owner, repo = parts
+
+        if (
+            owner in {".", ".."}
+            or repo in {".", ".."}
+            or not _REPOSITORY_SEGMENT.fullmatch(owner)
+            or not _REPOSITORY_SEGMENT.fullmatch(repo)
+        ):
+            raise CollectionError(f"Invalid repository: {source_url}", source_url, recoverable=False)
+        return owner, repo
 
     def validate_url(self, source_url: str) -> bool:
-        return "github.com/" in source_url or source_url.count("/") == 1
+        try:
+            self._parse_repo(source_url)
+        except CollectionError:
+            return False
+        return True
 
     async def close(self) -> None:
         await self.client.aclose()

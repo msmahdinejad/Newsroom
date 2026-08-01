@@ -108,6 +108,37 @@ def _make_source(
     return s
 
 
+@pytest.mark.parametrize(
+    "source_url",
+    [
+        "https://x.com.evil.example/user/status/1",
+        "https://twitter.com.evil.example/user/status/1",
+        "https://attacker.example/x.com/user/status/1",
+        "https://attacker.example/?next=twitter.com/user",
+    ],
+)
+def test_x_timeline_rejects_lookalike_urls(source_url: str):
+    collector = XTimelineCollector(runner=FakeRunner())  # type: ignore[arg-type]
+
+    assert collector.validate_url(source_url) is False
+
+
+@pytest.mark.parametrize(
+    "source_url",
+    [
+        "agent-reach:x-timeline:test",
+        "https://x.com/test/status/1",
+        "https://www.x.com/test/status/1",
+        "https://twitter.com/test/status/1",
+        "https://www.twitter.com/test/status/1",
+    ],
+)
+def test_x_timeline_accepts_internal_and_exact_platform_urls(source_url: str):
+    collector = XTimelineCollector(runner=FakeRunner())  # type: ignore[arg-type]
+
+    assert collector.validate_url(source_url) is True
+
+
 def _make_tweet(
     post_id: str = "1234567890",
     text: str = "Hello world",
