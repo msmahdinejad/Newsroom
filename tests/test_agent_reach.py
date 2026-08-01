@@ -454,7 +454,7 @@ def test_build_command_returns_list_not_string():
     assert all(isinstance(c, str) for c in cmd)
     assert cmd[0] == "yt-dlp"
     # The URL must be a separate argument — never concatenated
-    assert "https://example.com" in cmd
+    assert cmd[-1] == "https://example.com"
 
 
 def test_build_command_never_includes_shell_metacharacters_as_ops():
@@ -1549,7 +1549,7 @@ def test_web_adapter_rejects_unallowlisted_domain():
 def test_web_adapter_accepts_allowlisted_domain():
     """A source pointing at an allowlisted domain is accepted."""
     # Pick a domain that's in DEFAULT_WEB_ALLOWED_DOMAINS
-    assert "openai.com" in DEFAULT_WEB_ALLOWED_DOMAINS
+    assert any(domain == "openai.com" for domain in DEFAULT_WEB_ALLOWED_DOMAINS)
 
 
 def test_web_adapter_extra_domains_can_be_added():
@@ -1562,8 +1562,36 @@ def test_web_adapter_extra_domains_can_be_added():
     runner = FakeRunner()
     adapter = WebPageReader(runner=runner)  # type: ignore[arg-type]
     domains = adapter._allowed_domains_for(source)
-    assert "my-custom-domain.com" in domains
-    assert "openai.com" in domains  # defaults preserved
+    assert any(domain == "my-custom-domain.com" for domain in domains)
+    assert any(domain == "openai.com" for domain in domains)  # defaults preserved
+
+
+@pytest.mark.parametrize(
+    "source_url",
+    [
+        "https://attacker.example/github.com/search",
+        "https://attacker.example/?next=github.com",
+        "https://github.com.evil.example/owner/repo",
+    ],
+)
+def test_github_discovery_rejects_lookalike_urls(source_url: str):
+    adapter = GitHubDiscoveryCollector(runner=FakeRunner())  # type: ignore[arg-type]
+
+    assert adapter.validate_url(source_url) is False
+
+
+@pytest.mark.parametrize(
+    "source_url",
+    [
+        "agent-reach:github-discovery:test",
+        "https://github.com/owner/repo",
+        "https://www.github.com/owner/repo",
+    ],
+)
+def test_github_discovery_accepts_internal_and_exact_github_urls(source_url: str):
+    adapter = GitHubDiscoveryCollector(runner=FakeRunner())  # type: ignore[arg-type]
+
+    assert adapter.validate_url(source_url) is True
 
 
 # ── 40. Adapter close is safe ───────────────────────────────────

@@ -104,8 +104,7 @@ def test_permalink_no_message_id():
 def test_extract_links_from_text():
     text = "Check https://example.com and https://google.com"
     links = extract_outbound_links(text)
-    assert "https://example.com" in links
-    assert "https://google.com" in links
+    assert links == ["https://example.com", "https://google.com"]
 
 def test_extract_links_dedup():
     text = "https://example.com and https://example.com"

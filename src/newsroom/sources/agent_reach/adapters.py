@@ -73,6 +73,8 @@ PRIVATE_NETWORK_PREFIXES: tuple[str, ...] = (
 )
 
 ALLOWED_WEB_SCHEMES: frozenset[str] = frozenset({"http", "https"})
+_GITHUB_SOURCE_HOSTS = frozenset({"github.com", "www.github.com"})
+_X_SOURCE_HOSTS = frozenset({"x.com", "www.x.com", "twitter.com", "www.twitter.com"})
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,32 @@ class WebReadResult:
 
 class SSRFError(CollectionError):
     """Raised when a URL or its resolved destination is rejected as SSRF."""
+
+
+def _matches_placeholder_or_https_host(
+    source_url: str,
+    *,
+    placeholder_prefix: str,
+    allowed_hosts: frozenset[str],
+) -> bool:
+    """Match an internal source placeholder or an HTTPS URL by parsed hostname."""
+    if not isinstance(source_url, str):
+        return False
+    if source_url.startswith(placeholder_prefix):
+        identifier = source_url.removeprefix(placeholder_prefix)
+        return bool(identifier) and not any(char.isspace() or ord(char) < 32 for char in identifier)
+    try:
+        parsed = urlparse(source_url)
+        explicit_port = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme.casefold() == "https"
+        and (parsed.hostname or "").casefold() in allowed_hosts
+        and parsed.username is None
+        and parsed.password is None
+        and explicit_port in {None, 443}
+    )
 
 
 def _is_private_ip(ip_str: str) -> bool:
@@ -580,7 +608,11 @@ class GitHubDiscoveryCollector(SourceCollector):
 
     def validate_url(self, source_url: str) -> bool:
         # Discovery sources use a placeholder URL; the real query lives in config.
-        return source_url.startswith("agent-reach:github-discovery:") or "github.com" in source_url
+        return _matches_placeholder_or_https_host(
+            source_url,
+            placeholder_prefix="agent-reach:github-discovery:",
+            allowed_hosts=_GITHUB_SOURCE_HOSTS,
+        )
 
     async def close(self) -> None:
         pass
@@ -1345,10 +1377,10 @@ class XTimelineCollector(SourceCollector):
 
     def validate_url(self, source_url: str) -> bool:
         # Timeline sources use a placeholder URL; the real handle lives in config.
-        return (
-            source_url.startswith("agent-reach:x-timeline:")
-            or "x.com" in source_url
-            or "twitter.com" in source_url
+        return _matches_placeholder_or_https_host(
+            source_url,
+            placeholder_prefix="agent-reach:x-timeline:",
+            allowed_hosts=_X_SOURCE_HOSTS,
         )
 
     async def close(self) -> None:

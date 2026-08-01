@@ -93,6 +93,12 @@ def test_github_parse_repo_full_url():
     assert repo == "pytorch"
 
 
+def test_github_parse_repo_www_url():
+    c = GitHubCollector()
+    owner, repo = c._parse_repo("https://www.github.com/pytorch/pytorch")
+    assert (owner, repo) == ("pytorch", "pytorch")
+
+
 def test_github_parse_repo_with_extra_path():
     """Extra path segments stripped — only owner/repo kept."""
     c = GitHubCollector()
@@ -138,6 +144,25 @@ def test_github_validate_url():
     assert c.validate_url("https://github.com/owner/repo") is True
     assert c.validate_url("owner/repo") is True
     assert c.validate_url("https://example.com/feed.xml") is False
+
+
+@pytest.mark.parametrize(
+    "source_url",
+    [
+        "https://attacker.example/github.com/owner/repo",
+        "https://attacker.example/?next=github.com/owner/repo",
+        "https://github.com.evil.example/owner/repo",
+        "https://github.com/owner",
+        "https://github.com/../repo",
+        "owner/repo/extra",
+    ],
+)
+def test_github_rejects_lookalike_and_malformed_repository_urls(source_url: str):
+    collector = GitHubCollector()
+
+    assert collector.validate_url(source_url) is False
+    with pytest.raises(CollectionError):
+        collector._parse_repo(source_url)
 
 
 # ── GitHub collect from fixture ─────────────────────────────────
