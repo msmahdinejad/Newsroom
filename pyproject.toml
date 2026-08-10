@@ -17,10 +17,10 @@ classifiers = [
 ]
 dependencies = [
     "sqlalchemy>=2.0.51",
-    "alembic>=1.18.5",
+    "alembic>=1.19.0",
     "psycopg[binary]>=3.3.4",
     "httpx>=0.28.1",
-    "feedparser>=6.0.13",
+    "feedparser>=6.0.14",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
     "python-dotenv>=1.2.2",
