@@ -6,7 +6,15 @@ are in tests/integration/test_report_selection_db.py.
 
 from __future__ import annotations
 
-from newsroom.editorial.selection import detect_material_change, reserve_telegram_story_ids
+from datetime import UTC, datetime, timedelta
+
+from newsroom.editorial.selection import (
+    StoryMaterial,
+    balance_story_sources,
+    detect_material_change,
+    reserve_telegram_story_ids,
+    retain_recent_stories,
+)
 from newsroom.storage.models import Story
 
 
@@ -67,3 +75,67 @@ def test_selection_reserves_space_for_recent_telegram_stories() -> None:
     )
 
     assert result == [10, 11, 20, 21]
+
+
+def test_selection_prefers_distinct_telegram_sources() -> None:
+    result = reserve_telegram_story_ids(
+        [10, 11, 12, 20, 21],
+        [10, 11, 12, 20, 21, 22],
+        telegram_story_ids={20, 21, 22},
+        telegram_source_ids_by_story={20: {100}, 21: {100}, 22: {200}},
+        max_stories=5,
+        minimum_telegram_stories=2,
+    )
+
+    assert result == [10, 11, 12, 20, 22]
+
+
+def test_balance_story_sources_limits_a_dominant_feed() -> None:
+    story_ids = [1, 2, 3, 4, 5, 6]
+    material = {
+        1: [StoryMaterial(10, "rss", "ai", "A1", "AI release", True, None)],
+        2: [StoryMaterial(10, "rss", "ai", "A2", "AI release", True, None)],
+        3: [StoryMaterial(10, "rss", "ai", "A3", "AI release", True, None)],
+        4: [StoryMaterial(10, "rss", "ai", "A4", "AI release", True, None)],
+        5: [StoryMaterial(20, "telegram", "ai", "B1", "AI release", True, None)],
+        6: [StoryMaterial(30, "github_releases", "ai", "C1", "AI release", True, None)],
+    }
+
+    selected = balance_story_sources(
+        story_ids,
+        material,
+        max_stories=4,
+        max_per_source=2,
+    )
+
+    assert selected == [1, 2, 5, 6]
+
+
+def test_retain_recent_stories_rejects_stale_published_items() -> None:
+    now = datetime(2026, 8, 10, tzinfo=UTC)
+    material = {
+        1: [
+            StoryMaterial(
+                10,
+                "rss",
+                "ai",
+                "Recent",
+                "AI release",
+                True,
+                now - timedelta(hours=12),
+            )
+        ],
+        2: [
+            StoryMaterial(
+                20,
+                "rss",
+                "ai",
+                "Stale",
+                "AI release",
+                True,
+                now - timedelta(days=20),
+            )
+        ],
+    }
+
+    assert retain_recent_stories([1, 2], material, max_age_hours=168, now=now) == [1]

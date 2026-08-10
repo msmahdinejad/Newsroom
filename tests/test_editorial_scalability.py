@@ -48,6 +48,7 @@ from scalability_datasets import (  # noqa: E402
 from newsroom.config import settings  # noqa: E402
 from newsroom.editorial.hierarchy import (  # noqa: E402
     MapResult,
+    _deduplicate_similar_story_results,
     _final_reduction,
     _reduce_artifacts,
     _reduction_cache_key,
@@ -56,8 +57,58 @@ from newsroom.editorial.schema import (  # noqa: E402
     EditorialEvidenceSet,
     EditorialRequest,
     EditorialResponse,
+    EvidenceSourceItem,
+    EvidenceStoryPacket,
+    StoryEditorialResult,
 )
 from newsroom.editorial.sharding import shard_evidence_set  # noqa: E402
+
+
+def test_cross_cluster_topic_deduplication_uses_evidence_titles() -> None:
+    evidence = EditorialEvidenceSet(
+        stories=[
+            EvidenceStoryPacket(
+                story_id=1,
+                sources=[
+                    EvidenceSourceItem(
+                        ref_id="ev-1-0",
+                        item_id=1,
+                        original_title="Meta introduces Muse Glimmer for local agents",
+                    )
+                ],
+            ),
+            EvidenceStoryPacket(
+                story_id=2,
+                sources=[
+                    EvidenceSourceItem(
+                        ref_id="ev-2-0",
+                        item_id=2,
+                        original_title="Muse Glimmer is a new open multimodal model",
+                    )
+                ],
+            ),
+            EvidenceStoryPacket(
+                story_id=3,
+                sources=[
+                    EvidenceSourceItem(
+                        ref_id="ev-3-0",
+                        item_id=3,
+                        original_title="Apple releases third-generation foundation models",
+                    )
+                ],
+            ),
+        ]
+    )
+    results = [
+        StoryEditorialResult(story_id=1, headline="Meta introduces Muse Glimmer"),
+        StoryEditorialResult(story_id=2, headline="Muse Glimmer ships for local inference"),
+        StoryEditorialResult(story_id=3, headline="Apple foundation models reach generation three"),
+    ]
+
+    deduplicated = _deduplicate_similar_story_results(results, evidence)
+
+    assert [story.story_id for story in deduplicated] == [1, 3]
+
 
 # ── Unit-level shard construction tests ──────────────────────────
 
@@ -210,18 +261,14 @@ class TestHierarchicalPipelineNoDB:
             stories=evidence.stories[: settings.editorial_max_stories_per_call],
         )
         seed_provider = FakeScalableProvider(latency_ms=0)
-        merged = seed_provider.generate(
-            EditorialRequest(evidence=bounded_evidence)
-        ).output
+        merged = seed_provider.generate(EditorialRequest(evidence=bounded_evidence)).output
         child = MapResult(
             shard_id="map-1",
             artifact_id=1,
             output=merged,
             story_ids=[story.story_id for story in bounded_evidence.stories],
             evidence_ref_ids=[
-                source.ref_id
-                for story in bounded_evidence.stories
-                for source in story.sources
+                source.ref_id for story in bounded_evidence.stories for source in story.sources
             ],
             latency_ms=0,
             usage=None,
@@ -286,9 +333,7 @@ class TestHierarchicalPipelineNoDB:
             1,
         )
 
-        request_story_ids = [
-            story.story_id for story in provider.requests[0].evidence.stories
-        ]
+        request_story_ids = [story.story_id for story in provider.requests[0].evidence.stories]
         assert request_story_ids == [story.story_id for story in merged.stories]
         assert len(request_story_ids) <= settings.editorial_max_stories_per_call
 
@@ -373,9 +418,7 @@ class TestHierarchicalPipelineNoDB:
         maps: list[MapResult] = []
         for index, story in enumerate(stories):
             shard_evidence = EditorialEvidenceSet(stories=[story])
-            output = seed_provider.generate(
-                EditorialRequest(evidence=shard_evidence)
-            ).output
+            output = seed_provider.generate(EditorialRequest(evidence=shard_evidence)).output
             maps.append(
                 MapResult(
                     shard_id=f"map-{index}",

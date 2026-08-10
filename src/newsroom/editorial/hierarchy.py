@@ -22,6 +22,7 @@ No API keys, prompts, or chain-of-thought are persisted.
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -1071,6 +1072,8 @@ def _merge_outputs(
                 all_stories.append(story)
         all_refs.extend(result.evidence_ref_ids)
 
+    all_stories = _deduplicate_similar_story_results(all_stories, evidence)
+
     # Rank: high > medium > low, then by confidence
     priority_order = {"high": 0, "medium": 1, "low": 2}
     all_stories.sort(
@@ -1104,6 +1107,72 @@ def _merge_outputs(
         ),
         stories=all_stories,
     )
+
+
+_TOPIC_STOP_TOKENS = frozenset(
+    {
+        "agent",
+        "agents",
+        "ai",
+        "announced",
+        "announces",
+        "artificial",
+        "blog",
+        "for",
+        "from",
+        "intelligence",
+        "introduces",
+        "local",
+        "model",
+        "models",
+        "new",
+        "open",
+        "publishing",
+        "release",
+        "released",
+        "research",
+        "source",
+        "the",
+        "with",
+    }
+)
+
+
+def _deduplicate_similar_story_results(
+    stories: list[StoryEditorialResult],
+    evidence: EditorialEvidenceSet,
+) -> list[StoryEditorialResult]:
+    """Drop cross-cluster duplicates that share a distinctive entity phrase."""
+    evidence_by_id = {packet.story_id: packet for packet in evidence.stories}
+    retained: list[StoryEditorialResult] = []
+    signatures: list[tuple[set[str], set[tuple[str, str]]]] = []
+    for story in stories:
+        packet = evidence_by_id.get(story.story_id)
+        source_titles = [source.original_title for source in packet.sources] if packet else []
+        raw_tokens = re.findall(
+            r"[a-z0-9]+(?:[.-][a-z0-9]+)*|[\u0600-\u06ff]+",
+            " ".join([story.headline, *source_titles]).casefold(),
+        )
+        tokens = [
+            token for token in raw_tokens if len(token) >= 4 and token not in _TOPIC_STOP_TOKENS
+        ]
+        token_set = set(tokens)
+        bigrams = set(zip(tokens, tokens[1:], strict=False))
+        is_duplicate = any(
+            bool(bigrams.intersection(existing_bigrams))
+            or any(
+                token in existing_tokens
+                and any(char.isalpha() for char in token)
+                and (any(char.isdigit() for char in token) or "-" in token)
+                for token in token_set
+            )
+            for existing_tokens, existing_bigrams in signatures
+        )
+        if is_duplicate:
+            continue
+        retained.append(story)
+        signatures.append((token_set, bigrams))
+    return retained
 
 
 def _persist_reduction(

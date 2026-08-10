@@ -8,6 +8,7 @@ unrelated items are included.
 from __future__ import annotations
 
 import hashlib
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -28,7 +29,6 @@ from newsroom.editorial.schema import (
 )
 from newsroom.logging import get_logger
 from newsroom.storage.models import (
-    Evidence,
     NormalizedItem,
     RawItem,
     Source,
@@ -38,6 +38,25 @@ from newsroom.storage.models import (
 )
 
 logger = get_logger(__name__)
+
+
+def _extract_scoped_facts(items: list[NormalizedItem]) -> list[str]:
+    """Derive bounded facts only from material visible to this digest."""
+    facts: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        candidates = [item.title]
+        if item.description:
+            candidates.append(item.description.split(".")[0].strip())
+        for candidate in candidates:
+            if (
+                candidate
+                and candidate not in seen
+                and (candidate == item.title or len(candidate) > 20)
+            ):
+                facts.append(candidate[:200])
+                seen.add(candidate)
+    return facts[:10]
 
 
 def build_evidence_set(
@@ -74,6 +93,11 @@ def build_evidence_set(
     max_stories = max_stories or settings.editorial_max_stories_per_call
     max_evidence = settings.editorial_max_evidence_per_story
     max_excerpt = settings.editorial_max_excerpt_length
+    freshness_cutoff = (
+        datetime.now(UTC) - timedelta(hours=settings.editorial_max_item_age_hours)
+        if settings.editorial_max_item_age_hours > 0
+        else None
+    )
 
     # Deterministic ordering by importance_score desc, then created_at desc
     stories = (
@@ -108,6 +132,11 @@ def build_evidence_set(
             for item in candidate_items
             if item.raw_item
             and item.raw_item.source
+            and (
+                freshness_cutoff is None
+                or item.published_at is None
+                or item.published_at >= freshness_cutoff
+            )
             and is_usable_editorial_material(
                 title=item.title,
                 description=item.description or "",
@@ -178,10 +207,10 @@ def build_evidence_set(
         if not sources:
             continue
 
-        # Get latest evidence packet for facts/contradictions
-        ev = db.query(Evidence).filter_by(story_id=story.id).order_by(Evidence.id.desc()).first()
-        facts = ev.packet.get("facts", []) if ev and ev.packet else []
-        contradictions = ev.packet.get("contradictions", []) if ev and ev.packet else []
+        # Persisted story evidence can contain material from sources outside
+        # this digest. Facts and the reader-facing seed headline must therefore
+        # be rebuilt from the already filtered items.
+        facts = _extract_scoped_facts(items)
 
         # Evidence freshness — most recent published_at
         pub_dates = [item.published_at for item in items if item.published_at]
@@ -190,16 +219,18 @@ def build_evidence_set(
         story_packets.append(
             EvidenceStoryPacket(
                 story_id=story.id,
-                headline=story.headline,
-                keywords=story.cluster_keywords or [],
+                headline=items[0].title,
+                keywords=[],
                 trust_status=story.trust_status,
                 confidence=story.confidence,
                 importance_score=story.importance_score,
-                source_count=story.source_count,
+                source_count=len(
+                    {item.raw_item.source_id for item in items if item.raw_item is not None}
+                ),
                 item_count=len(items),
                 sources=sources,
                 facts=facts[:10],
-                contradictions=contradictions,
+                contradictions=[],
                 evidence_freshness=evidence_freshness,
                 duplicate_cluster_info=None,
             )

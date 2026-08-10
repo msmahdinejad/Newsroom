@@ -131,6 +131,36 @@ def test_programming_category_does_not_promote_empty_channel_chatter():
     )
 
 
+def test_source_category_does_not_satisfy_an_explicit_include_term():
+    interest = InterestPolicy(
+        topic_brief="artificial intelligence",
+        include_terms=("AI",),
+    )
+
+    assert not is_interest_material(
+        interest=interest,
+        category="ai",
+        title="House of the Dragon season finale",
+        description="A television recap with yachts and investments.",
+        source_type="telegram",
+    )
+
+
+def test_subscription_footer_does_not_make_unrelated_content_relevant():
+    interest = InterestPolicy(
+        topic_brief="artificial intelligence",
+        include_terms=("AI", "ИИ"),
+    )
+
+    assert not is_interest_material(
+        interest=interest,
+        category="ai",
+        title="House of the Dragon season finale",
+        description="Яхты и инвестиции. Подписывайтесь на Sber AI в МАКС",
+        source_type="telegram",
+    )
+
+
 @pytest.mark.parametrize(
     "title",
     [
@@ -142,6 +172,14 @@ def test_programming_category_does_not_promote_empty_channel_chatter():
         "Hey there Alice, and welcome to our Python project! How are you?",
         "Google DeepMind blog",
         "Anthropic News",
+        "Explore all research areas",
+        "Machine Learning Research",
+        "If AI models were cats: a cute meme",
+        "ОСТОРОЖНО: СЛИШКОМ МИЛО — если бы ИИ-модели были котами",
+        "ПЕРЕВЕДЁТЕ БЕЗ ИИ?",
+        "ИИ-СТАРТАПЫ, ВАШ ВЫХОД — участвуйте в номинации",
+        "Завершилась пятая Летняя школа по искусственному интеллекту",
+        "Научная премия Сбера собрала 400 заявок",
         "Python Django Complete Guide Price: 5.98€",
     ],
 )

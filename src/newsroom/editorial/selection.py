@@ -13,12 +13,13 @@ Uses set-based SQL — no per-story queries, no loading all delivery history.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from newsroom.config import settings
 from newsroom.control.digests import InterestPolicy
 from newsroom.editorial.report_profiles import (
     DEFAULT_INTEREST_POLICY,
@@ -50,11 +51,84 @@ class SelectionResult:
     no_new_items: bool
 
 
+@dataclass(frozen=True)
+class StoryMaterial:
+    """Source-backed material used for deterministic report selection."""
+
+    source_id: int
+    source_type: str
+    category: str
+    title: str
+    description: str
+    enabled: bool
+    published_at: datetime | None
+
+
+def retain_recent_stories(
+    story_ids: list[int],
+    material: dict[int, list[StoryMaterial]],
+    *,
+    max_age_hours: int,
+    now: datetime | None = None,
+) -> list[int]:
+    """Drop explicitly stale stories while preserving undated/legacy material."""
+    if max_age_hours <= 0:
+        return story_ids
+    cutoff = (now or datetime.now(UTC)) - timedelta(hours=max_age_hours)
+    return [
+        story_id
+        for story_id in story_ids
+        if not material.get(story_id)
+        or any(
+            entry.published_at is None or entry.published_at >= cutoff
+            for entry in material[story_id]
+        )
+    ]
+
+
+def balance_story_sources(
+    story_ids: list[int],
+    material: dict[int, list[StoryMaterial]],
+    *,
+    max_stories: int,
+    max_per_source: int,
+) -> list[int]:
+    """Keep one feed from monopolizing the default digest."""
+    if max_per_source <= 0:
+        return story_ids[:max_stories]
+    source_counts: dict[int, int] = {}
+    selected: list[int] = []
+    for story_id in story_ids:
+        source_ids = sorted(
+            {entry.source_id for entry in material.get(story_id, []) if entry.enabled}
+        )
+        if not source_ids:
+            selected.append(story_id)
+        else:
+            available = [
+                source_id
+                for source_id in source_ids
+                if source_counts.get(source_id, 0) < max_per_source
+            ]
+            if not available:
+                continue
+            attributed_source = min(
+                available,
+                key=lambda source_id: (source_counts.get(source_id, 0), source_id),
+            )
+            source_counts[attributed_source] = source_counts.get(attributed_source, 0) + 1
+            selected.append(story_id)
+        if len(selected) >= max_stories:
+            break
+    return selected
+
+
 def reserve_telegram_story_ids(
     selected: list[int],
     candidates: list[int],
     *,
     telegram_story_ids: set[int],
+    telegram_source_ids_by_story: dict[int, set[int]] | None = None,
     max_stories: int,
     minimum_telegram_stories: int,
 ) -> list[int]:
@@ -62,6 +136,39 @@ def reserve_telegram_story_ids(
     minimum = max(0, min(minimum_telegram_stories, max_stories))
     if not minimum or not telegram_story_ids:
         return selected[:max_stories]
+
+    if telegram_source_ids_by_story:
+        reserved: list[int] = []
+        used_sources: set[int] = set()
+        telegram_candidates = [
+            story_id for story_id in candidates if story_id in telegram_story_ids
+        ]
+        for story_id in telegram_candidates:
+            story_sources = telegram_source_ids_by_story.get(story_id, set())
+            if story_sources - used_sources:
+                reserved.append(story_id)
+                used_sources.update(story_sources)
+                if len(reserved) >= minimum:
+                    break
+        for story_id in telegram_candidates:
+            if len(reserved) >= minimum:
+                break
+            if story_id not in reserved:
+                reserved.append(story_id)
+        retained = [
+            story_id
+            for story_id in selected
+            if story_id not in telegram_story_ids or story_id in reserved
+        ]
+        missing = [story_id for story_id in reserved if story_id not in retained]
+        retained = retained[: max(0, max_stories - len(missing))]
+        result = retained + missing
+        for story_id in candidates:
+            if len(result) >= max_stories:
+                break
+            if story_id not in result:
+                result.append(story_id)
+        return result
 
     included = [story_id for story_id in selected if story_id in telegram_story_ids]
     missing = [
@@ -80,11 +187,9 @@ def reserve_telegram_story_ids(
 def _story_material(
     db: Session,
     story_ids: list[int],
-) -> dict[int, list[tuple[int, str, str, str, str, bool]]]:
+) -> dict[int, list[StoryMaterial]]:
     """Load bounded selection metadata in one query."""
-    material: dict[int, list[tuple[int, str, str, str, str, bool]]] = {
-        story_id: [] for story_id in story_ids
-    }
+    material: dict[int, list[StoryMaterial]] = {story_id: [] for story_id in story_ids}
     if not story_ids:
         return material
     rows = (
@@ -96,6 +201,7 @@ def _story_material(
             NormalizedItem.title,
             NormalizedItem.description,
             Source.enabled,
+            NormalizedItem.published_at,
         )
         .join(NormalizedItem, StoryItem.item_id == NormalizedItem.id)
         .join(RawItem, NormalizedItem.raw_item_id == RawItem.id)
@@ -111,18 +217,37 @@ def _story_material(
         title,
         description,
         source_enabled,
+        published_at,
     ) in rows:
         material[story_id].append(
-            (
-                source_id,
-                source_type,
-                category or "",
-                title or "",
-                description or "",
-                bool(source_enabled),
+            StoryMaterial(
+                source_id=source_id,
+                source_type=source_type,
+                category=category or "",
+                title=title or "",
+                description=description or "",
+                enabled=bool(source_enabled),
+                published_at=published_at,
             )
         )
     return material
+
+
+def _scoped_material(
+    material: dict[int, list[StoryMaterial]],
+    profile: ReportProfile,
+    source_ids: frozenset[int] | None,
+) -> dict[int, list[StoryMaterial]]:
+    return {
+        story_id: [
+            entry
+            for entry in entries
+            if entry.enabled
+            and (source_ids is None or entry.source_id in source_ids)
+            and (profile.source_types is None or entry.source_type in profile.source_types)
+        ]
+        for story_id, entries in material.items()
+    }
 
 
 def _eligible_story_ids(
@@ -134,6 +259,7 @@ def _eligible_story_ids(
 ) -> list[int]:
     """Apply source exclusivity and high-recall subject relevance."""
     material = _story_material(db, story_ids)
+    scoped_material = _scoped_material(material, profile, source_ids)
     eligible: list[int] = []
     for story_id in story_ids:
         entries = material[story_id]
@@ -142,21 +268,15 @@ def _eligible_story_ids(
             if profile.source_types is None:
                 eligible.append(story_id)
             continue
-        scoped = [
-            entry
-            for entry in entries
-            if entry[5]
-            and (source_ids is None or entry[0] in source_ids)
-            and (profile.source_types is None or entry[1] in profile.source_types)
-        ]
+        scoped = scoped_material[story_id]
         if not scoped:
             continue
         scoped = [
             entry
             for entry in scoped
             if is_usable_editorial_material(
-                title=entry[3],
-                description=entry[4],
+                title=entry.title,
+                description=entry.description,
             )
         ]
         if not scoped:
@@ -164,12 +284,12 @@ def _eligible_story_ids(
         if not any(
             is_interest_material(
                 interest=interest,
-                source_type=source_type,
-                category=category,
-                title=title,
-                description=description,
+                source_type=entry.source_type,
+                category=entry.category,
+                title=entry.title,
+                description=entry.description,
             )
-            for _source_id, source_type, category, title, description, _enabled in scoped
+            for entry in scoped
         ):
             continue
         eligible.append(story_id)
@@ -203,43 +323,89 @@ def _candidate_query(
 
 def _with_telegram_reserve(
     db: Session,
-    story_ids: list[int],
+    selected: list[int],
+    candidates: list[int],
     max_stories: int,
     minimum_telegram_stories: int,
     interest: InterestPolicy,
     source_ids: frozenset[int] | None,
 ) -> list[int]:
     """Give eligible Telegram stories a bounded seat."""
-    if not story_ids:
+    if not candidates:
         return []
-    material = _story_material(db, story_ids)
+    material = _story_material(db, candidates)
     telegram_story_ids = {
         story_id
         for story_id, entries in material.items()
         if any(
-            source_type == "telegram"
-            and (source_ids is None or source_id in source_ids)
+            entry.source_type == "telegram"
+            and (source_ids is None or entry.source_id in source_ids)
             and is_usable_editorial_material(
-                title=title,
-                description=description,
+                title=entry.title,
+                description=entry.description,
             )
             and is_interest_material(
                 interest=interest,
-                source_type=source_type,
-                category=category,
-                title=title,
-                description=description,
+                source_type=entry.source_type,
+                category=entry.category,
+                title=entry.title,
+                description=entry.description,
             )
-            for source_id, source_type, category, title, description, enabled in entries
-            if enabled
+            for entry in entries
+            if entry.enabled
         )
     }
+    telegram_source_ids_by_story = {
+        story_id: {
+            entry.source_id
+            for entry in entries
+            if entry.enabled
+            and entry.source_type == "telegram"
+            and (source_ids is None or entry.source_id in source_ids)
+        }
+        for story_id, entries in material.items()
+    }
     return reserve_telegram_story_ids(
-        story_ids[:max_stories],
-        story_ids,
+        selected,
+        candidates,
         telegram_story_ids=telegram_story_ids,
+        telegram_source_ids_by_story=telegram_source_ids_by_story,
         max_stories=max_stories,
         minimum_telegram_stories=minimum_telegram_stories,
+    )
+
+
+def _recent_scoped_story_ids(
+    db: Session,
+    story_ids: list[int],
+    profile: ReportProfile,
+    source_ids: frozenset[int] | None,
+) -> list[int]:
+    """Apply the configured freshness window to in-scope material."""
+    material = _story_material(db, story_ids)
+    scoped = _scoped_material(material, profile, source_ids)
+    return retain_recent_stories(
+        story_ids,
+        scoped,
+        max_age_hours=settings.editorial_max_item_age_hours,
+    )
+
+
+def _balanced_story_ids(
+    db: Session,
+    story_ids: list[int],
+    profile: ReportProfile,
+    source_ids: frozenset[int] | None,
+    *,
+    max_stories: int,
+) -> list[int]:
+    """Apply the per-source cap to non-comprehensive digests."""
+    material = _scoped_material(_story_material(db, story_ids), profile, source_ids)
+    return balance_story_sources(
+        story_ids,
+        material,
+        max_stories=max_stories,
+        max_per_source=(0 if profile.comprehensive else settings.editorial_max_stories_per_source),
     )
 
 
@@ -428,11 +594,17 @@ def select_stories_for_report(
                 interest,
                 normalized_source_ids,
             )
+        candidate_ids = _recent_scoped_story_ids(
+            db,
+            candidate_ids,
+            profile,
+            normalized_source_ids,
+        )
         total_candidates = len(candidate_ids)
         # Exclude delivered unchanged stories (already delivered, no change).
-        selected = [sid for sid in candidate_ids if sid not in excluded_delivered]
-        excluded_count = total_candidates - len(selected)
-        if not selected:
+        undelivered = [sid for sid in candidate_ids if sid not in excluded_delivered]
+        excluded_count = total_candidates - len(undelivered)
+        if not undelivered:
             return SelectionResult(
                 story_ids=[],
                 excluded_as_delivered=excluded_count,
@@ -443,9 +615,17 @@ def select_stories_for_report(
                 report_mode=report_mode,
                 no_new_items=True,
             )
+        selected = _balanced_story_ids(
+            db,
+            undelivered,
+            profile,
+            normalized_source_ids,
+            max_stories=max_stories,
+        )
         selected = _with_telegram_reserve(
             db,
             selected,
+            undelivered,
             max_stories,
             profile.minimum_telegram_stories,
             interest,
@@ -477,10 +657,16 @@ def select_stories_for_report(
             interest,
             normalized_source_ids,
         )
+        candidate_ids = _recent_scoped_story_ids(
+            db,
+            candidate_ids,
+            profile,
+            normalized_source_ids,
+        )
         total_candidates = len(candidate_ids)
-        selected = [sid for sid in candidate_ids if sid not in excluded_delivered]
-        excluded_count = len(candidate_ids) - len(selected)
-        if not selected:
+        undelivered = [sid for sid in candidate_ids if sid not in excluded_delivered]
+        excluded_count = len(candidate_ids) - len(undelivered)
+        if not undelivered:
             return SelectionResult(
                 story_ids=[],
                 excluded_as_delivered=excluded_count,
@@ -491,9 +677,17 @@ def select_stories_for_report(
                 report_mode=report_mode,
                 no_new_items=True,
             )
+        selected = _balanced_story_ids(
+            db,
+            undelivered,
+            profile,
+            normalized_source_ids,
+            max_stories=max_stories,
+        )
         selected = _with_telegram_reserve(
             db,
             selected,
+            undelivered,
             max_stories,
             profile.minimum_telegram_stories,
             interest,
@@ -525,9 +719,23 @@ def select_stories_for_report(
         interest,
         normalized_source_ids,
     )
+    candidate_ids = _recent_scoped_story_ids(
+        db,
+        candidate_ids,
+        profile,
+        normalized_source_ids,
+    )
     total_candidates = len(candidate_ids)
+    selected = _balanced_story_ids(
+        db,
+        candidate_ids,
+        profile,
+        normalized_source_ids,
+        max_stories=max_stories,
+    )
     selected = _with_telegram_reserve(
         db,
+        selected,
         candidate_ids,
         max_stories,
         profile.minimum_telegram_stories,

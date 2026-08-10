@@ -172,6 +172,14 @@ _NON_ARTICLE_RE = re.compile(
     r"|gemini\s+pro.+cdk"
     r"|\#?user_joined|event\s+stamp"
     r"|back\s+and\s+working\s+perfectly"
+    r"|^explore\s+all\s+.+(?:areas|topics)$"
+    r"|^(?:machine\s+learning|artificial\s+intelligence)\s+research$"
+    r"|\b(?:meme|joke)\b"
+    r"|слишком\s+мило|если\s+бы.+были\s+котами"
+    r"|перевед[её]те\s+без\s+ии"
+    r"|(?:ии-)?стартапы,?\s+ваш\s+выход|участвуйте\s+в\s+номинации"
+    r"|завершилась.+летн(?:яя|ей)\s+школ"
+    r"|научная\s+премия.+заяв"
 )
 
 DEFAULT_INTEREST_POLICY = InterestPolicy(DEFAULT_TOPIC_BRIEF)
@@ -198,6 +206,13 @@ _TOPIC_STOP_WORDS = frozenset(
         "\u0647\u0627\u06cc",
     }
 )
+
+
+def _contains_interest_term(text: str, term: str) -> bool:
+    normalized = term.casefold().strip()
+    if len(normalized) <= 3 and re.fullmatch(r"[\w-]+", normalized):
+        return bool(re.search(rf"(?<!\w){re.escape(normalized)}(?!\w)", text))
+    return normalized in text
 
 
 def resolve_report_profile(report_mode: str) -> ReportProfile:
@@ -251,10 +266,16 @@ def is_interest_material(
     source_type: str,
 ) -> bool:
     """Apply a high-recall deterministic interest filter before LLM work."""
-    combined = f"{category}\n{title}\n{description}".casefold()
+    text = f"{title}\n{description}".casefold()
+    interest_text = re.sub(
+        r"(?is)(?:подписывайтесь|subscribe(?:\s+to)?|follow\s+us).*$",
+        "",
+        text,
+    )
+    combined = f"{category}\n{text}"
     if any(term.casefold() in combined for term in interest.exclude_terms):
         return False
-    if any(term.casefold() in combined for term in interest.include_terms):
+    if any(_contains_interest_term(interest_text, term) for term in interest.include_terms):
         return True
     if interest.topic_brief == DEFAULT_TOPIC_BRIEF:
         return is_programming_material(
@@ -279,10 +300,14 @@ def is_usable_editorial_material(*, title: str, description: str) -> bool:
     if len(clean_title) < 8 or _NON_ARTICLE_RE.search(clean_title):
         return False
     words = re.findall(r"[\w\u0600-\u06FF]+", clean_title)
-    if not description.strip() and len(words) <= 4 and re.search(
-        r"\b(?:blog|news|homepage|home\s+page)$",
-        clean_title,
-        re.IGNORECASE,
+    if (
+        not description.strip()
+        and len(words) <= 4
+        and re.search(
+            r"\b(?:blog|news|homepage|home\s+page)$",
+            clean_title,
+            re.IGNORECASE,
+        )
     ):
         return False
     return not (len(words) < 3 and not description.strip())

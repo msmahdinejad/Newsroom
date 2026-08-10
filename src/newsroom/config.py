@@ -123,9 +123,11 @@ class Settings(BaseSettings):
     editorial_max_output_tokens: int = 8000
     editorial_temperature: float = 0.3
     editorial_fallback_enabled: bool = True
-    editorial_max_stories_per_call: int = 15
+    editorial_max_stories_per_call: int = 8
     editorial_max_evidence_per_story: int = 10
     editorial_max_excerpt_length: int = 300
+    editorial_max_item_age_hours: int = 168
+    editorial_max_stories_per_source: int = 3
     editorial_min_telegram_stories: int = 2
     editorial_concurrency_limit: int = 1
     editorial_scheduled_run_budget: int = 1
