@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from newsroom.control.digests import (
@@ -208,7 +209,12 @@ class NewsroomControl:
         normalized_name = " ".join(name.split())
         if not normalized_name:
             raise ValueError("name is required")
-        existing = self.db.query(Source).filter(Source.stable_identity == identity).first()
+        existing = _find_existing_source(
+            self.db,
+            source_type=normalized_type,
+            normalized_url=normalized_url,
+            identity=identity,
+        )
         if isinstance(existing, Source):
             if enabled:
                 existing.enabled = True
@@ -316,16 +322,12 @@ class NewsroomControl:
                     normalized["type"],
                     normalized["url"],
                 )
-                existing = self.db.query(Source).filter(Source.stable_identity == identity).first()
-                if existing is None:
-                    existing = (
-                        self.db.query(Source)
-                        .filter(
-                            Source.type == normalized["type"],
-                            Source.url == normalized["url"],
-                        )
-                        .first()
-                    )
+                existing = _find_existing_source(
+                    self.db,
+                    source_type=normalized["type"],
+                    normalized_url=normalized["url"],
+                    identity=identity,
+                )
                 if existing is not None:
                     existing.url = normalized["url"]
                     existing.language = normalized["language"]
@@ -557,6 +559,28 @@ def _normalize_source_url(value: str, source_type: str) -> str:
 
 def _stable_source_identity(source_type: str, url: str) -> str:
     return hashlib.sha256(f"{source_type}:{url.casefold()}".encode()).hexdigest()
+
+
+def _find_existing_source(
+    db: Session,
+    *,
+    source_type: str,
+    normalized_url: str,
+    identity: str,
+) -> Source | None:
+    existing = db.query(Source).filter(Source.stable_identity == identity).first()
+    if isinstance(existing, Source):
+        return existing
+    equivalent = (
+        db.query(Source)
+        .filter(
+            Source.type == source_type,
+            func.lower(func.rtrim(Source.url, "/")) == normalized_url.casefold().rstrip("/"),
+        )
+        .order_by(Source.id)
+        .first()
+    )
+    return equivalent if isinstance(equivalent, Source) else None
 
 
 def _unique_source_name(db: Session, base: str) -> str:

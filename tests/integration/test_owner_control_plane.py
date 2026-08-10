@@ -65,6 +65,34 @@ def test_import_enable_disable_and_archive_preserve_source_row(db: Session) -> N
     assert source.inactive_reason == "owner_deleted"
 
 
+def test_import_reuses_legacy_source_with_equivalent_url(db: Session) -> None:
+    suffix = uuid4().hex
+    source = Source(
+        name=f"Legacy source {suffix}",
+        type="web_page",
+        url=f"https://example.com/{suffix}/",
+        stable_identity=uuid4().hex,
+        enabled=False,
+        trust_class="community",
+    )
+    db.add(source)
+    db.flush()
+    payload = (
+        "name,type,url,language,category,trust_class,enabled\n"
+        f"Canonical source,web_page,https://example.com/{suffix},en,ai,official,true\n"
+    ).encode()
+
+    imported = NewsroomControl(db).import_sources("sources.csv", payload)
+    db.flush()
+
+    assert imported.created == 0
+    assert imported.updated == 1
+    assert db.query(Source).filter(Source.url.contains(suffix)).count() == 1
+    assert source.url == f"https://example.com/{suffix}"
+    assert source.trust_class == "official"
+    assert source.enabled is True
+
+
 def test_named_digest_and_report_lineage_round_trip(db: Session) -> None:
     suffix = uuid4().hex[:10]
     control = NewsroomControl(db)
