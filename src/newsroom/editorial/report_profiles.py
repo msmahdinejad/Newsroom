@@ -279,6 +279,12 @@ def is_usable_editorial_material(*, title: str, description: str) -> bool:
     if len(clean_title) < 8 or _NON_ARTICLE_RE.search(clean_title):
         return False
     words = re.findall(r"[\w\u0600-\u06FF]+", clean_title)
+    if not description.strip() and len(words) <= 4 and re.search(
+        r"\b(?:blog|news|homepage|home\s+page)$",
+        clean_title,
+        re.IGNORECASE,
+    ):
+        return False
     return not (len(words) < 3 and not description.strip())
 
 

@@ -61,6 +61,30 @@ timezone, source selection, report size, Telegram minimum, and local schedule.
 Use `newsroom digests list|show|create|update|enable|disable`. `.env` contains
 only bootstrap defaults and process-level bounds.
 
+Reader presentation and editorial preferences are digest-local as well:
+
+```bash
+uv run newsroom digests update default \
+  --style numbered \
+  --date-style jalali \
+  --links 2 \
+  --provider mistral \
+  --model mistral-large-2512 \
+  --footer "Share this briefing with your team." \
+  --instructions "Use direct headlines and concise, factual summaries."
+```
+
+`sectioned|numbered`, `iso|jalali`, and zero to three links per story are
+validated configuration, not prompt text. Editorial preferences are bounded
+operator input and remain subordinate to the code-owned grounding, safety,
+language, and structured-output rules. No credentials belong in a digest.
+
+When `--source-ids` is set, a scheduled pipeline limits collection and evidence
+to those sources. Dedicated Telegram and X workers continue their incremental
+cursor loops independently. Keep curated stateless memberships within the
+configured `COLLECT_MAX_SOURCES_PER_CYCLE`; larger catalogs are visited fairly
+across background cycles.
+
 ## Telegram output
 
 Create a bot through BotFather and configure:

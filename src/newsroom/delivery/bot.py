@@ -402,10 +402,25 @@ class TelegramBot:
                         snapshot = control.configure(
                             source_ids=[int(item) for item in value.split(",") if item.strip()]
                         )
+                    elif section == "instructions":
+                        snapshot = control.configure(editorial_instructions=value)
+                    elif section == "style":
+                        snapshot = control.configure(presentation_style=value)
+                    elif section == "date_style":
+                        snapshot = control.configure(date_style=value)
+                    elif section == "links":
+                        snapshot = control.configure(max_links_per_story=int(value))
+                    elif section == "footer":
+                        snapshot = control.configure(footer_text=value)
+                    elif section == "provider":
+                        snapshot = control.configure(preferred_provider=value)
+                    elif section == "model":
+                        snapshot = control.configure(preferred_model=value)
                     else:
                         raise ValueError(
                             "use name, topic, include, exclude, language, timezone, "
-                            "count, telegram_min, schedule, sources, or source_ids"
+                            "count, telegram_min, schedule, sources, source_ids, instructions, "
+                            "style, date_style, links, footer, provider, or model"
                         )
                     response = (
                         localized_text(

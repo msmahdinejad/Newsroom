@@ -88,27 +88,33 @@ def _emit(obj: dict[str, Any]) -> None:
     sys.stdout.flush()
 
 
-def _collection_kwargs() -> dict[str, Any]:
+def _collection_kwargs(source_ids: tuple[int, ...] = ()) -> dict[str, Any]:
     """Bound scheduled native collection and keep dedicated owners exclusive."""
     from newsroom.config import settings
 
-    return {
+    result: dict[str, Any] = {
         "limit_per_source": settings.collect_limit_per_source,
         "max_sources": settings.collect_max_sources_per_cycle,
         "source_spacing_seconds": settings.collect_source_spacing_seconds,
         "exclude_source_types": {"telegram", "x_timeline"},
     }
+    if source_ids:
+        result["source_ids"] = source_ids
+    return result
 
 
-def _agent_reach_collection_kwargs() -> dict[str, Any]:
+def _agent_reach_collection_kwargs(source_ids: tuple[int, ...] = ()) -> dict[str, Any]:
     """Bound optional Agent-Reach work to the same fair cycle budget."""
     from newsroom.config import settings
 
-    return {
+    result: dict[str, Any] = {
         "limit_per_source": settings.collect_limit_per_source,
         "max_sources": settings.collect_max_sources_per_cycle,
         "min_source_spacing_seconds": settings.collect_source_spacing_seconds,
     }
+    if source_ids:
+        result["source_ids"] = source_ids
+    return result
 
 
 def _completed_scheduled_run(
@@ -196,13 +202,18 @@ async def _run_async(
         result["stages"].append(entry)
         _emit({"stage": name, "status": status, "detail": detail})
 
+    from newsroom.control import NewsroomControl
+
+    control_plane = NewsroomControl(session)
+    digest = control_plane.digests.get(request.digest_slug)
+    result["digest_id"] = digest.id
     skip_collect = request.skip_collect
 
     if skip_collect:
         stage("collect", "skipped", "NEWSROOM_SKIP_COLLECT set")
     else:
         stage("collect", "starting")
-        coll = await collect_sources(session, **_collection_kwargs())
+        coll = await collect_sources(session, **_collection_kwargs(digest.source_ids))
         session.commit()
         stage("collect", "ok", f"{coll['new_items']} new / {coll['sources']} sources")
 
@@ -216,7 +227,7 @@ async def _run_async(
         stage("collect_agent_reach", "starting")
         ar_coll = await collect_agent_reach_sources(
             session,
-            **_agent_reach_collection_kwargs(),
+            **_agent_reach_collection_kwargs(digest.source_ids),
         )
         session.commit()
         if ar_coll.get("disabled"):
@@ -247,15 +258,11 @@ async def _run_async(
     stage("cluster", "ok", f"{processed.clustered} items clustered in claimed batch")
 
     stage("report", "starting")
-    from newsroom.control import NewsroomControl
     from newsroom.editorial.report_profiles import resolve_report_profile
     from newsroom.editorial.selection import select_stories_for_report
 
     report_mode = result["report_mode"]
     report_profile = resolve_report_profile(report_mode)
-    control_plane = NewsroomControl(session)
-    digest = control_plane.digests.get(request.digest_slug)
-    result["digest_id"] = digest.id
     uses_owner_defaults = report_mode in {
         "scheduled",
         "manual",
@@ -311,6 +318,7 @@ async def _run_async(
             report_language,
             digest_name=digest.name,
             timezone=digest.timezone,
+            delivery_config=digest.delivery_config,
         )
         report = Report(
             content_fa=notice,

@@ -73,7 +73,15 @@ class ControlSnapshot:
     source_ids: tuple[int, ...] = ()
     minimum_telegram_stories: int = 0
     provider_policy: dict[str, object] | None = None
+    editorial_config: dict[str, object] | None = None
     delivery_config: dict[str, object] | None = None
+    editorial_instructions: str = ""
+    presentation_style: str = "sectioned"
+    date_style: str = "iso"
+    max_links_per_story: int = 3
+    footer_text: str = ""
+    preferred_provider: str = ""
+    preferred_model: str = ""
 
 
 @dataclass(frozen=True)
@@ -119,6 +127,13 @@ class NewsroomControl:
         timezone: str | None = None,
         source_ids: list[int] | tuple[int, ...] | None = None,
         minimum_telegram_stories: int | None = None,
+        editorial_instructions: str | None = None,
+        presentation_style: str | None = None,
+        date_style: str | None = None,
+        max_links_per_story: int | None = None,
+        footer_text: str | None = None,
+        preferred_provider: str | None = None,
+        preferred_model: str | None = None,
     ) -> ControlSnapshot:
         source_values = tuple(_split_values(source_groups)) if source_groups is not None else None
         time_values = tuple(_split_values(schedule_times)) if schedule_times is not None else None
@@ -139,6 +154,13 @@ class NewsroomControl:
                 minimum_telegram_stories=minimum_telegram_stories,
                 schedule_times=time_values,
                 schedule_enabled=schedule_enabled,
+                editorial_instructions=editorial_instructions,
+                presentation_style=presentation_style,
+                date_style=date_style,
+                max_links_per_story=max_links_per_story,
+                footer_text=footer_text,
+                preferred_provider=preferred_provider,
+                preferred_model=preferred_model,
             ),
         )
         return _control_snapshot(updated)
@@ -381,7 +403,15 @@ def _control_snapshot(digest: DigestSnapshot) -> ControlSnapshot:
         source_ids=digest.source_ids,
         minimum_telegram_stories=digest.minimum_telegram_stories,
         provider_policy=digest.provider_policy,
+        editorial_config=digest.editorial_config,
         delivery_config=digest.delivery_config,
+        editorial_instructions=digest.editorial_instructions,
+        presentation_style=digest.presentation_style,
+        date_style=digest.date_style,
+        max_links_per_story=digest.max_links_per_story,
+        footer_text=digest.footer_text,
+        preferred_provider=digest.preferred_provider,
+        preferred_model=digest.preferred_model,
     )
 
 

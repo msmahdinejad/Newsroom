@@ -695,6 +695,56 @@ def test_policy_rejection_tries_only_one_compatible_alternate():
     assert [call[0] for call in transport.calls] == ["gemini", "mistral"]
 
 
+def test_policy_rejection_skips_remaining_models_on_the_rejected_provider():
+    clock = ManualClock()
+    transport = FakeTransport(
+        {
+            ("gemini", "primary"): [RouteFailure(RouteFailureCategory.POLICY_REJECTION)],
+            ("mistral", "alternate"): [_response("mistral", "alternate")],
+        }
+    )
+    router = _router(
+        (
+            _provider("gemini", models=("primary", "secondary")),
+            _provider("mistral", models=("alternate",)),
+        ),
+        transport,
+        clock,
+    )
+
+    result = router.route(_request())
+
+    assert result.response.provider == "mistral"
+    assert [(call[0], call[1]) for call in transport.calls] == [
+        ("gemini", "primary"),
+        ("mistral", "alternate"),
+    ]
+
+
+def test_digest_route_preference_uses_validated_model_then_keeps_fallbacks():
+    clock = ManualClock()
+    transport = FakeTransport(
+        {("mistral", "quality"): [_response("mistral", "quality")]}
+    )
+    router = _router(
+        (
+            _provider("gemini", models=("fast",)),
+            _provider("mistral", models=("fast", "quality")),
+        ),
+        transport,
+        clock,
+    )
+    request = _request().model_copy(
+        update={"preferred_provider": "mistral", "preferred_model": "quality"}
+    )
+
+    result = router.route(request)
+
+    assert result.response.provider == "mistral"
+    assert result.response.model == "quality"
+    assert [(call[0], call[1]) for call in transport.calls] == [("mistral", "quality")]
+
+
 def test_attempts_and_health_contain_no_provider_value():
     clock = ManualClock()
     sink = InMemoryRouterStateSink()

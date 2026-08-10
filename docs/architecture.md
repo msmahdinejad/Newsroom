@@ -80,8 +80,10 @@ adapter types. New platform adapters therefore require reviewed code.
 
 Digest definitions are data-owned and intentionally flexible. A digest carries
 its topic brief, include/exclude terms, source membership, output language,
-timezone, story budget, and schedule. The scheduler and pipeline receive an
-immutable digest projection, avoiding process-environment mutation.
+timezone, story budget, schedule, bounded editorial preferences, and public
+presentation options. The scheduler and pipeline receive an immutable digest
+projection, avoiding process-environment mutation. Security, grounding, and
+provider schemas stay code-owned even when an operator changes tone or layout.
 
 Editorial providers are protocol-owned. OpenAI-compatible, Gemini-native, and
 Anthropic-native adapters translate one internal request contract into provider

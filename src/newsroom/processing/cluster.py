@@ -26,10 +26,23 @@ _STOPWORDS = {
     "http", "https", "www", "com", "href", "table", "submitted", "user",
     "reddit", "comments", "comment", "share", "vote", "permalink", "source",
     "score", "hours", "link", "video", "fact", "checker",
+    # Headline filler that hides event-level overlap.
+    "brand", "found", "just", "new", "not", "used", "using",
     # Persian stopwords
     "\u062f\u0631", "\u0627\u0632", "\u0628\u0647", "\u06a9\u0647", "\u0627\u06cc\u0646", "\u0631\u0627", "\u0628\u0631\u0627\u06cc", "\u0628\u0627", "\u0627\u0633\u062a", "\u0634\u062f",
     "\u0645\u06cc", "\u0622\u0646", "\u06cc\u06a9", "\u062a\u0627", "\u0628\u0631", "\u06cc\u0627", "\u0647\u0645", "\u0646\u06cc\u0632", "\u0627\u0645\u0627", "\u0647\u0631",
 }
+
+_KEYWORD_ALIASES = {
+    "created": "create",
+    "creates": "create",
+    "creating": "create",
+    "design": "create",
+    "designed": "create",
+    "designing": "create",
+    "designs": "create",
+}
+_GENERIC_CLUSTER_TERMS = {"ai", "create", "model", "release", "released", "update"}
 
 
 class Clusterer:
@@ -102,10 +115,16 @@ class Clusterer:
     def _extract_keywords(self, text: str) -> set[str]:
         """Extract significant keywords with version compounds."""
         clean = html.unescape(text)
+        clean = re.sub(r"\bartificial\s+intelligence\b", " ai ", clean, flags=re.IGNORECASE)
+        clean = re.sub(r"\ba\.?\s*i\.?\b", " ai ", clean, flags=re.IGNORECASE)
         clean = re.sub(r"<[^>]+>", " ", clean)
         clean = re.sub(r"https?://\S+|www\.\S+", " ", clean)
         words = re.findall(r"[\w\u0600-\u06FF]+", clean.lower())
-        keywords = {w for w in words if len(w) > 2 and w not in _STOPWORDS}
+        keywords = {
+            _KEYWORD_ALIASES.get(word, word)
+            for word in words
+            if (len(word) > 2 or word == "ai") and word not in _STOPWORDS
+        }
 
         # Version compounds: "python 3.13" → "python-3.13"
         for i, w in enumerate(words[:-1]):
@@ -118,6 +137,10 @@ class Clusterer:
     def _compute_similarity(self, a: set[str], b: set[str]) -> float:
         """Weighted Jaccard — version compounds get double weight."""
         if not a or not b:
+            return 0.0
+
+        shared = a & b
+        if shared and shared.issubset(_GENERIC_CLUSTER_TERMS):
             return 0.0
 
         def weight(kw: str) -> float:

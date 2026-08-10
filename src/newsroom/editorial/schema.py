@@ -15,8 +15,8 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 # ── Version constants ─────────────────────────────────────────────
 
-SYSTEM_PROMPT_VERSION = "g7sp-v4"
-EVIDENCE_SCHEMA_VERSION = "g7ev-v2"
+SYSTEM_PROMPT_VERSION = "g7sp-v6"
+EVIDENCE_SCHEMA_VERSION = "g7ev-v3"
 OUTPUT_SCHEMA_VERSION = "g7out-v4"
 TERMINOLOGY_POLICY_VERSION = "g5tp-v2"
 GROUNDING_VALIDATOR_VERSION = "g4gv-v1"
@@ -74,6 +74,9 @@ class EditorialEvidenceSet(BaseModel):
     topic_brief: str = "News selected by the operator."
     include_terms: list[str] = Field(default_factory=list)
     exclude_terms: list[str] = Field(default_factory=list)
+    editorial_instructions: str = ""
+    preferred_provider: str = ""
+    preferred_model: str = ""
     stories: list[EvidenceStoryPacket] = Field(default_factory=list)
 
     def evidence_hash(self) -> str:
@@ -284,6 +287,8 @@ class EditorialRequest(BaseModel):
     stage: str = "editorial"
     job_id: str = ""
     shard_id: str = ""
+    preferred_provider: str = ""
+    preferred_model: str = ""
 
 
 class EditorialResponse(BaseModel):

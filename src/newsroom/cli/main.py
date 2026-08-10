@@ -103,6 +103,20 @@ def main() -> int:
     digest_update.add_argument("--count", type=int)
     digest_update.add_argument("--telegram-min", type=int)
     digest_update.add_argument("--schedule")
+    digest_update.add_argument(
+        "--instructions",
+        help="Operator editorial preferences (grounding and schema rules remain fixed)",
+    )
+    digest_update.add_argument(
+        "--style",
+        choices=["sectioned", "numbered"],
+        help="Reader-facing report layout",
+    )
+    digest_update.add_argument("--date-style", choices=["iso", "jalali"])
+    digest_update.add_argument("--links", type=int, help="Source links per story (0-3)")
+    digest_update.add_argument("--footer", help="Optional report footer; empty clears it")
+    digest_update.add_argument("--provider", help="Preferred validated provider for final copy")
+    digest_update.add_argument("--model", help="Preferred exact validated model ID")
     for action in ("enable", "disable"):
         digest_action = digests_sub.add_parser(
             action,

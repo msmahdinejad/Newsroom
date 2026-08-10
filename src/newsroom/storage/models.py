@@ -555,6 +555,7 @@ class DigestDefinition(Base):
     )
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     provider_policy: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    editorial_config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     delivery_config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

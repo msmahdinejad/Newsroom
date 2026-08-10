@@ -29,6 +29,8 @@ DEFAULT_TOPIC_BRIEF = (
 )
 DEFAULT_SCHEDULE_TIMES = ("00:00", "06:00", "12:00", "18:00")
 SUPPORTED_LANGUAGES = frozenset({"fa", "en"})
+SUPPORTED_PRESENTATION_STYLES = frozenset({"sectioned", "numbered"})
+SUPPORTED_DATE_STYLES = frozenset({"iso", "jalali"})
 
 
 @dataclass(frozen=True)
@@ -58,7 +60,15 @@ class DigestSnapshot:
     schedule_enabled: bool
     enabled: bool
     provider_policy: dict[str, object]
+    editorial_config: dict[str, object]
     delivery_config: dict[str, object]
+    editorial_instructions: str
+    presentation_style: str
+    date_style: str
+    max_links_per_story: int
+    footer_text: str
+    preferred_provider: str
+    preferred_model: str
 
 
 @dataclass(frozen=True)
@@ -79,7 +89,15 @@ class DigestUpdate:
     schedule_enabled: bool | None = None
     enabled: bool | None = None
     provider_policy: dict[str, object] | None = None
+    editorial_config: dict[str, object] | None = None
     delivery_config: dict[str, object] | None = None
+    editorial_instructions: str | None = None
+    presentation_style: str | None = None
+    date_style: str | None = None
+    max_links_per_story: int | None = None
+    footer_text: str | None = None
+    preferred_provider: str | None = None
+    preferred_model: str | None = None
 
 
 class DigestCatalog:
@@ -141,6 +159,7 @@ class DigestCatalog:
             schedule_enabled=False,
             enabled=True,
             provider_policy={},
+            editorial_config={},
             delivery_config={},
         )
         self.db.add(row)
@@ -184,7 +203,15 @@ class DigestCatalog:
                 schedule_enabled=True,
                 enabled=True,
                 provider_policy={},
+                editorial_config={},
                 delivery_config={},
+                editorial_instructions="",
+                presentation_style="sectioned",
+                date_style="iso",
+                max_links_per_story=3,
+                footer_text="",
+                preferred_provider="",
+                preferred_model="",
             )
         return DigestSnapshot(
             id=None,
@@ -201,7 +228,15 @@ class DigestCatalog:
             schedule_enabled=bool(legacy.schedule_enabled),
             enabled=True,
             provider_policy={},
+            editorial_config={},
             delivery_config={},
+            editorial_instructions="",
+            presentation_style="sectioned",
+            date_style="iso",
+            max_links_per_story=3,
+            footer_text="",
+            preferred_provider="",
+            preferred_model="",
         )
 
     def _materialize_legacy_default(self) -> DigestDefinition:
@@ -221,6 +256,7 @@ class DigestCatalog:
             schedule_enabled=current.schedule_enabled,
             enabled=current.enabled,
             provider_policy=current.provider_policy,
+            editorial_config=current.editorial_config,
             delivery_config=current.delivery_config,
         )
         self.db.add(row)
@@ -242,6 +278,9 @@ def _snapshot(row: DigestDefinition) -> DigestSnapshot:
     source_ids = tuple(
         sorted(membership.source_id for membership in (row.sources or []) if membership.enabled)
     )
+    provider_policy = _normalize_provider_policy(dict(row.provider_policy or {}))
+    editorial_config = _normalize_editorial_config(dict(row.editorial_config or {}))
+    delivery_config = _normalize_delivery_config(dict(row.delivery_config or {}))
     return DigestSnapshot(
         id=row.id,
         slug=row.slug,
@@ -263,8 +302,16 @@ def _snapshot(row: DigestDefinition) -> DigestSnapshot:
         schedule_times=_safe_schedule_times(row.schedule_times),
         schedule_enabled=bool(row.schedule_enabled),
         enabled=bool(row.enabled),
-        provider_policy=dict(row.provider_policy or {}),
-        delivery_config=dict(row.delivery_config or {}),
+        provider_policy=provider_policy,
+        editorial_config=editorial_config,
+        delivery_config=delivery_config,
+        editorial_instructions=str(editorial_config.get("instructions", "")),
+        presentation_style=str(delivery_config.get("presentation_style", "sectioned")),
+        date_style=str(delivery_config.get("date_style", "iso")),
+        max_links_per_story=int(str(delivery_config.get("max_links_per_story", 3))),
+        footer_text=str(delivery_config.get("footer_text", "")),
+        preferred_provider=str(provider_policy.get("preferred_provider", "")),
+        preferred_model=str(provider_policy.get("preferred_model", "")),
     )
 
 
@@ -305,9 +352,43 @@ def _apply_update(
     if change.enabled is not None:
         row.enabled = bool(change.enabled)
     if change.provider_policy is not None:
-        row.provider_policy = _safe_mapping(change.provider_policy, "provider policy")
+        row.provider_policy = _normalize_provider_policy(change.provider_policy)
+    if change.editorial_config is not None:
+        row.editorial_config = _normalize_editorial_config(change.editorial_config)
     if change.delivery_config is not None:
-        row.delivery_config = _safe_mapping(change.delivery_config, "delivery config")
+        row.delivery_config = _normalize_delivery_config(change.delivery_config)
+    if change.editorial_instructions is not None:
+        editorial_config = dict(row.editorial_config or {})
+        editorial_config["instructions"] = _normalize_editorial_instructions(
+            change.editorial_instructions
+        )
+        row.editorial_config = _normalize_editorial_config(editorial_config)
+    presentation_change = {
+        key: value
+        for key, value in {
+            "presentation_style": change.presentation_style,
+            "date_style": change.date_style,
+            "max_links_per_story": change.max_links_per_story,
+            "footer_text": change.footer_text,
+        }.items()
+        if value is not None
+    }
+    if presentation_change:
+        delivery_config = dict(row.delivery_config or {})
+        delivery_config.update(presentation_change)
+        row.delivery_config = _normalize_delivery_config(delivery_config)
+    route_change = {
+        key: value
+        for key, value in {
+            "preferred_provider": change.preferred_provider,
+            "preferred_model": change.preferred_model,
+        }.items()
+        if value is not None
+    }
+    if route_change:
+        provider_policy = dict(row.provider_policy or {})
+        provider_policy.update(route_change)
+        row.provider_policy = _normalize_provider_policy(provider_policy)
     if change.source_ids is not None:
         _replace_source_memberships(db, row, change.source_ids)
     if int(row.minimum_telegram_stories or 0) > int(row.max_stories):
@@ -436,3 +517,57 @@ def _safe_mapping(value: dict[str, object], label: str) -> dict[str, object]:
     ):
         raise ValueError(f"{label} must not contain credential values")
     return dict(value)
+
+
+def _normalize_editorial_instructions(value: object) -> str:
+    normalized = " ".join(str(value or "").split())
+    if len(normalized) > 4_000:
+        raise ValueError("editorial instructions must not exceed 4000 characters")
+    return normalized
+
+
+def _normalize_provider_policy(value: dict[str, object]) -> dict[str, object]:
+    normalized = _safe_mapping(value, "provider policy")
+    provider = str(normalized.get("preferred_provider", "")).strip().lower()
+    model = str(normalized.get("preferred_model", "")).strip()
+    if provider and not re.fullmatch(r"[a-z][a-z0-9_]{0,49}", provider):
+        raise ValueError("preferred provider must use its configured provider name")
+    if model and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}", model):
+        raise ValueError("preferred model must use an exact provider model id")
+    normalized.update(preferred_provider=provider, preferred_model=model)
+    return normalized
+
+
+def _normalize_editorial_config(value: dict[str, object]) -> dict[str, object]:
+    normalized = _safe_mapping(value, "editorial config")
+    if "instructions" in normalized:
+        normalized["instructions"] = _normalize_editorial_instructions(
+            normalized["instructions"]
+        )
+    return normalized
+
+
+def _normalize_delivery_config(value: dict[str, object]) -> dict[str, object]:
+    normalized = _safe_mapping(value, "delivery config")
+    style = str(normalized.get("presentation_style", "sectioned")).strip().lower()
+    if style not in SUPPORTED_PRESENTATION_STYLES:
+        raise ValueError("presentation style must be one of: numbered, sectioned")
+    date_style = str(normalized.get("date_style", "iso")).strip().lower()
+    if date_style not in SUPPORTED_DATE_STYLES:
+        raise ValueError("date style must be one of: iso, jalali")
+    try:
+        link_count = int(str(normalized.get("max_links_per_story", 3)))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("links per story must be an integer") from exc
+    if not 0 <= link_count <= 3:
+        raise ValueError("links per story must be between 0 and 3")
+    footer = " ".join(str(normalized.get("footer_text", "")).split())
+    if len(footer) > 500:
+        raise ValueError("footer text must not exceed 500 characters")
+    normalized.update(
+        presentation_style=style,
+        date_style=date_style,
+        max_links_per_story=link_count,
+        footer_text=footer,
+    )
+    return normalized

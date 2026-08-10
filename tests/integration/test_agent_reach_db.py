@@ -173,6 +173,7 @@ def test_alembic_at_gate5_revision(engine):
         "0012_owner_control_plane",
         "0013_digest_definitions",
         "0014_source_discovery",
+        "0015_digest_editorial_config",
     )
 
 

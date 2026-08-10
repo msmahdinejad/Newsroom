@@ -129,7 +129,11 @@ uv run newsroom digests update climate \
   --sources telegram,web,reddit \
   --count 20 \
   --telegram-min 4 \
-  --schedule 08:00,17:30
+  --schedule 08:00,17:30 \
+  --style numbered \
+  --date-style jalali \
+  --links 2 \
+  --instructions "Prefer direct headlines, concrete facts, and concise summaries"
 
 uv run newsroom report generate --digest climate
 ```
@@ -267,7 +271,20 @@ Runtime settings survive restarts:
 /settings schedule HH:MM,HH:MM
 /settings schedule off
 /settings sources all|telegram,x,web,github,reddit
+/settings source_ids 12,34
+/settings style sectioned|numbered
+/settings date_style iso|jalali
+/settings links 0..3
+/settings instructions <editorial preferences>
+/settings footer <optional footer>
+/settings provider <validated provider>
+/settings model <exact validated model ID>
 ```
+
+Operator instructions refine tone and emphasis but cannot replace the fixed
+grounding, safety, language, and structured-output contract. A digest with
+explicit source IDs collects from that curated membership before generation;
+Telegram and X remain owned by their dedicated incremental workers.
 
 ## Development
 

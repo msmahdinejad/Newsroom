@@ -74,6 +74,13 @@ def _update_from_args(args: argparse.Namespace) -> DigestUpdate:
         minimum_telegram_stories=args.telegram_min,
         schedule_times=schedule,
         schedule_enabled=schedule_enabled,
+        editorial_instructions=args.instructions,
+        presentation_style=args.style,
+        date_style=args.date_style,
+        max_links_per_story=args.links,
+        footer_text=args.footer,
+        preferred_provider=args.provider,
+        preferred_model=args.model,
     )
 
 

@@ -256,6 +256,7 @@ async def collect_agent_reach_sources(
     session: Session,
     *,
     source_type: str | None = None,
+    source_ids: tuple[int, ...] | None = None,
     limit_per_source: int = 10,
     max_sources: int | None = None,
     min_source_spacing_seconds: float = 0,
@@ -275,12 +276,17 @@ async def collect_agent_reach_sources(
         query = query.filter(Source.enabled.is_(True))
     if source_type:
         query = query.filter(Source.type == source_type)
+    if source_ids:
+        query = query.filter(Source.id.in_(source_ids))
     if max_sources is not None:
         query = query.order_by(
             Source.last_attempt_at.asc().nullsfirst(),
             Source.id,
         ).limit(max(0, max_sources))
     ar_sources = query.all()
+    if source_ids:
+        selected_ids = frozenset(source_ids)
+        ar_sources = [source for source in ar_sources if source.id in selected_ids]
     if not ar_sources:
         return {
             "sources": 0,

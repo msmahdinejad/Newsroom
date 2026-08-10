@@ -143,6 +143,9 @@ def run_hierarchical_editorial(
         interest=digest.interest if digest else DEFAULT_INTEREST_POLICY,
         source_types=digest.source_types if digest else None,
         source_ids=digest.source_ids if digest else None,
+        editorial_instructions=digest.editorial_instructions if digest else "",
+        preferred_provider=digest.preferred_provider if digest else "",
+        preferred_model=digest.preferred_model if digest else "",
     )
 
     if not evidence.stories:
@@ -371,6 +374,7 @@ def run_hierarchical_editorial(
         report_mode,
         digest_name=evidence.digest_name,
         timezone=digest.timezone if digest else None,
+        delivery_config=digest.delivery_config if digest else None,
     )
 
     # 8. Build attempt metadata
@@ -491,6 +495,9 @@ def _process_shard(
         topic_brief=evidence.topic_brief,
         include_terms=evidence.include_terms,
         exclude_terms=evidence.exclude_terms,
+        editorial_instructions=evidence.editorial_instructions,
+        preferred_provider=evidence.preferred_provider,
+        preferred_model=evidence.preferred_model,
         stories=shard_stories,
     )
 
@@ -854,6 +861,8 @@ def _final_reduction(
             stage="reduce",
             job_id=job.job_id,
             shard_id="reduction_final",
+            preferred_provider=reduction_evidence.preferred_provider,
+            preferred_model=reduction_evidence.preferred_model,
         )
         start = time.monotonic()
         model_calls = 1
@@ -960,6 +969,9 @@ def _bounded_reduction_evidence(
         topic_brief=evidence.topic_brief,
         include_terms=evidence.include_terms,
         exclude_terms=evidence.exclude_terms,
+        editorial_instructions=evidence.editorial_instructions,
+        preferred_provider=evidence.preferred_provider,
+        preferred_model=evidence.preferred_model,
         stories=selected,
     )
 

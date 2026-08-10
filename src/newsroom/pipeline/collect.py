@@ -129,6 +129,7 @@ async def collect_sources(
     session: Session,
     *,
     source_type: str | None = None,
+    source_ids: tuple[int, ...] | None = None,
     limit_per_source: int = 10,
     max_sources: int | None = None,
     source_spacing_seconds: float = 0.0,
@@ -142,6 +143,8 @@ async def collect_sources(
     query = session.query(Source).filter(Source.enabled.is_(True))
     if source_type:
         query = query.filter(Source.type == source_type)
+    if source_ids:
+        query = query.filter(Source.id.in_(source_ids))
     if exclude_source_types:
         query = query.filter(Source.type.notin_(exclude_source_types))
     if max_sources is not None:
@@ -152,6 +155,9 @@ async def collect_sources(
             Source.id,
         ).limit(max(0, max_sources) * _FAIRNESS_PREFETCH_FACTOR)
     sources = query.all()
+    if source_ids:
+        selected_ids = frozenset(source_ids)
+        sources = [source for source in sources if source.id in selected_ids]
     if exclude_source_types:
         # Keep the domain boundary authoritative even when a repository
         # adapter cannot push the exclusion predicate down to its backend.

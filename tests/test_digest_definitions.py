@@ -30,6 +30,7 @@ def _digest() -> DigestDefinition:
         schedule_enabled=True,
         enabled=True,
         provider_policy={},
+        editorial_config={},
         delivery_config={},
     )
 
@@ -65,6 +66,13 @@ def test_digest_update_validates_policy_and_projects_legacy_settings() -> None:
             source_groups=("telegram", "reddit"),
             max_stories=20,
             schedule_times=("09:00", "21:00"),
+            editorial_instructions="Prefer concrete facts and concise summaries.",
+            presentation_style="numbered",
+            date_style="jalali",
+            max_links_per_story=2,
+            footer_text="Share this briefing with your team.",
+            preferred_provider="mistral",
+            preferred_model="mistral-large-2512",
         ),
     )
 
@@ -73,6 +81,13 @@ def test_digest_update_validates_policy_and_projects_legacy_settings() -> None:
     assert legacy.report_language == "fa"
     assert legacy.report_story_count == 20
     assert legacy.schedule_times == ["09:00", "21:00"]
+    assert result.editorial_instructions.startswith("Prefer concrete facts")
+    assert result.presentation_style == "numbered"
+    assert result.date_style == "jalali"
+    assert result.max_links_per_story == 2
+    assert result.footer_text == "Share this briefing with your team."
+    assert result.preferred_provider == "mistral"
+    assert result.preferred_model == "mistral-large-2512"
 
 
 @pytest.mark.parametrize(
@@ -83,6 +98,12 @@ def test_digest_update_validates_policy_and_projects_legacy_settings() -> None:
         DigestUpdate(max_stories=0),
         DigestUpdate(provider_policy={"api_key": "must-not-be-stored"}),
         DigestUpdate(minimum_telegram_stories=13),
+        DigestUpdate(presentation_style="magazine"),
+        DigestUpdate(date_style="lunar"),
+        DigestUpdate(max_links_per_story=4),
+        DigestUpdate(editorial_instructions="x" * 4_001),
+        DigestUpdate(preferred_provider="Mistral API"),
+        DigestUpdate(preferred_model="bad model id"),
     ],
 )
 def test_digest_update_rejects_invalid_or_secret_configuration(

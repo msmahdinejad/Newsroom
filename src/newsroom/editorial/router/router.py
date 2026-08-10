@@ -322,21 +322,25 @@ class MultiProviderRouter(EditorialProvider):
         context: RouterRequestContext,
     ) -> RoutedEditorialResponse | None:
         attempts = 0
-        for provider in self.config.provider_order:
+        for provider in self._provider_order(request):
             pool = self.key_pools.get(provider)
             circuit = self.circuits.get(provider)
             if pool is None or circuit is None or pool.key_count == 0:
                 continue
             if not circuit.allow_request():
                 continue
-            provider_routes = [
-                route
-                for route in self.routes
-                if route.provider == provider
-                and route.enabled
-                and route.validation_status == "validated"
-                and self._supports_stage(route, context.stage)
-            ]
+            provider_routes = self._preferred_routes(
+                [
+                    route
+                    for route in self.routes
+                    if route.provider == provider
+                    and route.enabled
+                    and route.validation_status == "validated"
+                    and self._supports_stage(route, context.stage)
+                ],
+                request,
+                provider,
+            )
             if not provider_routes or not pool.has_healthy_key():
                 circuit.open()
                 continue
@@ -475,10 +479,15 @@ class MultiProviderRouter(EditorialProvider):
                                     return RoutedEditorialResponse(response=repaired, repaired=True)
                                 return None
                             if category is RouteFailureCategory.POLICY_REJECTION:
+                                rejected_provider = {
+                                    (candidate.provider, candidate.model)
+                                    for candidate in self.routes
+                                    if candidate.provider == route.provider
+                                }
                                 alternate = self._one_alternate(
                                     request,
                                     context,
-                                    exclude={(route.provider, route.model)},
+                                    exclude=rejected_provider,
                                 )
                                 if alternate is not None:
                                     return RoutedEditorialResponse(response=alternate)
@@ -502,7 +511,7 @@ class MultiProviderRouter(EditorialProvider):
         exclude: set[tuple[str, str]],
     ) -> EditorialResponse | None:
         """Execute exactly one compatible alternate route request."""
-        for provider in self.config.provider_order:
+        for provider in self._provider_order(request):
             pool = self.key_pools.get(provider)
             circuit = self.circuits.get(provider)
             if (
@@ -512,7 +521,12 @@ class MultiProviderRouter(EditorialProvider):
                 or not pool.has_healthy_key()
             ):
                 continue
-            for route in self.routes:
+            provider_routes = self._preferred_routes(
+                [route for route in self.routes if route.provider == provider],
+                request,
+                provider,
+            )
+            for route in provider_routes:
                 if (
                     route.provider != provider
                     or (route.provider, route.model) in exclude
@@ -620,6 +634,26 @@ class MultiProviderRouter(EditorialProvider):
                             pool.failure(lease, failure.category)
                         return None
         return None
+
+    def _provider_order(self, request: EditorialRequest) -> tuple[str, ...]:
+        """Put a configured, available preference first without removing fallbacks."""
+        preferred = request.preferred_provider.strip().lower()
+        configured = tuple(self.config.provider_order)
+        if not preferred or preferred not in configured:
+            return configured
+        return (preferred, *(provider for provider in configured if provider != preferred))
+
+    @staticmethod
+    def _preferred_routes(
+        routes: list[ModelRoute],
+        request: EditorialRequest,
+        provider: str,
+    ) -> list[ModelRoute]:
+        """Prefer the exact validated model only on its requested provider."""
+        preferred_model = request.preferred_model.strip()
+        if provider != request.preferred_provider.strip().lower() or not preferred_model:
+            return routes
+        return sorted(routes, key=lambda route: route.model != preferred_model)
 
     @staticmethod
     def _supports_stage(route: ModelRoute, stage: str) -> bool:

@@ -1054,6 +1054,8 @@ def test_prompt_requests_only_reader_facing_persian_copy():
     assert '"practical_impact_fa"' not in system_prompt
     assert "\u0686\u0631\u0627 \u0645\u0647\u0645 \u0627\u0633\u062a" not in system_prompt
     assert "\u06a9\u0627\u0631\u0628\u0631\u062f \u0639\u0645\u0644\u06cc" not in system_prompt
+    assert "multi-item roundup" in system_prompt
+    assert "single most important concrete development" in system_prompt
 
 
 def test_prompt_requires_copy_for_each_selected_story_id():
@@ -1061,6 +1063,43 @@ def test_prompt_requires_copy_for_each_selected_story_id():
 
     assert "exactly 3 stories" in messages[1]["content"]
     assert "[1, 2, 3]" in messages[1]["content"]
+
+
+def test_prompt_applies_operator_preferences_below_grounding_rules():
+    evidence = make_evidence_set()
+    evidence.editorial_instructions = "Use direct headlines and avoid hype."
+
+    messages = build_prompt(evidence)
+
+    assert "Use direct headlines and avoid hype." not in messages[0]["content"]
+    assert "OPERATOR EDITORIAL PREFERENCES" in messages[1]["content"]
+    assert "subordinate" in messages[1]["content"]
+    assert "Use direct headlines and avoid hype." in messages[1]["content"]
+
+
+def test_numbered_persian_presentation_supports_jalali_date_and_link_limit():
+    output = make_output(make_evidence_set([1, 2]))
+    rendered = render_persian_report(
+        output,
+        "scheduled",
+        now=datetime(2026, 8, 9, 12, 0, tzinfo=UTC),
+        digest_name="\u0645\u0647\u0645\u200c\u062a\u0631\u06cc\u0646 \u0627\u062e\u0628\u0627\u0631 \u0647\u0648\u0634 \u0645\u0635\u0646\u0648\u0639\u06cc",
+        timezone="Asia/Tehran",
+        delivery_config={
+            "presentation_style": "numbered",
+            "date_style": "jalali",
+            "max_links_per_story": 1,
+            "footer_text": "\u0628\u0631\u0627\u06cc \u062f\u0648\u0633\u062a\u0627\u0646\u062a\u0627\u0646 \u0628\u0641\u0631\u0633\u062a\u06cc\u062f.",
+        },
+    )
+
+    assert "🤖 \u0645\u0647\u0645\u200c\u062a\u0631\u06cc\u0646 \u0627\u062e\u0628\u0627\u0631 \u0647\u0648\u0634 \u0645\u0635\u0646\u0648\u0639\u06cc" in rendered
+    assert "\u06f1\u06f8 \u0645\u0631\u062f\u0627\u062f \u06f1\u06f4\u06f0\u06f5" in rendered
+    assert "\u06f1. " in rendered
+    assert "\u06f2. " in rendered
+    assert rendered.count("🔗") == 2
+    assert "🔥 \u062e\u0628\u0631\u0647\u0627\u06cc \u0645\u0647\u0645" not in rendered
+    assert rendered.endswith("\u0628\u0631\u0627\u06cc \u062f\u0648\u0633\u062a\u0627\u0646\u062a\u0627\u0646 \u0628\u0641\u0631\u0633\u062a\u06cc\u062f.")
 
 
 def test_platform_prompt_requires_source_exclusivity_and_digest_focus():

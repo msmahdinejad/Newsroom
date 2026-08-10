@@ -1,6 +1,7 @@
 {
   "all_sources": "all enabled sources",
   "named_digest_help": "/report digest <slug> [new|comprehensive|telegram|x|web|github|reddit] \u2014 named digest",
+  "presentation_help": "/settings style sectioned|numbered\n/settings date_style iso|jalali\n/settings links 0..3\n/settings instructions <editorial preferences>\n/settings footer <optional footer>\n/settings provider <validated provider>\n/settings model <exact validated model ID>",
   "commands": [
     {
       "command": "start",

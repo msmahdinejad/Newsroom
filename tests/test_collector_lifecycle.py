@@ -169,3 +169,48 @@ async def test_bounded_batch_selects_least_recently_attempted_source() -> None:
 
     assert result["sources"] == 1
     assert result["detail"][0]["source"] == "older"
+
+
+@pytest.mark.asyncio
+async def test_collect_sources_honors_explicit_digest_membership() -> None:
+    """A scheduled digest must collect its own sources instead of a global slice."""
+
+    def source(source_id: int, name: str):
+        return SimpleNamespace(
+            id=source_id,
+            name=name,
+            type="unsupported",
+            url="https://example.com/",
+            enabled=True,
+            last_attempt_at=None,
+            last_success_at=None,
+            last_error_at=None,
+            failure_category=None,
+            validation_status=None,
+            no_cursor_reason=None,
+        )
+
+    unrelated = source(1, "unrelated")
+    selected = source(2, "selected")
+    query = MagicMock()
+    query.filter.return_value = query
+    query.all.return_value = [unrelated, selected]
+    session = MagicMock()
+    session.query.return_value = query
+    collectors = [MagicMock(close=AsyncMock()) for _ in range(6)]
+
+    with (
+        patch("newsroom.pipeline.collect.RSSCollector", return_value=collectors[0]),
+        patch("newsroom.pipeline.collect.GitHubCollector", return_value=collectors[1]),
+        patch("newsroom.pipeline.collect.TelegramMTProtoCollector", return_value=collectors[2]),
+        patch("newsroom.pipeline.collect.NativeHtmlReader", return_value=collectors[3]),
+        patch(
+            "newsroom.pipeline.collect.NativeRedditSubredditCollector",
+            return_value=collectors[4],
+        ),
+        patch("newsroom.pipeline.collect.NativeYouTubeRssCollector", return_value=collectors[5]),
+    ):
+        result = await collect_sources(session, source_ids=(selected.id,))
+
+    assert result["sources"] == 1
+    assert result["detail"][0]["source"] == "selected"

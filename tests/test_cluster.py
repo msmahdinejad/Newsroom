@@ -125,6 +125,21 @@ def test_reddit_html_boilerplate_cannot_merge_unrelated_posts(clusterer):
     assert clusterer._compute_similarity(backend, matlab) < 0.35
 
 
+def test_ai_headline_aliases_merge_same_event_without_merging_unrelated_topics(clusterer):
+    viruses_a = clusterer._extract_keywords(
+        "Artificial Intelligence used to design brand new viruses"
+    )
+    viruses_b = clusterer._extract_keywords(
+        "This A.I. just created viruses not found in nature"
+    )
+    music = clusterer._extract_keywords(
+        "Artificial Intelligence used to design a new music generator"
+    )
+
+    assert clusterer._compute_similarity(viruses_a, viruses_b) >= 0.35
+    assert clusterer._compute_similarity(viruses_a, music) < 0.35
+
+
 # ── Clustering with mock DB ─────────────────────────────────────
 
 def _make_norm_item(item_id, title, description=""):

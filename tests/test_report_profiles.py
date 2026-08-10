@@ -140,6 +140,8 @@ def test_programming_category_does_not_promote_empty_channel_chatter():
         "This channel is for programmers and software engineers",
         "done 👍🏻✨ react for more",
         "Hey there Alice, and welcome to our Python project! How are you?",
+        "Google DeepMind blog",
+        "Anthropic News",
         "Python Django Complete Guide Price: 5.98€",
     ],
 )

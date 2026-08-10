@@ -70,6 +70,13 @@ def help_text(snapshot: ControlSnapshot) -> str:
             f"\n{named_digest_help}\n/latest",
             1,
         )
+    presentation_help = str(catalog["presentation_help"])
+    if "/settings style" not in template:
+        template = template.replace(
+            "\n/sources",
+            f"\n{presentation_help}\n/sources",
+            1,
+        )
     return template.format(
         digest_name=snapshot.digest_name,
         topic_brief=snapshot.topic_brief,

@@ -26,7 +26,7 @@ from newsroom.editorial.attempt import EditorialAttempt
 from newsroom.editorial.deterministic_provider import DeterministicEditorialProvider
 from newsroom.editorial.evidence_builder import build_evidence_set
 from newsroom.editorial.grounding import validate_grounding
-from newsroom.editorial.presentation import render_report
+from newsroom.editorial.presentation import format_report_date, render_report
 from newsroom.editorial.provider import (
     EditorialError,
     EditorialProvider,
@@ -127,6 +127,9 @@ def generate_editorial(
         interest=digest.interest if digest else DEFAULT_INTEREST_POLICY,
         source_types=digest.source_types if digest else None,
         source_ids=digest.source_ids if digest else None,
+        editorial_instructions=digest.editorial_instructions if digest else "",
+        preferred_provider=digest.preferred_provider if digest else "",
+        preferred_model=digest.preferred_model if digest else "",
     )
     attempt.evidence_set_hash = evidence.evidence_hash()
     attempt.prompt_version = evidence.prompt_version
@@ -165,6 +168,7 @@ def generate_editorial(
                 report_mode,
                 digest_name=evidence.digest_name,
                 timezone=digest.timezone if digest else None,
+                delivery_config=digest.delivery_config if digest else None,
             )
             return content, attempt
 
@@ -177,6 +181,8 @@ def generate_editorial(
         timeout_seconds=settings.editorial_timeout_seconds,
         stage="editorial",
         job_id=job_id or "",
+        preferred_provider=evidence.preferred_provider,
+        preferred_model=evidence.preferred_model,
     )
 
     try:
@@ -311,6 +317,7 @@ def generate_editorial(
         report_mode,
         digest_name=evidence.digest_name,
         timezone=digest.timezone if digest else None,
+        delivery_config=digest.delivery_config if digest else None,
     )
 
     attempt.output = output
@@ -415,6 +422,7 @@ def _render_persian_report(
     *,
     digest_name: str | None = None,
     timezone: str | None = None,
+    delivery_config: dict[str, object] | None = None,
 ) -> str:
     """Render the grounded output through the compact public presentation seam."""
     return render_report(
@@ -422,6 +430,7 @@ def _render_persian_report(
         report_mode,
         digest_name=digest_name,
         timezone=timezone,
+        delivery_config=delivery_config,
     )
 
 
@@ -431,18 +440,23 @@ def _empty_report(
     *,
     digest_name: str | None = None,
     timezone: str | None = None,
+    delivery_config: dict[str, object] | None = None,
 ) -> str:
     del report_mode
     now = datetime.now(ZoneInfo(timezone or settings.timezone))
+    config = delivery_config or {}
+    date_style = str(config.get("date_style", "iso"))
+    date = format_report_date(now, language=report_language, style=date_style)
+    icon = "🤖" if config.get("presentation_style") == "numbered" else "📰"
     if report_language == "en":
-        return f"""📰 {digest_name or "News digest"}
-📅 {now.strftime("%Y-%m-%d")}
+        return f"""{icon} {digest_name or "News digest"}
+📅 {date}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 No new reportable stories were found in this period."""
     localized_name = digest_name or "\u062e\u0628\u0631\u0646\u0627\u0645\u0647"
-    return f"""📰 {localized_name}
-📅 {now.strftime("%Y-%m-%d")}
+    return f"""{icon} {localized_name}
+📅 {date}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 \u062f\u0631 \u0627\u06cc\u0646 \u0628\u0627\u0632\u0647 \u062e\u0628\u0631 \u062a\u0627\u0632\u0647‌\u0627\u06cc \u0628\u0631\u0627\u06cc \u06af\u0632\u0627\u0631\u0634 \u067e\u06cc\u062f\u0627 \u0646\u0634\u062f."""

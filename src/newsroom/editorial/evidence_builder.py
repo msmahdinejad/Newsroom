@@ -52,6 +52,9 @@ def build_evidence_set(
     interest: InterestPolicy = DEFAULT_INTEREST_POLICY,
     source_types: tuple[str, ...] | None = None,
     source_ids: tuple[int, ...] | None = None,
+    editorial_instructions: str = "",
+    preferred_provider: str = "",
+    preferred_model: str = "",
 ) -> EditorialEvidenceSet:
     """Build a bounded evidence set from persisted stories.
 
@@ -212,6 +215,9 @@ def build_evidence_set(
         topic_brief=interest.topic_brief,
         include_terms=list(interest.include_terms),
         exclude_terms=list(interest.exclude_terms),
+        editorial_instructions=editorial_instructions,
+        preferred_provider=preferred_provider,
+        preferred_model=preferred_model,
         stories=story_packets,
     )
 
