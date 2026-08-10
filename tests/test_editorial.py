@@ -498,6 +498,32 @@ def test_grounding_backfills_missing_links_from_same_story_evidence():
     ]
 
 
+def test_grounding_replaces_invented_only_link_with_same_story_evidence():
+    evidence = make_evidence_set([1])
+    output = make_output(evidence)
+    output.stories[0].source_links = ["https://evil.example/fake"]
+
+    grounded, result = validate_grounding(evidence, output)
+
+    assert not result.valid
+    assert grounded.stories[0].source_links == [
+        source.original_url for source in evidence.stories[0].sources
+    ]
+
+
+def test_grounding_rejects_links_from_a_different_story():
+    evidence = make_evidence_set([1, 2])
+    output = make_output(evidence)
+    output.stories[0].source_links = [evidence.stories[1].sources[0].original_url]
+
+    grounded, result = validate_grounding(evidence, output)
+
+    assert not result.valid
+    assert grounded.stories[0].source_links == [
+        source.original_url for source in evidence.stories[0].sources
+    ]
+
+
 # ── 10. Unsupported numerical claims ───────────────────────────────
 
 
