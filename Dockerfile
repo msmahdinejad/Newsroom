@@ -1,6 +1,8 @@
 FROM python:3.14-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' \
+    /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client curl && \
     rm -rf /var/lib/apt/lists/*
 

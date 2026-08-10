@@ -66,6 +66,7 @@ def test_external_source_dependencies_are_immutable() -> None:
     assert '"twitter-cli==0.8.5"' in project
     assert "--extra external-sources" in dockerfile
     assert f"ARG AGENT_REACH_PINNED_SHA={PIN}" in dockerfile
+    assert "https://deb.debian.org" in dockerfile
 
 
 def _telegram_settings(**overrides):
