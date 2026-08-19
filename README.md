@@ -1,5 +1,10 @@
 # Newsroom
 
+[![CI](https://github.com/msmahdinejad/Newsroom/actions/workflows/ci.yml/badge.svg)](https://github.com/msmahdinejad/Newsroom/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/msmahdinejad/Newsroom/actions/workflows/codeql.yml/badge.svg)](https://github.com/msmahdinejad/Newsroom/actions/workflows/codeql.yml)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 Newsroom is a self-hosted, local-first news collection and reporting system for
 operator-defined subjects. It collects public sources incrementally, keeps
 durable cursors and evidence lineage in PostgreSQL, produces grounded reports
@@ -43,7 +48,7 @@ PowerShell, Bash, and other shells can all run the same Python bootstrap.
 Clone the repository and choose one source mode:
 
 ```bash
-git clone <repository-url> newsroom
+git clone https://github.com/msmahdinejad/Newsroom.git newsroom
 cd newsroom
 
 # Use the safe starter catalog.

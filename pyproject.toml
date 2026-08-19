@@ -5,6 +5,7 @@ description = "Local-first, multi-source news collection and AI reporting"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
+authors = [{ name = "msmahdinejad" }]
 keywords = ["newsroom", "ai", "telegram", "news-aggregation", "llm-router"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -28,6 +29,13 @@ dependencies = [
     "openpyxl>=3.1.5",
     "socksio>=1.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/msmahdinejad/Newsroom"
+Documentation = "https://github.com/msmahdinejad/Newsroom/tree/main/docs"
+Repository = "https://github.com/msmahdinejad/Newsroom.git"
+Issues = "https://github.com/msmahdinejad/Newsroom/issues"
+Changelog = "https://github.com/msmahdinejad/Newsroom/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
